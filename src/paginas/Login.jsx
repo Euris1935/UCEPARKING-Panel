@@ -8,7 +8,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   
-  // Estados para los campos
+  // Estados de los campos
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [nombre, setNombre] = useState('');
@@ -21,9 +21,7 @@ export default function Login() {
 
     try {
       if (isRegistering) {
-        // ==========================================
-        // 1. REGISTRO DE ADMINISTRADOR
-        // ==========================================
+        
         
         if (!nombre || !apellido || !telefono) {
             alert("Por favor completa Nombre, Apellido y Teléfono.");
@@ -40,7 +38,7 @@ export default function Login() {
         if (authError) throw authError;
 
         if (authData.user) {
-            // B. Guardar perfil en tabla pública USUARIO
+            
             const { error: dbError } = await supabase
                 .from('USUARIO')
                 .upsert({
@@ -48,8 +46,7 @@ export default function Login() {
                     Nombre: nombre,
                     Apellido: apellido,
                     Telefono: telefono,
-                    Id_Rol: 3, // <--- CAMBIO: 3 es ADMINISTRADOR según tu indicación
-                    // Fecha_Creacion se llena automático con Default Now()
+                    Id_Rol: 3, 
                 });
 
             if (dbError) {
@@ -57,20 +54,18 @@ export default function Login() {
                 alert("Usuario creado, pero hubo error al guardar datos del perfil.");
             } else {
                 alert('¡Administrador registrado con éxito!');
-                setIsRegistering(false); // Volver al login
+                setIsRegistering(false); 
             }
         }
 
       } else {
-        // ==========================================
-        // 2. INICIO DE SESIÓN
-        // ==========================================
+        
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
         if (error) throw error;
-        // App.js redirige automáticamente al Dashboard
+        
       }
     } catch (error) {
       alert(error.error_description || error.message);
@@ -95,7 +90,7 @@ export default function Login() {
 
         <form onSubmit={handleAuth} className="space-y-4">
           
-          {/* CAMPOS EXTRA SOLO PARA REGISTRO */}
+          
           {isRegistering && (
             <>
                 <div className="grid grid-cols-2 gap-4">
@@ -147,7 +142,7 @@ export default function Login() {
             </>
           )}
 
-          {/* CAMPOS COMUNES */}
+          
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Correo Institucional</label>
             <div className="relative">

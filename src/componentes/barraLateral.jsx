@@ -1,7 +1,7 @@
 
 
 import { Link, useLocation } from 'react-router-dom';
-import { supabase } from '../supabaseClient'; // Importamos Supabase
+import { supabase } from '../supabaseClient'; 
 import { 
   FaTachometerAlt, FaCar, FaClipboardList, FaUsers, 
   FaMicrochip, FaChartBar, FaWrench, FaCog, FaSignOutAlt,
@@ -31,22 +31,21 @@ export default function BarraLateral() {
       : `${baseClasses} text-gray-600 hover:bg-gray-100`;
   };
 
-  // Función para cerrar sesión
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    // No necesitamos navegar manualmente, App.js detectará el cambio y mostrará el Login
+    
   };
 
   return (
     <aside className="w-64 h-screen bg-white flex flex-col p-4 border-r border-gray-200 fixed left-0 top-0 z-50">
       
-      {/* Logo */}
+      
       <div className="flex items-center gap-2 mb-8 px-2">
         <FaParking className="text-uce text-4xl" /> 
         <h1 className="text-2xl font-extrabold text-uce tracking-wide">UCE PARKING</h1>
       </div>
       
-      {/* Navegación */}
+      
       <nav className="flex-grow space-y-1 overflow-y-auto">
         {navItems.map((item) => (
           <Link key={item.to} to={item.to} className={getLinkClasses(item.to)}>
@@ -56,13 +55,13 @@ export default function BarraLateral() {
         ))}
       </nav>
 
-      {/* Footer Lateral */}
+     
       <div className="pt-4 border-t border-gray-200 space-y-2 mt-auto">
         <button className="w-full flex items-center gap-3 px-4 py-2 rounded text-gray-600 hover:bg-gray-100">
           <FaCog /> Configuración
         </button>
         
-        {/* Botón Cerrar Sesión Funcional */}
+        
         <button 
           onClick={handleLogout}
           className="w-full flex items-center gap-3 px-4 py-2 rounded text-red-600 hover:bg-red-50 font-medium transition-colors"
