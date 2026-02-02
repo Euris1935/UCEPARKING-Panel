@@ -1,272 +1,75 @@
-/*
-import { Link } from "react-router-dom";
+
+
+import { Link, useLocation } from 'react-router-dom';
+import { supabase } from '../supabaseClient'; // Importamos Supabase
+import { 
+  FaTachometerAlt, FaCar, FaClipboardList, FaUsers, 
+  FaMicrochip, FaChartBar, FaWrench, FaCog, FaSignOutAlt,
+  FaParking, FaTicketAlt 
+} from 'react-icons/fa';
+
+const navItems = [
+  { to: '/', icon: FaTachometerAlt, label: 'Dashboard' },
+  { to: '/vehiculos-tickets', icon: FaTicketAlt, label: 'Vehículos y Tickets' }, 
+  { to: '/ocupacion', icon: FaCar, label: 'Ocupación' }, 
+  { to: '/zonas-parqueo', icon: FaParking, label: 'Zonas de Parqueo' }, 
+  { to: '/reservaciones', icon: FaClipboardList, label: 'Reservaciones' },
+  { to: '/usuarios', icon: FaUsers, label: 'Usuarios' },
+  { to: '/sensores', icon: FaMicrochip, label: 'Sensores' },
+  { to: '/reportes', icon: FaChartBar, label: 'Reportes' },
+  { to: '/mantenimiento', icon: FaWrench, label: 'Mantenimiento' },
+];
 
 export default function BarraLateral() {
-  return (
-    <div style={styles.sidebar}>
-      <h2 style={styles.logo}>UCE PARKING</h2>
+  const location = useLocation();
 
-      <nav style={styles.menu}>
-        <Link to="/">Dashboard</Link>
-        <Link to="/ocupacion">Ocupación</Link>
-        <Link to="/reservaciones">Reservaciones</Link>
-        <Link to="/usuarios">Usuarios</Link>
+  const getLinkClasses = (path) => {
+    const isActive = location.pathname === path;
+    const baseClasses = "flex items-center gap-3 px-4 py-2 rounded transition-colors duration-150";
+    return isActive 
+      ? `${baseClasses} bg-uce-light text-uce font-bold` 
+      : `${baseClasses} text-gray-600 hover:bg-gray-100`;
+  };
+
+  // Función para cerrar sesión
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    // No necesitamos navegar manualmente, App.js detectará el cambio y mostrará el Login
+  };
+
+  return (
+    <aside className="w-64 h-screen bg-white flex flex-col p-4 border-r border-gray-200 fixed left-0 top-0 z-50">
+      
+      {/* Logo */}
+      <div className="flex items-center gap-2 mb-8 px-2">
+        <FaParking className="text-uce text-4xl" /> 
+        <h1 className="text-2xl font-extrabold text-uce tracking-wide">UCE PARKING</h1>
+      </div>
+      
+      {/* Navegación */}
+      <nav className="flex-grow space-y-1 overflow-y-auto">
+        {navItems.map((item) => (
+          <Link key={item.to} to={item.to} className={getLinkClasses(item.to)}>
+            <item.icon className="text-xl" /> 
+            <span>{item.label}</span>
+          </Link>
+        ))}
       </nav>
-    </div>
+
+      {/* Footer Lateral */}
+      <div className="pt-4 border-t border-gray-200 space-y-2 mt-auto">
+        <button className="w-full flex items-center gap-3 px-4 py-2 rounded text-gray-600 hover:bg-gray-100">
+          <FaCog /> Configuración
+        </button>
+        
+        {/* Botón Cerrar Sesión Funcional */}
+        <button 
+          onClick={handleLogout}
+          className="w-full flex items-center gap-3 px-4 py-2 rounded text-red-600 hover:bg-red-50 font-medium transition-colors"
+        >
+          <FaSignOutAlt /> Cerrar Sesión
+        </button>
+      </div>
+    </aside>
   );
 }
-
-const styles = {
-  sidebar: {
-    width: "220px",
-    height: "100vh",
-    background: "#fff",
-    padding: "20px",
-    boxShadow: "2px 0 5px rgba(0,0,0,0.05)",
-  },
-  logo: { marginBottom: "30px" },
-  menu: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "15px",
-  },
-};
-
-*/
-
-/*
-
-import { FaTachometerAlt, FaCar, FaClipboardList, FaUsers, FaWrench } from 'react-icons/fa'
-
-export default function BarraLateral() {
-  return (
-    <div style={styles.sidebar}>
-     <h2 style={styles.logoGreen}>Park Admin</h2>
-
-      <div style={styles.menu}>
-        <a style={styles.link}>
-          <FaTachometerAlt style={styles.icon} />
-          Dashboard
-        </a>
-
-        <a style={styles.link}>
-          <FaCar style={styles.icon} />
-          Ocupación
-        </a>
-
-        <a style={styles.link}>
-          <FaClipboardList style={styles.icon} />
-          Reservaciones
-        </a>
-
-        <a style={styles.link}>
-          <FaUsers style={styles.icon} />
-          Usuarios
-        </a>
-
-        <a style={styles.link}>
-          <FaWrench style={styles.icon} />
-          Mantenimiento
-        </a>
-      </div>
-    </div>
-  )
-}
-
-const styles = {
-  sidebar: {
-    width: '220px',
-    height: '100vh',
-    background: '#ffffff',
-    borderRight: '1px solid #e5e7eb',
-    padding: '20px'
-  },
-  logo: {
-    marginBottom: '30px',
-    fontWeight: 'bold'
-  },
-  menu: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '15px'
-  },
-  link: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    color: '#374151',        // gris oscuro
-    textDecoration: 'none',  // quita el subrayado
-    fontSize: '16px',
-    cursor: 'pointer'
-  },
-  icon: {
-    fontSize: '16px'
-  },
-  logoGreen: {
-  color: '#22c55e',
-  marginBottom: '30px',
-  fontWeight: 'bold'
-},
-
-}
-
-*/
-
-/*
-import { Link } from 'react-router-dom'
-import { FaTachometerAlt, FaCar, FaClipboardList, FaUsers, FaWrench } from 'react-icons/fa'
-
-export default function BarraLateral() {
-  return (
-    <div style={styles.sidebar}>
-      <h2 style={styles.logoGreen}>Park Admin</h2>
-
-      <div style={styles.menu}>
-        <Link to="/" style={styles.link}>
-          <FaTachometerAlt style={styles.icon} />
-          Dashboard
-        </Link>
-
-        <Link to="/ocupacion" style={styles.link}>
-          <FaCar style={styles.icon} />
-          Ocupación
-        </Link>
-
-        <Link to="/reservaciones" style={styles.link}>
-          <FaClipboardList style={styles.icon} />
-          Reservaciones
-        </Link>
-
-        <Link to="/usuarios" style={styles.link}>
-          <FaUsers style={styles.icon} />
-          Usuarios
-        </Link>
-
-        <Link to="/mantenimiento" style={styles.link}>
-          <FaWrench style={styles.icon} />
-          Mantenimiento
-        </Link>
-      </div>
-    </div>
-  )
-}
-
-const styles = {
-  sidebar: {
-    width: '220px',
-    height: '100vh',
-    background: '#ffffff',
-    borderRight: '1px solid #e5e7eb',
-    padding: '20px',
-    position: 'fixed',
-    left: 0,
-    top: 0
-  },
-  logoGreen: {
-    color: '#22c55e',
-    marginBottom: '30px',
-    fontWeight: 'bold'
-  },
-  menu: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '15px'
-  },
-  link: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    color: '#374151',
-    textDecoration: 'none',
-    fontSize: '16px',
-    cursor: 'pointer'
-  },
-  icon: {
-    fontSize: '16px'
-  }
-}
-
-*/
-
-
-import { Link } from 'react-router-dom'
-import { 
-  FaTachometerAlt,
-  FaCar,
-  FaClipboardList,
-  FaUsers,
-  FaWrench,
-  FaMicrochip,
-  FaChartBar
-} from 'react-icons/fa'
-
-export default function BarraLateral() {
-  return (
-    <div style={styles.sidebar}>
-      <h2 style={styles.logoGreen}>Park Admin</h2>
-
-      <div style={styles.menu}>
-        <Link to="/" style={styles.link}>
-          <FaTachometerAlt /> Dashboard
-        </Link>
-
-        <Link to="/ocupacion" style={styles.link}>
-          <FaCar /> Ocupación
-        </Link>
-
-        <Link to="/reservaciones" style={styles.link}>
-          <FaClipboardList /> Reservaciones
-        </Link>
-
-        <Link to="/usuarios" style={styles.link}>
-          <FaUsers /> Usuarios
-        </Link>
-
-        <Link to="/sensores" style={styles.link}>
-          <FaMicrochip /> Sensores
-        </Link>
-
-        <Link to="/reportes" style={styles.link}>
-          <FaChartBar /> Reportes
-        </Link>
-
-        <Link to="/mantenimiento" style={styles.link}>
-          <FaWrench /> Mantenimiento
-        </Link>
-      </div>
-    </div>
-  )
-}
-
-const styles = {
-  sidebar: {
-    width: '220px',
-    height: '100vh',
-    background: '#ffffff',
-    borderRight: '1px solid #e5e7eb',
-    padding: '20px',
-    position: 'fixed'
-  },
-  logoGreen: {
-    color: '#22c55e',
-    fontWeight: 'bold',
-    marginBottom: '30px'
-  },
-  menu: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px'
-  },
-  link: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    color: '#374151',
-    textDecoration: 'none',
-    fontSize: '15px',
-    fontWeight: '500'
-  }
-}
-
-
-

@@ -1,0 +1,64 @@
+Date : 2025-12-10 20:58:53
+Directory : c:\Users\Euris Carlos\Desktop\panel-supabase
+Total : 28 files,  19292 codes, 1867 comments, 299 blanks, all 21458 lines
+
+Languages
++----------------+------------+------------+------------+------------+------------+
+| language       | files      | code       | comment    | blank      | total      |
++----------------+------------+------------+------------+------------+------------+
+| JSON           |          3 |     17,670 |          0 |          3 |     17,673 |
+| JavaScript JSX |         12 |      1,431 |      1,749 |        226 |      3,406 |
+| JavaScript     |          8 |         92 |        115 |         22 |        229 |
+| PostCSS        |          2 |         39 |          3 |         12 |         54 |
+| Markdown       |          1 |         38 |          0 |         33 |         71 |
+| HTML           |          1 |         21 |          0 |          3 |         24 |
+| XML            |          1 |          1 |          0 |          0 |          1 |
++----------------+------------+------------+------------+------------+------------+
+
+Directories
++-------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                          | files      | code       | comment    | blank      | total      |
++-------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                             |         28 |     19,292 |      1,867 |        299 |     21,458 |
+| . (Files)                                                                     |          5 |     17,711 |          3 |         37 |     17,751 |
+| public                                                                        |          2 |         46 |          0 |          4 |         50 |
+| src                                                                           |         21 |      1,535 |      1,864 |        258 |      3,657 |
+| src (Files)                                                                   |         10 |        119 |        115 |         37 |        271 |
+| src\componentes                                                               |          2 |         64 |        398 |         24 |        486 |
+| src\paginas                                                                   |          9 |      1,352 |      1,351 |        197 |      2,900 |
++-------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++-------------------------------------------------------------------------------+----------------+------------+------------+------------+------------+
+| filename                                                                      | language       | code       | comment    | blank      | total      |
++-------------------------------------------------------------------------------+----------------+------------+------------+------------+------------+
+| c:\Users\Euris Carlos\Desktop\panel-supabase\README.md                        | Markdown       |         38 |          0 |         33 |         71 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\package-lock.json                | JSON           |     17,603 |          0 |          1 |     17,604 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\package.json                     | JSON           |         42 |          0 |          1 |         43 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\postcss.config.js                | JavaScript     |          6 |          0 |          1 |          7 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\public\index.html                | HTML           |         21 |          0 |          3 |         24 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\public\manifest.json             | JSON           |         25 |          0 |          1 |         26 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\App.css                      | PostCSS        |         33 |          0 |         10 |         43 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\App.js                       | JavaScript     |         28 |        105 |          9 |        142 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\App.test.js                  | JavaScript     |          7 |          0 |          2 |          9 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\TestConnection.jsx           | JavaScript JSX |         15 |          0 |          5 |         20 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\componentes\Layout.jsx       | JavaScript JSX |         11 |         49 |          5 |         65 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\componentes\barraLateral.jsx | JavaScript JSX |         53 |        349 |         19 |        421 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\index.css                    | PostCSS        |          6 |          3 |          2 |         11 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\index.js                     | JavaScript     |         12 |          3 |          3 |         18 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\logo.svg                     | XML            |          1 |          0 |          0 |          1 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\paginas\Dashboard.jsx        | JavaScript JSX |        133 |        250 |         18 |        401 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\paginas\Mantenimiento.jsx    | JavaScript JSX |        131 |         48 |         14 |        193 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\paginas\Ocupacion.jsx        | JavaScript JSX |         94 |         64 |         13 |        171 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\paginas\Reportes.jsx         | JavaScript JSX |         98 |         49 |         13 |        160 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\paginas\Reservaciones.jsx    | JavaScript JSX |        129 |         68 |         16 |        213 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\paginas\Sensores.jsx         | JavaScript JSX |         99 |         47 |         11 |        157 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\paginas\Usuarios.jsx         | JavaScript JSX |        250 |        789 |         51 |      1,090 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\paginas\VehiculosTickets.jsx | JavaScript JSX |        176 |         17 |         21 |        214 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\paginas\ZonasParqueos.jsx    | JavaScript JSX |        242 |         19 |         40 |        301 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\reportWebVitals.js           | JavaScript     |         12 |          0 |          2 |         14 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\setupTests.js                | JavaScript     |          1 |          4 |          1 |          6 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\src\supabaseClient.js            | JavaScript     |          4 |          0 |          3 |          7 |
+| c:\Users\Euris Carlos\Desktop\panel-supabase\tailwind.config.js               | JavaScript     |         22 |          3 |          1 |         26 |
+| Total                                                                         |                |     19,292 |      1,867 |        299 |     21,458 |
++-------------------------------------------------------------------------------+----------------+------------+------------+------------+------------+

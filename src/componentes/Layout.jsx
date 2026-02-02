@@ -1,27 +1,16 @@
 
+
 import BarraLateral from './barraLateral'
 
 export default function Layout({ children }) {
   return (
-    <div style={styles.contenedor}>
+    
+    <div className="flex bg-uce-light min-h-screen"> 
       <BarraLateral />
-      <div style={styles.contenido}>
+      
+      <main className="ml-64 flex-1 p-8 overflow-y-auto">
         {children}
-      </div>
+      </main>
     </div>
   )
 }
-
-const styles = {
-  contenedor: {
-    display: 'flex'
-  },
-  contenido: {
-    marginLeft: '240px',
-    padding: '20px',
-    width: '100%'
-  }
-}
-  
-
-
