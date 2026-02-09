@@ -3,13 +3,13 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import { FaSearch, FaEdit, FaTrash, FaPlus, FaParking } from 'react-icons/fa';
+import Swal from 'sweetalert2'; 
+import { FaSearch, FaEdit, FaTrash, FaParking } from 'react-icons/fa'; 
 
 export default function ZonasParqueo() {
   const [zonas, setZonas] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingZone, setEditingZone] = useState(null); 
-  
   
   const initialFormState = { Nombre_Zona: '', Capacidad_Total: '' };
   const [formData, setFormData] = useState(initialFormState);
@@ -19,17 +19,17 @@ export default function ZonasParqueo() {
   }, []);
 
   const loadZonas = async () => {
-   
-    const { data, error } = await supabase
-      .from('ZONA_ESTACIONAMIENTO')
-      .select('*')
-      .order('Id_Zona', { ascending: true });
+    try {
+        const { data, error } = await supabase
+          .from('zonas_estacionamiento') 
+          .select('*')
+          .order('Id_Zona', { ascending: true });
 
-    if (error) {
-      console.error('Error al cargar zonas:', error.message);
-      return;
+        if (error) throw error;
+        setZonas(data || []);
+    } catch (error) {
+        console.error('Error:', error.message);
     }
-    setZonas(data || []);
   };
 
   const handleEdit = (zone) => {
@@ -41,16 +41,29 @@ export default function ZonasParqueo() {
   };
 
   const handleDelete = async (zoneId) => {
-    if (window.confirm('¿Estás seguro de que quieres eliminar esta zona?')) {
-      const { error } = await supabase
-        .from('ZONA_ESTACIONAMIENTO')
-        .delete()
-        .eq('Id_Zona', zoneId);
+    const result = await Swal.fire({
+        title: '¿Eliminar zona?',
+        text: "Esta acción no se puede deshacer.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        confirmButtonText: 'Sí, eliminar'
+    });
 
-      if (error) alert('Error al eliminar zona: ' + error.message);
-      else {
-        alert('Zona eliminada con éxito.');
-        loadZonas(); 
+    if (result.isConfirmed) {
+      try {
+          const { error } = await supabase
+            .from('zonas_estacionamiento')
+            .delete()
+            .eq('Id_Zona', zoneId);
+
+          if (error) throw error;
+
+          Swal.fire('Eliminado', 'La zona ha sido eliminada.', 'success');
+          loadZonas(); 
+
+      } catch (error) {
+          Swal.fire('Error', error.message, 'error');
       }
     }
   };
@@ -58,29 +71,42 @@ export default function ZonasParqueo() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    // Validaciones
-    if (!formData.Nombre_Zona.trim()) return alert("El nombre de la zona es obligatorio.");
-    if (parseInt(formData.Capacidad_Total) <= 0) return alert("La capacidad debe ser mayor a 0.");
+    if (!formData.Nombre_Zona.trim()) return Swal.fire('Atención', "El nombre de la zona es obligatorio.", 'warning');
+    if (parseInt(formData.Capacidad_Total) <= 0) return Swal.fire('Atención', "La capacidad debe ser mayor a 0.", 'warning');
 
     const payload = {
         Nombre_Zona: formData.Nombre_Zona,
         Capacidad_Total: parseInt(formData.Capacidad_Total)
     };
     
-    let error;
-    if (editingZone) {
-       ({ error } = await supabase.from('ZONA_ESTACIONAMIENTO').update(payload).eq('Id_Zona', editingZone.Id_Zona));
-    } else {
-       ({ error } = await supabase.from('ZONA_ESTACIONAMIENTO').insert([payload]));
-    }
+    try {
+        Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading() });
+        
+        let error;
+        if (editingZone) {
+            // Actualizar
+           ({ error } = await supabase
+                .from('zonas_estacionamiento')
+                .update(payload)
+                .eq('Id_Zona', editingZone.Id_Zona));
+        } else {
+            // Crear
+           ({ error } = await supabase
+                .from('zonas_estacionamiento')
+                .insert([payload]));
+        }
 
-    if (error) {
-        alert("Error: " + error.message);
-    } else {
-        alert(editingZone ? "Zona actualizada." : "Zona creada.");
+        if (error) throw error;
+
+        Swal.fire('Éxito', editingZone ? "Zona actualizada." : "Zona creada correctamente.", 'success');
+        
         setFormData(initialFormState);
         setEditingZone(null); 
         loadZonas(); 
+
+    } catch (error) {
+        console.error(error);
+        Swal.fire('Error', error.message, 'error');
     }
   };
   
@@ -90,29 +116,24 @@ export default function ZonasParqueo() {
 
   return (
     <Layout>
+      
       <header className="mb-8 flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Gestión de Zonas</h2>
           <p className="text-gray-500">Administra las áreas de estacionamiento.</p>
         </div>
-        <button 
-          className="flex items-center gap-2 bg-primary hover:bg-blue-700 text-white py-2.5 px-5 rounded-lg font-semibold shadow-md"
-          onClick={() => { setEditingZone(null); setFormData(initialFormState); }}
-        >
-          <FaPlus /> Agregar Nueva Zona
-        </button>
       </header>
 
       <div className="bg-white p-8 rounded-xl shadow-lg border border-gray-100 grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* Lista */}
+        
         <section className="lg:col-span-2">
           <h3 className="text-xl font-semibold text-gray-900 mb-4">Zonas Registradas</h3>
           <div className="relative mb-6">
             <input 
               type="text" 
               placeholder="Buscar zona..." 
-              className="w-full pl-10 pr-4 py-2 border rounded-lg"
+              className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-primary focus:border-primary"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -123,31 +144,35 @@ export default function ZonasParqueo() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead>
                 <tr className="bg-gray-50">
-                  <th className="px-6 py-3 text-left font-medium text-gray-500">Nombre Zona</th>
-                  <th className="px-6 py-3 text-left font-medium text-gray-500">Capacidad Total</th>
-                  <th className="px-6 py-3 font-medium text-gray-500">Acciones</th>
+                  <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase text-xs">Nombre Zona</th>
+                  <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase text-xs">Capacidad Total</th>
+                  <th className="px-6 py-3 text-center font-bold text-gray-500 uppercase text-xs">Acciones</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredZonas.map(z => (
-                  <tr key={z.Id_Zona} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 font-medium text-gray-900">
-                      <FaParking className='inline mr-2 text-blue-500'/> {z.Nombre_Zona}
-                    </td>
-                    <td className="px-6 py-4 text-gray-500">{z.Capacidad_Total} vehículos</td>
-                    <td className="px-6 py-4 flex gap-3 justify-center">
-                      <button onClick={() => handleEdit(z)} className="text-blue-600"><FaEdit /></button>
-                      <button onClick={() => handleDelete(z.Id_Zona)} className="text-red-600"><FaTrash /></button>
-                    </td>
-                  </tr>
-                ))}
+                {filteredZonas.length === 0 ? (
+                    <tr><td colSpan="3" className="text-center py-6 text-gray-500">No hay zonas registradas.</td></tr>
+                ) : (
+                    filteredZonas.map(z => (
+                    <tr key={z.Id_Zona} className="hover:bg-gray-50 transition">
+                        <td className="px-6 py-4 font-medium text-gray-900">
+                        <FaParking className='inline mr-2 text-blue-500'/> {z.Nombre_Zona}
+                        </td>
+                        <td className="px-6 py-4 text-gray-500">{z.Capacidad_Total} vehículos</td>
+                        <td className="px-6 py-4 flex gap-3 justify-center">
+                        <button onClick={() => handleEdit(z)} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-2 rounded-full transition"><FaEdit /></button>
+                        <button onClick={() => handleDelete(z.Id_Zona)} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-full transition"><FaTrash /></button>
+                        </td>
+                    </tr>
+                    ))
+                )}
               </tbody>
             </table>
           </div>
         </section>
 
-        {/* FORMULARIO */}
-        <section className="lg:col-span-1 bg-gray-50 p-6 rounded-lg border border-gray-200 h-fit">
+        
+        <section className="lg:col-span-1 bg-gray-50 p-6 rounded-lg border border-gray-200 h-fit sticky top-6">
           <h3 className="text-xl font-semibold text-gray-900 mb-6">{editingZone ? "Editar Zona" : "Crear Nueva Zona"}</h3>
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div>
@@ -157,7 +182,7 @@ export default function ZonasParqueo() {
                 value={formData.Nombre_Zona}
                 onChange={(e) => setFormData({...formData, Nombre_Zona: e.target.value})}
                 required
-                className="w-full border p-2 rounded focus:ring-blue-500"
+                className="w-full border p-2 rounded focus:ring-primary focus:border-primary"
                 placeholder="Ej: Sótano 1"
               />
             </div>
@@ -168,15 +193,15 @@ export default function ZonasParqueo() {
                 value={formData.Capacidad_Total}
                 onChange={(e) => setFormData({...formData, Capacidad_Total: e.target.value})}
                 required
-                className="w-full border p-2 rounded focus:ring-blue-500"
+                className="w-full border p-2 rounded focus:ring-primary focus:border-primary"
                 placeholder="Ej: 50"
               />
             </div>
-            <div className="pt-4 flex justify-end gap-3">
+            <div className="pt-4 flex justify-end gap-3 border-t mt-4">
               {editingZone && (
-                  <button type="button" onClick={() => { setEditingZone(null); setFormData(initialFormState); }} className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded">Cancelar</button>
+                  <button type="button" onClick={() => { setEditingZone(null); setFormData(initialFormState); }} className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded transition">Cancelar</button>
               )}
-              <button type="submit" className="px-4 py-2 bg-primary text-white rounded hover:bg-blue-700 font-semibold">
+              <button type="submit" className="px-4 py-2 bg-primary text-white rounded hover:bg-blue-700 font-semibold shadow transition">
                 {editingZone ? "Actualizar" : "Guardar"}
               </button>
             </div>

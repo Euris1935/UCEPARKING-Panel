@@ -3,12 +3,12 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient'; 
 import Layout from '../componentes/Layout';
-import { FaCar, FaticketAlt, FaExclamationTriangle, FaChartPie, FaParking } from 'react-icons/fa';
+import { FaCar, FaTicketAlt, FaExclamationTriangle, FaChartPie, FaParking } from 'react-icons/fa';
 
 export default function Dashboard() {
 
   const [stats, setStats] = useState({
-    totalPlazas: 9, 
+    totalPlazas: 0, 
     ocupadas: 0,
     reservadas: 0,
     libres: 0,
@@ -21,10 +21,11 @@ export default function Dashboard() {
   useEffect(() => {
     loadDashboardData();
 
-
+    
+    // Escuchamos cambios en 'plazas' (ocupación) y 'RESERVA' (reservas futuras)
     const channel = supabase
       .channel('dashboard_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'PLAZA' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'plazas' }, () => {
         loadDashboardData(); 
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'RESERVA' }, () => {
@@ -39,14 +40,21 @@ export default function Dashboard() {
 
   const loadDashboardData = async () => {
     try {
-      // estado de las plazas
+      // carga los estados para saber que ID corresponde a que nombre
+      const { data: estados, error: errorEstados } = await supabase
+        .from('estado_plaza')
+        .select('*');
+
+      if (errorEstados) throw errorEstados;
+
+      // carga todas las plazas con su id_estado
       const { data: plazas, error: errorPlazas } = await supabase
-        .from('PLAZA')
-        .select('Estado_Actual');
+        .from('plazas')
+        .select('id_estado');
 
       if (errorPlazas) throw errorPlazas;
 
-      // reservas activas
+      //  conteo de reservas activas
       const { count: reservasCount, error: errorReservas } = await supabase
         .from('RESERVA')
         .select('*', { count: 'exact', head: true })
@@ -54,12 +62,27 @@ export default function Dashboard() {
 
       if (errorReservas) throw errorReservas;
 
-      // estadísticas
+      // calculo de estadisticas
+      
       const total = plazas.length;
-      const ocupadas = plazas.filter(p => p.Estado_Actual === 'Ocupado').length;
-      const reservadas = plazas.filter(p => p.Estado_Actual === 'Reservada').length;
-      const mantenimiento = plazas.filter(p => p.Estado_Actual === 'Mantenimiento').length;
-      const libres = plazas.filter(p => p.Estado_Actual === 'Libre').length;
+      
+      
+      const getIdByName = (name) => {
+          const found = estados.find(e => e.nombre_estado.toUpperCase() === name.toUpperCase());
+          return found ? found.id_estado : -1;
+      };
+
+      const idOcupada = getIdByName('OCUPADA');
+      const idReservada = getIdByName('RESERVADA');
+      const idLibre = getIdByName('LIBRE');
+      const idMantenimiento = getIdByName('FUERA_DE_SERVICIO'); 
+
+      // Contamos las plazas comparando los IDs
+      const ocupadas = plazas.filter(p => p.id_estado === idOcupada).length;
+      const reservadas = plazas.filter(p => p.id_estado === idReservada).length;
+      const mantenimiento = plazas.filter(p => p.id_estado === idMantenimiento).length;
+      
+      const libres = plazas.filter(p => p.id_estado === idLibre || p.id_estado === null).length;
 
       setStats({
         totalPlazas: total,
@@ -77,7 +100,7 @@ export default function Dashboard() {
     }
   };
 
-  // Calculo de Porcentaje de Ocupacion
+  //  Porcentaje de Ocupacion
   const ocupacionPorcentaje = stats.totalPlazas > 0 
     ? Math.round(((stats.ocupadas + stats.reservadas) / stats.totalPlazas) * 100) 
     : 0;
@@ -89,10 +112,10 @@ export default function Dashboard() {
         <p className="text-gray-500">Resumen de actividad en tiempo real.</p>
       </header>
 
-     
+      {/* TARJETAS DE ESTADÍSTICAS */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         
-        
+        {/* OCUPACIÓN */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
           <div>
             <p className="text-gray-500 text-sm font-semibold uppercase">Ocupación Actual</p>
@@ -108,7 +131,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        
+
+          
+        {/* Reservaciones */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
           <div>
             <p className="text-gray-500 text-sm font-semibold uppercase">Reservas Activas</p>
@@ -122,7 +147,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        
+        {/* Mantenimiento */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
           <div>
             <p className="text-gray-500 text-sm font-semibold uppercase">Mantenimiento</p>
@@ -136,7 +161,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-       
+        {/* Porcentaje */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
           <div>
             <p className="text-gray-500 text-sm font-semibold uppercase">Nivel de Uso</p>
@@ -157,7 +182,7 @@ export default function Dashboard() {
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-       
+        {/* Desglose Numérico */}
         <div className="bg-white p-6 rounded-xl shadow border border-gray-200">
           <h3 className="font-bold text-gray-800 mb-4">Estado del Parqueo</h3>
           <div className="space-y-4">
@@ -187,12 +212,12 @@ export default function Dashboard() {
           </div>
         </div>
 
-        
+        {/* Panel Informativo */}
         <div className="bg-gradient-to-r from-blue-600 to-blue-800 p-6 rounded-xl shadow text-white flex flex-col justify-center">
             <h3 className="text-2xl font-bold mb-2">Panel de Control UCE Parking</h3>
             <p className="mb-6 opacity-90">
                 El sistema está monitoreando {stats.totalPlazas} plazas en tiempo real. 
-                Los sensores actualizarán el estado automáticamente.
+                Los sensores detectarán automáticamente los cambios de ocupación.
             </p>
             <div className="flex gap-3">
                 <button className="bg-white text-blue-700 px-4 py-2 rounded-lg font-bold text-sm hover:bg-gray-100 transition">
