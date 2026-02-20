@@ -20,8 +20,8 @@ export default function Empleados() {
   const [showModal, setShowModal] = useState(false);
   
   // editar
-  const [editingEmpleadoId, setEditingEmpleadoId] = useState(null); // ID tabla empleados
-  const [editingPersonaId, setEditingPersonaId] = useState(null);   // ID tabla personas
+  const [editingEmpleadoId, setEditingEmpleadoId] = useState(null); 
+  const [editingPersonaId, setEditingPersonaId] = useState(null);   
 
   const initialForm = { 
       nombre: '', 
@@ -283,7 +283,7 @@ export default function Empleados() {
                 </h3>
                 <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
                     
-                    <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Información Personal (Tabla Personas)</div>
+                    <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Información Personal </div>
                     
                     <div>
                         <label className="block text-xs mb-1">Nombre</label>
@@ -312,7 +312,7 @@ export default function Empleados() {
                     <input className="w-full border p-2 rounded" placeholder="Teléfono" value={formData.telefono} onChange={e => setFormData({...formData, telefono: e.target.value})} />
                     <input className="w-full border p-2 rounded" placeholder="Dirección" value={formData.direccion} onChange={e => setFormData({...formData, direccion: e.target.value})} />
 
-                    <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Datos Laborales (Tabla Empleados)</div>
+                    <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Datos Laborales</div>
                     
                     
                     <div>

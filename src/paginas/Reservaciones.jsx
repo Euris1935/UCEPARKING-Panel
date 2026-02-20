@@ -4,23 +4,22 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2'; 
-import { FaSearch, FaEdit, FaCheckCircle, FaTimesCircle, FaPlus } from 'react-icons/fa';
+import { FaSearch, FaEdit, FaCheckCircle, FaTimesCircle, FaPlus, FaCalendarAlt, FaTrash, FaLock } from 'react-icons/fa';
 
 export default function Reservaciones() {
   const [reservas, setReservas] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Estados para catalogos y formulario
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(false);
   
-  // Estado para controlar la edicion
   const [editingReservaId, setEditingReservaId] = useState(null);
-  const [originalPlazaId, setOriginalPlazaId] = useState(null); // Para saber si cambió la plaza
+  const [originalPlazaId, setOriginalPlazaId] = useState(null); 
 
   const [personasList, setPersonasList] = useState([]); 
   const [plazasList, setPlazasList] = useState([]);
-  const [estadosList, setEstadosList] = useState([]); 
+  const [estadosPlazaList, setEstadosPlazaList] = useState([]); 
+  const [estadosReservaList, setEstadosReservaList] = useState([]);
   
   const initialForm = {
     id_persona: '',
@@ -43,7 +42,8 @@ export default function Reservaciones() {
           .select(`
             *,
             personas (id, nombre, apellido),
-            plazas (Id_Plaza, Numero_Plaza)
+            plazas (Id_Plaza, Numero_Plaza),
+            estado_reserva ( nombre_estado ) 
           `)
           .order('Fecha_Hora_Inicio', { ascending: false });
 
@@ -58,32 +58,31 @@ export default function Reservaciones() {
     try {
         const { data: personas } = await supabase.from('personas').select('id, nombre, apellido').order('nombre');
         const { data: plazas } = await supabase.from('plazas').select('Id_Plaza, Numero_Plaza').order('Numero_Plaza');
-        const { data: estados } = await supabase.from('estado_plaza').select('*');
+        const { data: estPlaza } = await supabase.from('estado_plaza').select('*');
+        const { data: estReserva } = await supabase.from('estado_reserva').select('*'); 
         
         setPersonasList(personas || []);
         setPlazasList(plazas || []);
-        setEstadosList(estados || []);
+        setEstadosPlazaList(estPlaza || []);
+        setEstadosReservaList(estReserva || []);
     } catch (error) {
         console.error("Error datos auxiliares:", error);
     }
   };
 
-  const getEstadoId = (nombreEstado) => {
-      const estado = estadosList.find(e => e.nombre_estado.toUpperCase() === nombreEstado.toUpperCase());
-      return estado ? estado.id_estado : null;
+  const getEstadoPlazaId = (nombre) => estadosPlazaList.find(e => e.nombre_estado.toLowerCase() === nombre.toLowerCase())?.id_estado || 1;
+  
+  const getEstadoReservaId = (nombre) => {
+      return estadosReservaList.find(e => e.nombre_estado.toUpperCase() === nombre.toUpperCase())?.id_estado;
   };
 
-  // Función para formatear fecha de DB a input datetime-local
   const formatDateForInput = (dateString) => {
       if (!dateString) return '';
       const date = new Date(dateString);
-      // Ajuste para zona horaria local
       const offset = date.getTimezoneOffset() * 60000;
-      const localISOTime = new Date(date.getTime() - offset).toISOString().slice(0, 16);
-      return localISOTime;
+      return new Date(date.getTime() - offset).toISOString().slice(0, 16);
   };
   
- 
   const handleEdit = (reserva) => {
       setEditingReservaId(reserva.Id_Reserva);
       setOriginalPlazaId(reserva.Id_Plaza);
@@ -93,7 +92,6 @@ export default function Reservaciones() {
           Fecha_Hora_Inicio: formatDateForInput(reserva.Fecha_Hora_Inicio),
           Fecha_Hora_Fin: formatDateForInput(reserva.Fecha_Hora_Fin)
       });
-      
       setShowModal(true);
   };
 
@@ -113,11 +111,16 @@ export default function Reservaciones() {
             throw new Error("La fecha de fin debe ser posterior a la fecha de inicio.");
         }
 
-        const idLibre = getEstadoId('LIBRE');
-        const idReservada = getEstadoId('RESERVADA');
+        const idPlazaLibre = getEstadoPlazaId('LIBRE');
+        const idPlazaReservada = getEstadoPlazaId('RESERVADA');
+        
+        // CORRECCIÓN: Usamos 'ACTIVA'
+        const idReservaActiva = getEstadoReservaId('ACTIVA'); 
+
+        if (!idReservaActiva) throw new Error("No se encontró el estado 'ACTIVA' en la base de datos.");
 
         if (isUpdating) {
-          
+            // ACTUALIZAR
             const { error: errorUpdate } = await supabase
                 .from('RESERVA')
                 .update({
@@ -130,42 +133,28 @@ export default function Reservaciones() {
 
             if (errorUpdate) throw errorUpdate;
 
-            
             if (parseInt(formData.Id_Plaza) !== originalPlazaId) {
-               
                 if (originalPlazaId) {
-                    await supabase.from('plazas')
-                        .update({ Estado_Actual: 'LIBRE', id_estado: idLibre })
-                        .eq('Id_Plaza', originalPlazaId);
+                    await supabase.from('plazas').update({ Estado_Actual: 'LIBRE', id_estado: idPlazaLibre }).eq('Id_Plaza', originalPlazaId);
                 }
-                //reservar
-                await supabase.from('plazas')
-                    .update({ Estado_Actual: 'RESERVADA', id_estado: idReservada })
-                    .eq('Id_Plaza', parseInt(formData.Id_Plaza));
+                await supabase.from('plazas').update({ Estado_Actual: 'RESERVADA', id_estado: idPlazaReservada }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
             }
-
             Swal.fire('Actualizada', 'La reserva ha sido modificada.', 'success');
 
         } else {
-            //crear nueva
+            // CREAR (Estado 'ACTIVA')
             const { error: errorReserva } = await supabase.from('RESERVA').insert([{
                 id_persona: formData.id_persona,
                 Id_Plaza: parseInt(formData.Id_Plaza),
                 Fecha_Hora_Inicio: formData.Fecha_Hora_Inicio,
                 Fecha_Hora_Fin: formData.Fecha_Hora_Fin,
-                Estado_Reserva: 'Activa'
+                Estado_Reserva: 'ACTIVA', 
+                id_estado: idReservaActiva
             }]);
 
             if (errorReserva) throw errorReserva;
 
-            
-            const { error: errorPlaza } = await supabase
-                .from('plazas')
-                .update({ Estado_Actual: 'RESERVADA', id_estado: idReservada }) 
-                .eq('Id_Plaza', parseInt(formData.Id_Plaza));
-
-            if (errorPlaza) console.warn("Error visual plaza:", errorPlaza);
-
+            await supabase.from('plazas').update({ Estado_Actual: 'RESERVADA', id_estado: idPlazaReservada }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
             Swal.fire('Creada', 'Reserva registrada exitosamente.', 'success');
         }
         
@@ -179,6 +168,8 @@ export default function Reservaciones() {
     }
   };
 
+
+
   const handleCancel = async (idReserva, idPlaza) => {
     const result = await Swal.fire({
         title: '¿Cancelar Reserva?',
@@ -191,62 +182,98 @@ export default function Reservaciones() {
 
     if (result.isConfirmed) {
         try {
-            const { error: rError } = await supabase
-                .from('RESERVA')
-                .update({ Estado_Reserva: 'Cancelada' })
-                .eq('Id_Reserva', idReserva);
-            
-            if (rError) throw rError;
+           
+            const idReservaCancelada = getEstadoReservaId('CANCELADA');
+            const idPlazaLibre = getEstadoPlazaId('LIBRE');
 
+            if (!idReservaCancelada) throw new Error("No se encontró el estado 'CANCELADA' en la base de datos.");
+
+            await supabase.from('RESERVA').update({ Estado_Reserva: 'CANCELADA', id_estado: idReservaCancelada }).eq('Id_Reserva', idReserva);
+            
             if (idPlaza) {
-                const idLibre = getEstadoId('LIBRE');
-                await supabase
-                    .from('plazas')
-                    .update({ Estado_Actual: 'LIBRE', id_estado: idLibre })
-                    .eq('Id_Plaza', idPlaza);
+                await supabase.from('plazas').update({ Estado_Actual: 'LIBRE', id_estado: idPlazaLibre }).eq('Id_Plaza', idPlaza);
             }
 
-            Swal.fire('Cancelada', 'La reserva ha sido cancelada.', 'success');
+            Swal.fire('Cancelada', 'Reserva cancelada.', 'success');
             loadReservas();
-
         } catch (error) {
             Swal.fire('Error', error.message, 'error');
         }
     }
   };
   
-  const handleMarkUsed = async (id) => {
+ 
+  const handleMarkFinalized = async (id) => {
     try {
+        const idEstadoFinalizada = getEstadoReservaId('FINALIZADA');
+        
+        if (!idEstadoFinalizada) return Swal.fire('Error', 'No existe el estado "FINALIZADA" en la base de datos.', 'error');
+
         const { error } = await supabase
             .from('RESERVA')
-            .update({ Estado_Reserva: 'Usada' })
+            .update({ 
+                Estado_Reserva: 'FINALIZADA', 
+                id_estado: idEstadoFinalizada 
+            })
             .eq('Id_Reserva', id);
             
         if (error) throw error;
         loadReservas();
+        Swal.fire('Finalizada', 'Reserva marcada como completada.', 'success');
     } catch (error) {
         Swal.fire('Error', error.message, 'error');
     }
   };
 
-  const StatusBadge = ({ status }) => {
+  const handleDelete = async (idReserva, idPlaza) => {
+      const result = await Swal.fire({
+          title: '¿Eliminar registro?',
+          text: "Se borrará permanentemente de la base de datos.",
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonColor: '#d33',
+          confirmButtonText: 'Sí, borrar'
+      });
+
+      if (result.isConfirmed) {
+          try {
+              if (idPlaza) {
+                const idPlazaLibre = getEstadoPlazaId('LIBRE');
+                await supabase.from('plazas').update({ Estado_Actual: 'LIBRE', id_estado: idPlazaLibre }).eq('Id_Plaza', idPlaza);
+              }
+
+              const { error } = await supabase.from('RESERVA').delete().eq('Id_Reserva', idReserva);
+              if (error) throw error;
+
+              Swal.fire('Borrado', 'Registro eliminado.', 'success');
+              loadReservas();
+          } catch (error) {
+              Swal.fire('Error', error.message, 'error');
+          }
+      }
+  };
+
+ 
+  const StatusBadge = ({ reserva }) => {
+    
+    const nombreEstado = reserva.estado_reserva?.nombre_estado || reserva.Estado_Reserva || 'Desconocido';
+    
     let classes = "px-3 py-1 text-xs font-semibold rounded-full capitalize ";
-    const s = status ? status.toLowerCase() : '';
-    switch (s) {
-      case 'activa': classes += 'bg-green-100 text-green-800'; break;
-      case 'expirada': classes += 'bg-yellow-100 text-yellow-800'; break;
-      case 'cancelada': classes += 'bg-red-100 text-red-800'; break;
-      case 'usada': classes += 'bg-blue-100 text-blue-800'; break;
-      default: classes += 'bg-gray-100 text-gray-800';
-    }
-    return <span className={classes}>{status}</span>;
+    const s = nombreEstado.toUpperCase();
+    
+    if (s === 'ACTIVA') classes += 'bg-green-100 text-green-800';
+    else if (s === 'CANCELADA') classes += 'bg-red-100 text-red-800';
+    else if (s === 'FINALIZADA') classes += 'bg-blue-100 text-blue-800';
+    else classes += 'bg-gray-100 text-gray-800';
+
+    return <span className={classes}>{nombreEstado}</span>;
   };
 
   const filteredReservas = reservas.filter(r => {
     const nombreCompleto = `${r.personas?.nombre || ''} ${r.personas?.apellido || ''}`.toLowerCase();
     const numeroPlaza = r.plazas?.Numero_Plaza?.toLowerCase() || '';
     const search = searchTerm.toLowerCase();
-    return nombreCompleto.includes(search) || numeroPlaza.includes(search) || String(r.Id_Reserva).includes(search);
+    return nombreCompleto.includes(search) || numeroPlaza.includes(search);
   });
 
   return (
@@ -264,15 +291,15 @@ export default function Reservaciones() {
         </button>
       </header>
 
-     
+      
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-xl w-96">
-                <h3 className="text-xl font-bold mb-4 text-gray-800">
+            <div className="bg-white p-6 rounded-lg shadow-xl w-96 animate-fadeIn">
+                <h3 className="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2">
+                    <FaCalendarAlt className="text-primary"/> 
                     {isUpdating ? 'Editar Reserva' : 'Crear Reserva'}
                 </h3>
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Persona (Cliente)</label>
                         <select 
@@ -283,13 +310,10 @@ export default function Reservaciones() {
                         >
                             <option value="">-- Seleccionar Persona --</option>
                             {personasList.map(p => (
-                                <option key={p.id} value={p.id}>
-                                    {p.nombre} {p.apellido}
-                                </option>
+                                <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
                             ))}
                         </select>
                     </div>
-
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Plaza</label>
                         <select 
@@ -300,38 +324,21 @@ export default function Reservaciones() {
                         >
                             <option value="">-- Seleccionar Plaza --</option>
                             {plazasList.map(p => (
-                                <option key={p.Id_Plaza} value={p.Id_Plaza}>
-                                    {p.Numero_Plaza}
-                                </option>
+                                <option key={p.Id_Plaza} value={p.Id_Plaza}>{p.Numero_Plaza}</option>
                             ))}
                         </select>
                     </div>
-
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Fecha Inicio</label>
-                        <input 
-                            type="datetime-local"
-                            className="w-full border p-2 rounded focus:ring-primary focus:border-primary"
-                            value={formData.Fecha_Hora_Inicio}
-                            onChange={(e) => setFormData({...formData, Fecha_Hora_Inicio: e.target.value})}
-                            required
-                        />
+                        <input type="datetime-local" className="w-full border p-2 rounded" value={formData.Fecha_Hora_Inicio} onChange={(e) => setFormData({...formData, Fecha_Hora_Inicio: e.target.value})} required />
                     </div>
-
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Fecha Fin</label>
-                        <input 
-                            type="datetime-local"
-                            className="w-full border p-2 rounded focus:ring-primary focus:border-primary"
-                            value={formData.Fecha_Hora_Fin}
-                            onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})}
-                            required
-                        />
+                        <input type="datetime-local" className="w-full border p-2 rounded" value={formData.Fecha_Hora_Fin} onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})} required />
                     </div>
-
-                    <div className="flex justify-end gap-2 pt-2">
+                    <div className="flex justify-end gap-2 pt-2 border-t mt-4">
                         <button type="button" onClick={resetForm} className="px-4 py-2 text-gray-600 bg-gray-100 rounded hover:bg-gray-200">Cancelar</button>
-                        <button type="submit" disabled={loading} className="px-4 py-2 bg-primary text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                        <button type="submit" disabled={loading} className="px-4 py-2 bg-primary text-white rounded hover:bg-blue-700 disabled:opacity-50 shadow">
                             {loading ? "Procesando..." : (isUpdating ? "Actualizar" : "Crear")}
                         </button>
                     </div>
@@ -366,35 +373,48 @@ export default function Reservaciones() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredReservas.map(r => (
-                <tr key={r.Id_Reserva} className="hover:bg-gray-50 transition duration-150">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
-                    {r.personas?.nombre || 'Desconocido'} {r.personas?.apellido || ''}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-bold">
-                    {r.plazas?.Numero_Plaza || 'N/A'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(r.Fecha_Hora_Inicio).toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(r.Fecha_Hora_Fin).toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <StatusBadge status={r.Estado_Reserva} />
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium flex gap-3 justify-end">
-                    {r.Estado_Reserva === 'Activa' && (
-                        <>
-                            <button onClick={() => handleMarkUsed(r.Id_Reserva)} title="Marcar como Usada" className="text-green-600 hover:text-green-800 p-1 hover:bg-green-50 rounded"><FaCheckCircle size={18}/></button>
-                            <button onClick={() => handleCancel(r.Id_Reserva, r.Id_Plaza)} title="Cancelar Reserva" className="text-red-600 hover:text-red-800 p-1 hover:bg-red-50 rounded"><FaTimesCircle size={18}/></button>
-                        </>
-                    )}
-                    
-                    <button onClick={() => handleEdit(r)} title="Editar Reserva" className="text-blue-600 hover:text-blue-800 p-1 hover:bg-blue-50 rounded"><FaEdit size={18}/></button>
-                  </td>
-                </tr>
-              ))}
+              {filteredReservas.map(r => {
+                const nombreEstado = r.estado_reserva?.nombre_estado || r.Estado_Reserva || '';
+                
+                const isActive = nombreEstado.toUpperCase() === 'ACTIVA';
+
+                return (
+                  <tr key={r.Id_Reserva} className="hover:bg-gray-50 transition duration-150">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                      {r.personas?.nombre || 'Desconocido'} {r.personas?.apellido || ''}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-bold">
+                      {r.plazas?.Numero_Plaza || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {new Date(r.Fecha_Hora_Inicio).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {new Date(r.Fecha_Hora_Fin).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <StatusBadge reserva={r} />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium flex gap-3 justify-end items-center">
+                      
+                      {isActive ? (
+                          <>
+                              <button onClick={() => handleMarkFinalized(r.Id_Reserva)} title="Finalizar Reserva" className="text-green-600 hover:text-green-800 p-1.5 hover:bg-green-50 rounded"><FaCheckCircle size={18}/></button>
+                              <button onClick={() => handleCancel(r.Id_Reserva, r.Id_Plaza)} title="Cancelar" className="text-yellow-600 hover:text-yellow-800 p-1.5 hover:bg-yellow-50 rounded"><FaTimesCircle size={18}/></button>
+                              <button onClick={() => handleEdit(r)} title="Editar" className="text-blue-600 hover:text-blue-800 p-1.5 hover:bg-blue-50 rounded"><FaEdit size={18}/></button>
+                              <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza)} title="Eliminar" className="text-red-600 hover:text-red-800 p-1.5 hover:bg-red-50 rounded"><FaTrash size={16}/></button>
+                          </>
+                      ) : (
+                          <div className="flex items-center gap-2 text-gray-400 cursor-not-allowed" title="Reserva cerrada (Solo lectura)">
+                              <FaLock size={14} />
+                              <span className="text-xs italic">Bloqueada</span>
+                          </div>
+                      )}
+
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -402,3 +422,8 @@ export default function Reservaciones() {
     </Layout>
   );
 }
+
+
+
+
+
