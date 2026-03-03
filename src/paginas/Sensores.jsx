@@ -987,10 +987,14 @@ export default function Sensores() {
     modelo: '',
     ubicacion: '',
     id_plaza: '',
-    estado_operativo: 'Operativo', 
-    id_estado_sensor: '', 
+    estado_operativo: 'Operativo',
+    id_estado_sensor: '',
     fecha_instalacion: new Date().toISOString().split('T')[0],
-    ultimo_mantenimiento: ''
+    ultimo_mantenimiento: '',
+    // RF4: Parámetros IoT configurables
+    param_frecuencia: 5,       // Frecuencia de muestreo (segundos)
+    param_umbral: 10,          // Umbral de detección (cm)
+    param_timeout: 30          // Timeout de alerta (segundos)
   };
   const [formData, setFormData] = useState(initialForm);
 
@@ -1019,7 +1023,7 @@ export default function Sensores() {
 
       const { data: estSensor } = await supabase.from('estado_sensor').select('*').order('nombre_estado');
       setEstadosSensor(estSensor || []);
-      
+
     } catch (error) {
       console.error("Error cargando datos:", error.message);
     }
@@ -1027,9 +1031,23 @@ export default function Sensores() {
 
   const handleEdit = (disp) => {
     setEditingId(disp.id_dispositivo);
+    // RF4: Recuperar parámetros IoT desde el campo descripcion si fue serializado con JSON
+    let params = { param_frecuencia: 5, param_umbral: 10, param_timeout: 30 };
+    let descTexto = disp.tipos_dispositivos?.descripcion || '';
+    try {
+      if (descTexto.startsWith('{')) {
+        const parsed = JSON.parse(descTexto);
+        params = {
+          param_frecuencia: parsed.frecuencia ?? 5,
+          param_umbral: parsed.umbral ?? 10,
+          param_timeout: parsed.timeout ?? 30
+        };
+        descTexto = parsed.descripcion || '';
+      }
+    } catch (_) { }
     setFormData({
       tipo_nombre: disp.tipos_dispositivos?.nombre_tipo || '',
-      tipo_descripcion: disp.tipos_dispositivos?.descripcion || '',
+      tipo_descripcion: descTexto,
       marca: disp.modelos_equipo?.Marca || '',
       modelo: disp.modelos_equipo?.Modelo || '',
       ubicacion: disp.ubicacion || '',
@@ -1037,10 +1055,12 @@ export default function Sensores() {
       estado_operativo: disp.estado_operativo || 'Operativo',
       id_estado_sensor: disp.id_estado || '',
       fecha_instalacion: disp.fecha_instalacion ? disp.fecha_instalacion.split('T')[0] : '',
-      ultimo_mantenimiento: disp.ultimo_mantenimiento || ''
+      ultimo_mantenimiento: disp.ultimo_mantenimiento || '',
+      ...params
     });
     setShowModal(true);
   };
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1051,17 +1071,27 @@ export default function Sensores() {
     try {
       let id_tipo;
       const { data: exTipo } = await supabase.from('tipos_dispositivos').select('id_tipo').ilike('nombre_tipo', formData.tipo_nombre.trim()).maybeSingle();
+      // RF4: Si es sensor, serializar parámetros IoT en el campo descripcion
+      const descripcionFinal = esSensor
+        ? JSON.stringify({
+          descripcion: formData.tipo_descripcion,
+          frecuencia: parseInt(formData.param_frecuencia),
+          umbral: parseInt(formData.param_umbral),
+          timeout: parseInt(formData.param_timeout)
+        })
+        : formData.tipo_descripcion;
+
       if (exTipo) {
         id_tipo = exTipo.id_tipo;
-        await supabase.from('tipos_dispositivos').update({ descripcion: formData.tipo_descripcion }).eq('id_tipo', id_tipo);
+        await supabase.from('tipos_dispositivos').update({ descripcion: descripcionFinal }).eq('id_tipo', id_tipo);
       } else {
-        const { data: nTipo } = await supabase.from('tipos_dispositivos').insert([{ nombre_tipo: formData.tipo_nombre.trim(), descripcion: formData.tipo_descripcion }]).select();
+        const { data: nTipo } = await supabase.from('tipos_dispositivos').insert([{ nombre_tipo: formData.tipo_nombre.trim(), descripcion: descripcionFinal }]).select();
         id_tipo = nTipo[0].id_tipo;
       }
 
       let id_modelo;
       const { data: exMod } = await supabase.from('modelos_equipo').select('Id_Modelo').ilike('Modelo', formData.modelo.trim()).ilike('Marca', formData.marca.trim()).maybeSingle();
-      if (exMod) { id_modelo = exMod.Id_Modelo; } 
+      if (exMod) { id_modelo = exMod.Id_Modelo; }
       else {
         const { data: nMod } = await supabase.from('modelos_equipo').insert([{ Modelo: formData.modelo.trim(), Marca: formData.marca.trim(), Tipo: formData.tipo_nombre.trim() }]).select();
         id_modelo = nMod[0].Id_Modelo;
@@ -1124,7 +1154,7 @@ export default function Sensores() {
     const busqueda = searchTerm.toLowerCase();
     const nombreTipo = (d.tipos_dispositivos?.nombre_tipo || "").toLowerCase();
     const numeroPlaza = (d.plazas?.Numero_Plaza || "").toLowerCase();
-    
+
     return nombreTipo.includes(busqueda) || numeroPlaza.includes(busqueda);
   });
 
@@ -1137,7 +1167,7 @@ export default function Sensores() {
           <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Gestión de Hardware</h2>
           <p className="text-gray-500 font-medium">Administración de dispositivos y sensores del parqueo.</p>
         </div>
-        <button 
+        <button
           onClick={() => { setEditingId(null); setFormData(initialForm); setShowModal(true); }}
           className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-6 rounded-lg font-bold shadow-md flex items-center gap-2 transition duration-150"
         >
@@ -1149,8 +1179,8 @@ export default function Sensores() {
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold text-gray-800">Inventario</h3>
           <div className="relative w-72">
-            <input 
-              type="text" placeholder="Buscar por nombre o plaza..." 
+            <input
+              type="text" placeholder="Buscar por nombre o plaza..."
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 outline-none"
               value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -1203,8 +1233,8 @@ export default function Sensores() {
                     ) : <span className="text-gray-300 text-[10px] italic">N/A</span>}
                   </td>
                   <td className="px-6 py-4 text-right flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    <button onClick={() => handleEdit(disp)} className="text-blue-500 hover:text-blue-700"><FaEdit size={17}/></button>
-                    <button onClick={() => handleDelete(disp)} className="text-red-400 hover:text-red-600"><FaTrash size={15}/></button>
+                    <button onClick={() => handleEdit(disp)} className="text-blue-500 hover:text-blue-700"><FaEdit size={17} /></button>
+                    <button onClick={() => handleDelete(disp)} className="text-red-400 hover:text-red-600"><FaTrash size={15} /></button>
                   </td>
                 </tr>
               ))}
@@ -1217,34 +1247,34 @@ export default function Sensores() {
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-lg overflow-y-auto max-h-[90vh] animate-fadeIn border-t-8 border-blue-600">
             <h3 className="text-xl font-black mb-6 text-gray-800 flex items-center gap-2 uppercase tracking-tight border-b pb-2">
-              <FaMicrochip className="text-blue-600"/> {editingId ? 'Editar Hardware' : 'Nuevo Hardware'}
+              <FaMicrochip className="text-blue-600" /> {editingId ? 'Editar Hardware' : 'Nuevo Hardware'}
             </h3>
             <form onSubmit={handleSubmit} className="space-y-4">
-              
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-gray-600 mb-1">TIPO DE EQUIPO</label>
-                  <input type="text" className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" placeholder="Ej: Sensor, Cámara" value={formData.tipo_nombre} onChange={e => setFormData({...formData, tipo_nombre: e.target.value})} required />
+                  <input type="text" className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" placeholder="Ej: Sensor, Cámara" value={formData.tipo_nombre} onChange={e => setFormData({ ...formData, tipo_nombre: e.target.value })} required />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-600 mb-1">DESCRIPCIÓN</label>
-                  <input type="text" className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" placeholder="Descripción breve" value={formData.tipo_descripcion} onChange={e => setFormData({...formData, tipo_descripcion: e.target.value})} />
+                  <input type="text" className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" placeholder="Descripción breve" value={formData.tipo_descripcion} onChange={e => setFormData({ ...formData, tipo_descripcion: e.target.value })} />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <input type="text" placeholder="Marca" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.marca} onChange={e => setFormData({...formData, marca: e.target.value})} required />
-                <input type="text" placeholder="Modelo" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.modelo} onChange={e => setFormData({...formData, modelo: e.target.value})} required />
+                <input type="text" placeholder="Marca" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.marca} onChange={e => setFormData({ ...formData, marca: e.target.value })} required />
+                <input type="text" placeholder="Modelo" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.modelo} onChange={e => setFormData({ ...formData, modelo: e.target.value })} required />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-gray-600 mb-1">FECHA INSTALACIÓN</label>
-                  <input type="date" className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.fecha_instalacion} onChange={e => setFormData({...formData, fecha_instalacion: e.target.value})} required />
+                  <input type="date" className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.fecha_instalacion} onChange={e => setFormData({ ...formData, fecha_instalacion: e.target.value })} required />
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-600 mb-1">VINCULAR PLAZA</label>
-                  <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.id_plaza} onChange={e => setFormData({...formData, id_plaza: e.target.value})}>
+                  <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.id_plaza} onChange={e => setFormData({ ...formData, id_plaza: e.target.value })}>
                     <option value="">Ninguna</option>
                     {plazas.map(p => <option key={p.Id_Plaza} value={p.Id_Plaza}>{p.Numero_Plaza}</option>)}
                   </select>
@@ -1253,18 +1283,60 @@ export default function Sensores() {
 
               <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
                 {esSensor ? (
-                  <div>
-                    <label className="block text-[10px] font-black text-purple-600 mb-1 uppercase tracking-widest">Estado del Sensor (Específico)</label>
-                    <select className="border p-2 rounded-lg w-full text-sm bg-purple-50 border-purple-200 outline-none focus:ring-2 focus:ring-purple-200" value={formData.id_estado_sensor} onChange={e => setFormData({...formData, id_estado_sensor: e.target.value})} required>
-                      <option value="">-- Seleccionar Estado --</option>
-                      {estadosSensor.map(est => <option key={est.id_estado} value={est.id_estado}>{est.nombre_estado}</option>)}
-                    </select>
-                    <p className="text-[10px] text-gray-400 mt-1 italic">* El estado general se marcará como N/A automáticamente.</p>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-purple-600 mb-1 uppercase tracking-widest">Estado del Sensor (Específico)</label>
+                      <select className="border p-2 rounded-lg w-full text-sm bg-purple-50 border-purple-200 outline-none focus:ring-2 focus:ring-purple-200" value={formData.id_estado_sensor} onChange={e => setFormData({ ...formData, id_estado_sensor: e.target.value })} required>
+                        <option value="">-- Seleccionar Estado --</option>
+                        {estadosSensor.map(est => <option key={est.id_estado} value={est.id_estado}>{est.nombre_estado}</option>)}
+                      </select>
+                      <p className="text-[10px] text-gray-400 mt-1 italic">* El estado general se marcará como N/A automáticamente.</p>
+                    </div>
+
+                    {/* RF4: Parámetros IoT configurables */}
+                    <div className="border-t border-purple-100 pt-3">
+                      <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-3">📡 Parámetros IoT Remotos (RF4)</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Frecuencia (seg)</label>
+                          <input
+                            type="number" min="1" max="60"
+                            className="w-full border rounded-lg p-2 text-sm text-center font-bold bg-orange-50 border-orange-200 focus:ring-1 focus:ring-orange-300"
+                            value={formData.param_frecuencia}
+                            onChange={e => setFormData({ ...formData, param_frecuencia: e.target.value })}
+                          />
+                          <p className="text-[8px] text-gray-400 mt-0.5 text-center">Muestreo</p>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Umbral (cm)</label>
+                          <input
+                            type="number" min="1" max="500"
+                            className="w-full border rounded-lg p-2 text-sm text-center font-bold bg-orange-50 border-orange-200 focus:ring-1 focus:ring-orange-300"
+                            value={formData.param_umbral}
+                            onChange={e => setFormData({ ...formData, param_umbral: e.target.value })}
+                          />
+                          <p className="text-[8px] text-gray-400 mt-0.5 text-center">Detección</p>
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Timeout (seg)</label>
+                          <input
+                            type="number" min="5" max="300"
+                            className="w-full border rounded-lg p-2 text-sm text-center font-bold bg-orange-50 border-orange-200 focus:ring-1 focus:ring-orange-300"
+                            value={formData.param_timeout}
+                            onChange={e => setFormData({ ...formData, param_timeout: e.target.value })}
+                          />
+                          <p className="text-[8px] text-gray-400 mt-0.5 text-center">Alerta</p>
+                        </div>
+                      </div>
+                      <p className="text-[9px] text-gray-400 mt-2 italic text-center">
+                        Los parámetros se guardan y pueden enviarse al dispositivo vía API IoT.
+                      </p>
+                    </div>
                   </div>
                 ) : (
                   <div>
                     <label className="block text-[10px] font-black text-blue-600 mb-1 uppercase tracking-widest">Estado Operativo del Equipo</label>
-                    <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400" value={formData.estado_operativo} onChange={e => setFormData({...formData, estado_operativo: e.target.value})}>
+                    <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400" value={formData.estado_operativo} onChange={e => setFormData({ ...formData, estado_operativo: e.target.value })}>
                       <option value="Operativo">Operativo</option>
                       <option value="Mantenimiento">Mantenimiento</option>
                       <option value="Falla">Falla</option>
@@ -1274,10 +1346,10 @@ export default function Sensores() {
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <input type="text" placeholder="Ubicación física" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400" value={formData.ubicacion} onChange={e => setFormData({...formData, ubicacion: e.target.value})} required />
+                <input type="text" placeholder="Ubicación física" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400" value={formData.ubicacion} onChange={e => setFormData({ ...formData, ubicacion: e.target.value })} required />
                 <div className="flex flex-col">
-                    <label className="text-[10px] font-bold text-gray-400 ml-1 uppercase">Últ. Mant.</label>
-                    <input type="date" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400" value={formData.ultimo_mantenimiento} onChange={e => setFormData({...formData, ultimo_mantenimiento: e.target.value})} />
+                  <label className="text-[10px] font-bold text-gray-400 ml-1 uppercase">Últ. Mant.</label>
+                  <input type="date" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400" value={formData.ultimo_mantenimiento} onChange={e => setFormData({ ...formData, ultimo_mantenimiento: e.target.value })} />
                 </div>
               </div>
 

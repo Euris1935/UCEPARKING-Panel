@@ -7,16 +7,18 @@ import { supabase } from './supabaseClient';
 import Login from './paginas/Login';
 import Dashboard from './paginas/Dashboard';
 import Usuarios from './paginas/Usuarios';
-import Empleados from './paginas/Empleados'; 
+import Empleados from './paginas/Empleados';
 import VehiculosTickets from './paginas/VehiculosTickets';
 import ZonasParqueo from './paginas/ZonasParqueos';
 import Reservaciones from './paginas/Reservaciones';
-import Asignaciones from './paginas/Asignaciones'; 
+import Asignaciones from './paginas/Asignaciones';
 import Mantenimiento from './paginas/Mantenimiento';
 import Sensores from './paginas/Sensores';
 import Reportes from './paginas/Reportes';
 import Ocupacion from './paginas/Ocupacion';
 import Configuracion from './paginas/Configuracion';
+import Logs from './paginas/Logs';
+import Notificaciones from './paginas/Notificaciones';
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -49,22 +51,24 @@ export default function App() {
         ) : (
           <>
             <Route path="/" element={<Dashboard />} />
-            
+
             <Route path="/usuarios" element={<Usuarios />} />
             <Route path="/empleados" element={<Empleados />} />
-            
+
             <Route path="/vehiculos-tickets" element={<VehiculosTickets />} />
             <Route path="/ocupacion" element={<Ocupacion />} />
             <Route path="/zonas-parqueo" element={<ZonasParqueo />} />
-            
+
             <Route path="/reservaciones" element={<Reservaciones />} />
-            <Route path="/asignaciones" element={<Asignaciones />} /> 
-            
+            <Route path="/asignaciones" element={<Asignaciones />} />
+
             <Route path="/sensores" element={<Sensores />} />
             <Route path="/reportes" element={<Reportes />} />
             <Route path="/mantenimiento" element={<Mantenimiento />} />
             <Route path="/configuracion" element={<Configuracion />} />
-            
+            <Route path="/logs" element={<Logs />} />
+            <Route path="/notificaciones" element={<Notificaciones />} />
+
             <Route path="*" element={<Navigate to="/" replace />} />
           </>
         )}
