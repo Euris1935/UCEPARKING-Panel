@@ -15,6 +15,8 @@ export default function Reportes() {
   const [showModal, setShowModal] = useState(false);
   const [tipoReporte, setTipoReporte] = useState('');
   const [descripcion, setDescripcion] = useState(''); 
+  const [fechaDesde, setFechaDesde] = useState('');
+  const [fechaHasta, setFechaHasta] = useState('');
 
   useEffect(() => { loadReportes(); }, []);
 
@@ -38,41 +40,40 @@ export default function Reportes() {
   const handleCreateReport = async () => {
     if (!tipoReporte) return Swal.fire('Atención', "Selecciona un tipo de reporte.", 'warning');
     if (!descripcion.trim()) return Swal.fire('Atención', "Agrega una descripción.", 'warning');
+    if (!fechaDesde || !fechaHasta) return Swal.fire('Atención', "Selecciona las fechas para el reporte.", 'warning');
+    if (new Date(fechaDesde) > new Date(fechaHasta)) return Swal.fire('Atención', "La fecha de inicio no puede ser mayor a la fecha de fin.", 'warning');
     
     setLoading(true);
 
     try {
-        // Obtener usuario autenticado 
-        const { data: { user } } = await supabase.auth.getUser();
-        if(!user) throw new Error("No hay sesión activa.");
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("No hay sesión activa.");
 
-        // Buscar el persona_id asociado a este usuario
-        const { data: usuarioData, error: userError } = await supabase
-            .from('usuarios')
-            .select('persona_id')
-            .eq('id', user.id)
-            .single();
-        
-        if (userError || !usuarioData) throw new Error("No se encontró el perfil de persona asociado.");
+        const url = 'http://localhost:4000/api/reports';
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({
+            fechaDesde: `${fechaDesde}T00:00:00.000Z`,
+            fechaHasta: `${fechaHasta}T23:59:59.999Z`,
+            tipo: tipoReporte,
+            descripcion
+          })
+        });
 
-        
-        const rutaFicticia = `/reportes/${tipoReporte.toLowerCase().replace(/ /g, '_')}_${Date.now()}.pdf`;
-
-        //Insertar en reportes
-        const { error } = await supabase.from('reportes').insert([{
-            Tipo_Reporte: tipoReporte,
-            Descripcion: descripcion, 
-            Datos_Adjuntos_Ruta: rutaFicticia,
-            persona_id: usuarioData.persona_id 
-        }]);
-
-        if (error) throw error;
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || data.error || "Error al generar reporte en el backend.");
 
         Swal.fire('Generado', "Reporte creado exitosamente.", 'success');
         
         setShowModal(false);
         setTipoReporte('');
         setDescripcion('');
+        setFechaDesde('');
+        setFechaHasta('');
         loadReportes();
 
     } catch (error) {
@@ -101,6 +102,39 @@ export default function Reportes() {
               loadReportes();
           }
       }
+  };
+
+  const handleDownloadExcel = async (id, title) => {
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("No hay sesión activa.");
+
+        const url = `http://localhost:4000/api/reports/${id}/download`;
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        });
+
+        if (!res.ok) {
+           const errData = await res.json();
+           throw new Error(errData.error || errData.message || "Error descargando Documento");
+        }
+
+        const blob = await res.blob();
+        const objUrl = window.URL.createObjectURL(blob);
+
+        const link = document.createElement('a');
+        link.href = objUrl;
+        link.download = `reporte_${title.replace(/ /g, '_')}_${id}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+    } catch (error) {
+        Swal.fire('Error', error.message, 'error');
+    }
   };
 
   const filteredReportes = reportes.filter(r => 
@@ -137,11 +171,33 @@ export default function Reportes() {
                         onChange={(e) => setTipoReporte(e.target.value)}
                     >
                         <option value="">-- Seleccionar --</option>
-                        <option value="Ocupación Diaria">Ocupación Diaria</option>
-                        <option value="Ingresos Financieros">Ingresos Financieros</option>
-                        <option value="Incidencias Técnicas">Incidencias Técnicas</option>
-                        <option value="Actividad de Usuarios">Actividad de Usuarios</option>
+                        <option value="GENERAL">General (Ocupación, Ingresos, y Accesos)</option>
+                        <option value="EVENTOS">Eventos (Registro de actividad de hardware/sistema)</option>
+                        <option value="OCUPACION">Ocupación Diaria</option>
+                        <option value="INCIDENCIAS">Incidencias Técnicas</option>
+                        <option value="ACTIVIDAD">Actividad de Usuarios</option>
                     </select>
+                </div>
+
+                <div className="flex gap-4 mb-4">
+                    <div className="w-1/2">
+                        <label className="block text-sm font-medium mb-1 text-gray-700">Fecha Desde:</label>
+                        <input 
+                            type="date"
+                            className="w-full border p-2 rounded focus:ring-primary focus:border-primary"
+                            value={fechaDesde}
+                            onChange={(e) => setFechaDesde(e.target.value)}
+                        />
+                    </div>
+                    <div className="w-1/2">
+                        <label className="block text-sm font-medium mb-1 text-gray-700">Fecha Hasta:</label>
+                        <input 
+                            type="date"
+                            className="w-full border p-2 rounded focus:ring-primary focus:border-primary"
+                            value={fechaHasta}
+                            onChange={(e) => setFechaHasta(e.target.value)}
+                        />
+                    </div>
                 </div>
 
                 <div className="mb-6">
@@ -231,9 +287,9 @@ export default function Reportes() {
                   </td>
                   <td className="px-6 py-4 flex gap-3 justify-center">
                     <button 
-                        onClick={() => Swal.fire('Descarga', `Simulando descarga de: ${r.Datos_Adjuntos_Ruta}`, 'info')} 
+                        onClick={() => handleDownloadExcel(r.Id_Reporte, r.Tipo_Reporte)} 
                         className="text-green-600 hover:text-green-800 bg-green-50 p-2 rounded-full transition" 
-                        title="Descargar PDF"
+                        title="Descargar Excel"
                     >
                         <FaDownload />
                     </button>

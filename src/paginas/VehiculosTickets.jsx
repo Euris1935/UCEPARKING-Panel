@@ -308,6 +308,29 @@ export default function VehiculosTickets() {
       setVisitanteForm({ id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M', placa: '', marca: '', color: '', id_plaza: '', duracion: '60' });
       setActiveTab('activos');
       loadData();
+
+      // 8. Integración Backend: Abrir Barrera Entrada (API /entrada-visitante)
+      try {
+        const payload = {
+          nombre: visitanteForm.nombre.trim(),
+          placa: visitanteForm.placa.toUpperCase(),
+          dispositivoEntradaId: 1, // Default cámara/barrera principal 1
+          adminPersonaId: currentPersonaId,
+          motivo: visitanteForm.motivo || 'Visitante'
+        };
+        const { data: { session } } = await supabase.auth.getSession();
+        fetch('http://localhost:4000/api/access/entrada-visitante', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify(payload)
+        }).then(res => res.json()).then(data => console.log("Barrera abierta (Entrada):", data)).catch(err => console.warn("Backend local no responde o error de token:", err));
+      } catch (error) {
+       console.error("Error contactando backend de barrera:", error);
+      }
+      
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
     setLoading(false);
   };
@@ -340,13 +363,7 @@ export default function VehiculosTickets() {
         id_estado: 1
       }).eq('Id_Plaza', ticket.Id_Plaza_Asignada);
 
-      // 3. Registrar salida en registros_acceso (solo si el ticket tiene un vehículo vinculado)
-      if (ticket.Id_Vehiculo) {
-        await supabase.from('registros_acceso')
-          .update({ salida_at: ahora, tipo_evento: 'SALIDA' })
-          .eq('vehiculo_id', ticket.Id_Vehiculo)
-          .is('salida_at', null);
-      }
+      // (Nota: El registro en "registros_acceso" se delega por completo a la petición de abajo al Backend NodeJS)
 
       // 4. Log (RF10)
       await registrarLog(
@@ -357,6 +374,22 @@ export default function VehiculosTickets() {
 
       Swal.fire('¡Salida Registrada!', `La plaza ${ticket.plazas?.Numero_Plaza} quedó libre.`, 'success');
       loadData();
+
+      // 5. Integración Backend: Abrir Barrera Salida (API /salida)
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        fetch('http://localhost:4000/api/access/salida', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify({ placa: ticket.Placa_Capturada, dispositivoSalidaId: 2 }) // Default cámara/barrera salida 2
+        }).then(res => res.json()).then(data => console.log("Barrera abierta (Salida):", data)).catch(err => console.warn("Backend local no responde o error de token:", err));
+      } catch (error) {
+       console.error("Error contactando backend de barrera:", error);
+      }
+
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
 
@@ -500,6 +533,39 @@ export default function VehiculosTickets() {
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
 
+  /* ── Controles de Barrera Manuales ── */
+  const apiControlBarrera = async (endpoint, tituloConfirmacion) => {
+    const res = await Swal.fire({
+      title: tituloConfirmacion,
+      text: "Esto abrirá la barrera físicamente.",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#eab308',
+      confirmButtonText: 'Sí, abrir',
+      cancelButtonText: 'Cancelar'
+    });
+    
+    if (res.isConfirmed) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const respuesta = await fetch(`http://localhost:4000/api/access/${endpoint}`, { 
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session?.access_token}`
+          }
+        });
+        if (respuesta.ok) {
+           Swal.fire('Barrera Abierta', 'El comando se ha enviado exitosamente.', 'success');
+           registrarLog('APERTURA_MANUAL', `Apertura manual de ${tituloConfirmacion}`);
+        } else {
+           Swal.fire('Error', 'El servidor respondió con un error.', 'error');
+        }
+      } catch (e) {
+        Swal.fire('Error de Conexión', 'No se pudo conectar con el backend local (Arduino). Asegúrese que esté corriendo en el puerto 4000.', 'error');
+      }
+    }
+  }
+
   /* ── Utils ── */
   const calcTiempo = (inicio, fin) => {
     const diff = Math.floor((new Date(fin) - new Date(inicio)) / 60000);
@@ -531,9 +597,27 @@ export default function VehiculosTickets() {
         <TicketPrintView ticket={ticketParaImprimir} onClose={() => setTicketParaImprimir(null)} />
       )}
 
-      <header className="mb-6">
-        <h2 className="text-3xl font-bold text-gray-900">Vehículos y Tickets</h2>
-        <p className="text-gray-500 mt-1">Control de acceso, emisión de tickets y gestión de la flota.</p>
+      <header className="mb-6 flex justify-between items-center">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-900">Vehículos y Tickets</h2>
+          <p className="text-gray-500 mt-1">Control de acceso, emisión de tickets y gestión de la flota.</p>
+        </div>
+        
+        {/* Controles Físicos Manuales */}
+        <div className="flex gap-3">
+           <button 
+             onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')}
+             className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+           >
+             Principal ⬆️
+           </button>
+           <button 
+             onClick={() => apiControlBarrera('open-vip', '¿Abrir Barrera VIP?')}
+             className="bg-gray-800 hover:bg-black text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+           >
+            VIP ⬆️
+           </button>
+        </div>
       </header>
 
       {/* Pestañas */}
