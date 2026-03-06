@@ -309,28 +309,78 @@ export default function VehiculosTickets() {
       setActiveTab('activos');
       loadData();
 
-      // 8. Integración Backend: Abrir Barrera Entrada (API /entrada-visitante)
+      // 8. Registrar acceso en Supabase + Abrir barrera
       try {
-        const payload = {
-          nombre: visitanteForm.nombre.trim(),
-          placa: visitanteForm.placa.toUpperCase(),
-          dispositivoEntradaId: 1, // Default cámara/barrera principal 1
-          adminPersonaId: currentPersonaId,
-          motivo: visitanteForm.motivo || 'Visitante'
-        };
+        const placa = visitanteForm.placa.toUpperCase();
+        const plazaId = parseInt(visitanteForm.id_plaza);
+        const ticketId = nuevoTicket.Id_Ticket;
+
+        // 8a. Buscar o crear el vehículo en la tabla vehiculos (vehiculo_id es NOT NULL)
+        let vehiculoId = null;
+        const { data: vExistente } = await supabase
+          .from('vehiculos')
+          .select('id')
+          .eq('placa', placa)
+          .maybeSingle();
+
+        if (vExistente) {
+          vehiculoId = vExistente.id;
+        } else {
+          const { data: vNuevo, error: vErr } = await supabase
+            .from('vehiculos')
+            .insert({ placa, Marca: visitanteForm.marca || 'VISITANTE', Color: visitanteForm.color || 'N/A' })
+            .select('id')
+            .single();
+          if (vErr) console.error('[RegistroAcceso] Error al crear vehículo:', vErr.message);
+          else vehiculoId = vNuevo.id;
+        }
+
+        if (vehiculoId) {
+          // 8b. Si ya hay registro activo para ese vehículo, cerrarlo primero
+          const { data: raActivo } = await supabase
+            .from('registros_acceso')
+            .select('id')
+            .eq('vehiculo_id', vehiculoId)
+            .is('salida_at', null)
+            .maybeSingle();
+
+          if (raActivo) {
+            await supabase
+              .from('registros_acceso')
+              .update({ salida_at: new Date().toISOString(), tipo_evento: 'SALIDA_AUTO' })
+              .eq('id', raActivo.id);
+          }
+
+          // 8c. Insertar nuevo registro de acceso
+          const { data: raNew, error: raErr } = await supabase
+            .from('registros_acceso')
+            .insert({
+              entrada_at: new Date().toISOString(),
+              vehiculo_id: vehiculoId,
+              tipo_evento: 'ENTRADA_VISITANTE',
+              ticket_id: ticketId,
+              Id_Plaza: plazaId,
+              id_dispositivo_entrada: null
+            })
+            .select('id')
+            .single();
+
+          if (raErr) console.error('[RegistroAcceso] Error al insertar:', raErr.message);
+          else console.log('[RegistroAcceso] ✅ Acceso registrado id:', raNew.id);
+        }
+
+        // 8d. Abrir barrera física (solo si el backend está corriendo)
         const { data: { session } } = await supabase.auth.getSession();
-        fetch('http://localhost:4000/api/access/entrada-visitante', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`
-          },
-          body: JSON.stringify(payload)
-        }).then(res => res.json()).then(data => console.log("Barrera abierta (Entrada):", data)).catch(err => console.warn("Backend local no responde o error de token:", err));
-      } catch (error) {
-       console.error("Error contactando backend de barrera:", error);
+        if (session?.access_token) {
+          fetch('http://localhost:4000/api/access/open-main', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${session.access_token}` }
+          }).catch(() => {}); // Silencioso si no está corriendo
+        }
+      } catch (barrError) {
+        console.warn('[Barrera/Acceso] Error no crítico:', barrError.message);
       }
-      
+
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
     setLoading(false);
   };
@@ -363,7 +413,29 @@ export default function VehiculosTickets() {
         id_estado: 1
       }).eq('Id_Plaza', ticket.Id_Plaza_Asignada);
 
-      // (Nota: El registro en "registros_acceso" se delega por completo a la petición de abajo al Backend NodeJS)
+      // 3. Cerrar registro de acceso en Supabase directamente
+      try {
+        // Buscar por ticket_id primero (lo más confiable)
+        const { data: raActivo } = await supabase
+          .from('registros_acceso')
+          .select('id')
+          .eq('ticket_id', ticket.Id_Ticket)
+          .is('salida_at', null)
+          .maybeSingle();
+
+        if (raActivo) {
+          const { error: raErr } = await supabase
+            .from('registros_acceso')
+            .update({ salida_at: ahora, tipo_evento: 'SALIDA' })
+            .eq('id', raActivo.id);
+          if (raErr) console.error('[RegistroAcceso] Error al cerrar:', raErr.message);
+          else console.log('[RegistroAcceso] ✅ Salida registrada en id:', raActivo.id);
+        } else {
+          console.warn('[RegistroAcceso] No se encontró registro activo para ticket:', ticket.Id_Ticket);
+        }
+      } catch (raError) {
+        console.warn('[RegistroAcceso] Error no crítico en salida:', raError.message);
+      }
 
       // 4. Log (RF10)
       await registrarLog(
@@ -375,20 +447,16 @@ export default function VehiculosTickets() {
       Swal.fire('¡Salida Registrada!', `La plaza ${ticket.plazas?.Numero_Plaza} quedó libre.`, 'success');
       loadData();
 
-      // 5. Integración Backend: Abrir Barrera Salida (API /salida)
+      // 5. Abrir barrera física (solo si el backend está corriendo)
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        fetch('http://localhost:4000/api/access/salida', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`
-          },
-          body: JSON.stringify({ placa: ticket.Placa_Capturada, dispositivoSalidaId: 2 }) // Default cámara/barrera salida 2
-        }).then(res => res.json()).then(data => console.log("Barrera abierta (Salida):", data)).catch(err => console.warn("Backend local no responde o error de token:", err));
-      } catch (error) {
-       console.error("Error contactando backend de barrera:", error);
-      }
+        if (session?.access_token) {
+          fetch('http://localhost:4000/api/access/open-main', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${session.access_token}` }
+          }).catch(() => {});
+        }
+      } catch (_) {}
 
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
