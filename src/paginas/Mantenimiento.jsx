@@ -69,7 +69,11 @@ export default function Mantenimiento() {
             setMantenimientos(mantData || []);
 
 
-            const { data: dispData } = await supabase.from('dispositivos').select('id_dispositivo, ubicacion, tipos_dispositivos(nombre_tipo)').eq('estado_operativo', 'Activo'); // Solo mostrar activos?
+            const { data: dispData, error: dispError } = await supabase
+                .from('dispositivos')
+                .select('id_dispositivo, ubicacion, estado_operativo, tipos_dispositivos(nombre_tipo), modelos_equipo(Modelo, Marca)')
+                .order('id_dispositivo', { ascending: true });
+            if (dispError) console.warn('Error cargando dispositivos:', dispError.message);
             const { data: empData } = await supabase.from('empleados').select('Id_Empleado, personas(nombre, apellido)');
             const { data: tipoData } = await supabase.from('tipo_mantenimiento').select('*');
             const { data: estData } = await supabase.from('estado_mantenimiento').select('*');
@@ -303,9 +307,12 @@ export default function Mantenimiento() {
                                         onChange={e => setFormData({ ...formData, id_dispositivo: e.target.value })}
                                     >
                                         <option value="">Seleccionar...</option>
+                                        {dispositivos.length === 0 && (
+                                            <option disabled>— No hay dispositivos registrados —</option>
+                                        )}
                                         {dispositivos.map(d => (
                                             <option key={d.id_dispositivo} value={d.id_dispositivo}>
-                                                {d.tipos_dispositivos?.nombre_tipo} - {d.ubicacion}
+                                                [{d.id_dispositivo}] {d.tipos_dispositivos?.nombre_tipo || 'Dispositivo'}{d.modelos_equipo ? ` — ${d.modelos_equipo.Marca} ${d.modelos_equipo.Modelo}` : ''}{d.ubicacion ? ` (${d.ubicacion})` : ''} · {d.estado_operativo || 'N/A'}
                                             </option>
                                         ))}
                                     </select>

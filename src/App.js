@@ -19,6 +19,7 @@ import Ocupacion from './paginas/Ocupacion';
 import Configuracion from './paginas/Configuracion';
 import Logs from './paginas/Logs';
 import Notificaciones from './paginas/Notificaciones';
+import AccesoManual from './paginas/AccesoManual';
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="/empleados" element={<Empleados />} />
 
             <Route path="/vehiculos-tickets" element={<VehiculosTickets />} />
+            <Route path="/acceso-manual" element={<AccesoManual />} />
             <Route path="/ocupacion" element={<Ocupacion />} />
             <Route path="/zonas-parqueo" element={<ZonasParqueo />} />
 

@@ -218,6 +218,42 @@ export default function ZonasParqueo() {
     setShowPlazaModal(true);
   };
 
+  const handleZonaChange = (idZonaStr) => {
+    const idZona = parseInt(idZonaStr);
+    if (!idZona) {
+      setPlazaForm({ ...plazaForm, Id_Zona: '', Numero_Plaza: '' });
+      return;
+    }
+
+    const zonaActual = zonas.find(z => z.Id_Zona === idZona);
+    if (!zonaActual) return;
+
+    const prefijo = generarIniciales(zonaActual.Nombre_Zona);
+    const plazasExistentes = plazas.filter(p => p.Id_Zona === idZona);
+    
+    let maxSeq = 0;
+    plazasExistentes.forEach(p => {
+      // Extraer número de formato "PREFIJO-01" o al final del string
+      const partes = p.Numero_Plaza.split('-');
+      if (partes.length > 1) {
+         const num = parseInt(partes[partes.length - 1], 10);
+         if (!isNaN(num) && num > maxSeq) maxSeq = num;
+      } else {
+         const numMatch = p.Numero_Plaza.match(/\d+$/);
+         if (numMatch) {
+            const num = parseInt(numMatch[0], 10);
+            if (!isNaN(num) && num > maxSeq) maxSeq = num;
+         }
+      }
+    });
+
+    // Empezar en la siguiente secuencia
+    const nextSeq = maxSeq + 1;
+    const nextCodigo = `${prefijo}-${String(nextSeq).padStart(2, '0')}`;
+
+    setPlazaForm({ ...plazaForm, Id_Zona: idZonaStr, Numero_Plaza: nextCodigo });
+  };
+
   const handleSubmitPlaza = async (e) => {
     e.preventDefault();
     if (!plazaForm.Numero_Plaza || !plazaForm.Id_Zona) return Swal.fire('Error', 'Completa los campos.', 'warning');
@@ -388,7 +424,14 @@ export default function ZonasParqueo() {
               <div>
                 <label className="block text-sm font-medium mb-1">Zona</label>
                 <select className="w-full border p-2 rounded focus:ring-primary"
-                  value={plazaForm.Id_Zona} onChange={e => setPlazaForm({ ...plazaForm, Id_Zona: e.target.value })} required>
+                  value={plazaForm.Id_Zona} onChange={e => {
+                    // Si estamos editando, solo cambiar el ID pero no autogenerar el nombre
+                    if (editingPlaza) {
+                      setPlazaForm({ ...plazaForm, Id_Zona: e.target.value });
+                    } else {
+                      handleZonaChange(e.target.value);
+                    }
+                  }} required>
                   <option value="">-- Seleccionar Zona --</option>
                   {zonas.map(z => <option key={z.Id_Zona} value={z.Id_Zona}>{z.Nombre_Zona}</option>)}
                 </select>

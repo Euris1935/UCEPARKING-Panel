@@ -16,6 +16,7 @@ export default function Asignaciones() {
 
     // Modo edición
     const [editingAsignacion, setEditingAsignacion] = useState(null); // null = creando, objeto = editando
+    const [isPermanent, setIsPermanent] = useState(false);
 
     // Catálogos
     const [empleadosList, setEmpleadosList] = useState([]);
@@ -129,6 +130,7 @@ export default function Asignaciones() {
         setEditingAsignacion(null);
         setFormData(initialForm);
         setVehiculoVinculado(null);
+        setIsPermanent(false);
         setShowModal(true);
     };
 
@@ -148,6 +150,7 @@ export default function Asignaciones() {
             Fecha_Fin: asignacion.Fecha_Fin || '',
             Notas: asignacion.Notas || ''
         });
+        setIsPermanent(!asignacion.Fecha_Fin);
 
         // Cargar plazas libres + la plaza actual de la asignación
         const { data: plazaData } = await supabase
@@ -165,6 +168,7 @@ export default function Asignaciones() {
         setEditingAsignacion(null);
         setFormData(initialForm);
         setVehiculoVinculado(null);
+        setIsPermanent(false);
     };
 
     // CREAR asignación
@@ -177,7 +181,7 @@ export default function Asignaciones() {
             Id_Empleado_Asignado: parseInt(formData.Id_Empleado),
             Id_Plaza: parseInt(formData.Id_Plaza),
             Fecha_Inicio: formData.Fecha_Inicio,
-            Fecha_Fin: formData.Fecha_Fin || null,
+            Fecha_Fin: isPermanent ? null : (formData.Fecha_Fin || null),
             Notas: formData.Notas,
             Estado_Asignacion: 'Activa'
         }]);
@@ -207,7 +211,7 @@ export default function Asignaciones() {
                 Id_Empleado_Asignado: parseInt(formData.Id_Empleado),
                 Id_Plaza: plazaNueva,
                 Fecha_Inicio: formData.Fecha_Inicio,
-                Fecha_Fin: formData.Fecha_Fin || null,
+                Fecha_Fin: isPermanent ? null : (formData.Fecha_Fin || null),
                 Notas: formData.Notas,
             })
             .eq('Id_Asignacion', editingAsignacion.Id_Asignacion);
@@ -242,6 +246,7 @@ export default function Asignaciones() {
             }
             setFormData(initialForm);
             setVehiculoVinculado(null);
+            setIsPermanent(false);
             setShowModal(false);
             setEditingAsignacion(null);
             loadData();
@@ -359,7 +364,7 @@ export default function Asignaciones() {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             {item.Fecha_Fin
                                                 ? <span className="flex items-center gap-1"><FaCalendarAlt className="text-red-400" />{new Date(item.Fecha_Fin).toLocaleDateString()}</span>
-                                                : <span className="text-gray-300">—</span>}
+                                                : <span className="flex items-center gap-1 font-bold text-green-600"><FaCalendarAlt className="text-green-600"/> Indeterminada</span>}
                                         </td>
                                         <td className="px-6 py-4 text-sm text-gray-500 italic max-w-xs truncate">
                                             {item.Notas || '-'}
@@ -475,14 +480,31 @@ export default function Asignaciones() {
                                         required
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1 font-bold">Fecha Fin</label>
+                                <div className="flex flex-col">
+                                    <div className="flex justify-between items-center mb-1">
+                                        <label className="block text-sm font-medium text-gray-700 font-bold">Fecha Fin</label>
+                                        <label className="flex items-center gap-1 text-xs text-purple-700 cursor-pointer">
+                                            <input 
+                                                type="checkbox" 
+                                                checked={isPermanent}
+                                                onChange={(e) => {
+                                                    setIsPermanent(e.target.checked);
+                                                    if (e.target.checked) {
+                                                        setFormData({ ...formData, Fecha_Fin: '' });
+                                                    }
+                                                }}
+                                                className="rounded text-purple-600 focus:ring-purple-500"
+                                            />
+                                            Indeterminada
+                                        </label>
+                                    </div>
                                     <input
                                         type="date"
-                                        className="w-full border p-2 rounded focus:ring-purple-500 outline-none"
+                                        className={`w-full border p-2 rounded focus:ring-purple-500 outline-none ${isPermanent ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
                                         value={formData.Fecha_Fin}
                                         onChange={e => setFormData({ ...formData, Fecha_Fin: e.target.value })}
                                         min={formData.Fecha_Inicio || undefined}
+                                        disabled={isPermanent}
                                     />
                                 </div>
                             </div>

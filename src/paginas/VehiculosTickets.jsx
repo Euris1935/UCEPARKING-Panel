@@ -1,4 +1,4 @@
-﻿
+
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
@@ -27,9 +27,10 @@ function TicketPrintView({ ticket, onClose }) {
         <div id="ticket-print-area" className="p-6 space-y-3 text-sm">
           <Row label="N° Ticket" value={`#${String(ticket.Id_Ticket).padStart(6, '0')}`} bold />
           <hr />
-          <Row label="Visitante" value={`${ticket.visitantes?.nombre ?? ticket.personas?.nombre ?? '—'} ${ticket.visitantes?.apellido ?? ticket.personas?.apellido ?? ''}`} />
+          <Row label="Visitante" value={`${ticket.visitantes?.personas?.nombre ?? ticket.personas?.nombre ?? '—'} ${ticket.visitantes?.personas?.apellido ?? ticket.personas?.apellido ?? ''}`} />
           <Row label="Placa" value={ticket.Placa_Capturada} bold mono />
           <Row label="Marca" value={ticket.Marca_Vehiculo || ticket.vehiculos?.Marca || '—'} />
+          <Row label="Modelo" value={ticket.Modelo_Vehiculo || ticket.vehiculos?.modelo || '—'} />
           <Row label="Color" value={ticket.Color_Vehiculo || ticket.vehiculos?.Color || '—'} />
           <hr />
           <Row label="Plaza Asignada" value={ticket.plazas?.Numero_Plaza || `#${ticket.Id_Plaza_Asignada}`} bold />
@@ -94,17 +95,17 @@ export default function VehiculosTickets() {
   // Formulario Visitante
   const [visitanteForm, setVisitanteForm] = useState({
     id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M',
-    placa: '', marca: '', color: '', id_plaza: '', duracion: '60'
+    placa: '', marca: '', modelo: '', color: '', id_plaza: '', duracion: '60'
   });
 
   // Formulario Vehículo Personal
   const [vehiculoPersonalForm, setVehiculoPersonalForm] = useState({
-    persona_id: '', placa: '', marca: '', color: ''
+    persona_id: '', placa: '', marca: '', modelo: '', color: ''
   });
 
   // Edición de vehículo registrado
   const [editandoVehiculo, setEditandoVehiculo] = useState(null);
-  const [editVehiculoForm, setEditVehiculoForm] = useState({ placa: '', marca: '', color: '' });
+  const [editVehiculoForm, setEditVehiculoForm] = useState({ placa: '', marca: '', modelo: '', color: '' });
 
   useEffect(() => {
     const init = async () => {
@@ -138,7 +139,7 @@ export default function VehiculosTickets() {
       hoy.setHours(0, 0, 0, 0);
       const { data: tks } = await supabase
         .from('tickets')
-        .select('*, visitantes(nombre, apellido), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(Marca, Color)')
+        .select('*, visitantes(id, personas(nombre, apellido)), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(Marca, Color, modelo)')
         .gte('Fecha_Hora_Emision', hoy.toISOString())
         .order('Fecha_Hora_Emision', { ascending: false });
 
@@ -148,10 +149,10 @@ export default function VehiculosTickets() {
         .select('*, personas(nombre, apellido)')
         .order('Fecha_Registro', { ascending: false });
 
-      // ── Visitantes desde la tabla dedicada ──
+      // ── Visitantes desde la tabla dedicada (con join a personas) ──
       const { data: visitantesData } = await supabase
         .from('visitantes')
-        .select('*')
+        .select('id, created_at, personas(id, nombre, apellido, telefono, sexo)')
         .order('created_at', { ascending: false });
 
       // ── Personal del sistema: 2 queries separadas para evitar FK inexistente entre usuarios y roles ──
@@ -244,21 +245,29 @@ export default function VehiculosTickets() {
     try {
       let visitanteId = visitanteForm.id_visitante;
 
-      // 1. Crear visitante en la tabla 'visitantes' si es nuevo
+      // 1. Crear visitante si es nuevo: primero persona en 'personas', luego fila en 'visitantes'
       if (!visitanteId) {
         if (!visitanteForm.nombre.trim() || !visitanteForm.apellido.trim()) {
           setLoading(false);
           return Swal.fire('Atención', 'Nombre y Apellido del visitante son obligatorios.', 'warning');
         }
-        const { data: newV, error: vErr } = await supabase
-          .from('visitantes')
+        // 1a. Insertar en personas
+        const { data: newPersona, error: pErr } = await supabase
+          .from('personas')
           .insert([{
             nombre: visitanteForm.nombre.trim(),
             apellido: visitanteForm.apellido.trim(),
             telefono: visitanteForm.telefono || null,
-            sexo: visitanteForm.sexo
+            sexo: visitanteForm.sexo || null
           }])
-          .select()
+          .select('id')
+          .single();
+        if (pErr) throw pErr;
+        // 1b. Insertar en visitantes con la persona recién creada
+        const { data: newV, error: vErr } = await supabase
+          .from('visitantes')
+          .insert([{ persona_id: newPersona.id }])
+          .select('id')
           .single();
         if (vErr) throw vErr;
         visitanteId = newV.id;
@@ -283,9 +292,10 @@ export default function VehiculosTickets() {
           Fecha_Hora_Emision: ahora,
           Fecha_Hora_Vencimiento: vencimiento,
           Color_Vehiculo: visitanteForm.color || null,
-          Marca_Vehiculo: visitanteForm.marca || null
+          Marca_Vehiculo: visitanteForm.marca || null,
+          Modelo_Vehiculo: visitanteForm.modelo || null
         }])
-        .select('*, visitantes(nombre, apellido), plazas(Numero_Plaza)')
+        .select('*, visitantes(id, personas(nombre, apellido)), plazas(Numero_Plaza)')
         .single();
       if (tErr) throw tErr;
 
@@ -305,7 +315,7 @@ export default function VehiculosTickets() {
       // 7. Mostrar ticket para imprimir (RF2)
       setTicketParaImprimir(nuevoTicket);
 
-      setVisitanteForm({ id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M', placa: '', marca: '', color: '', id_plaza: '', duracion: '60' });
+      setVisitanteForm({ id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M', placa: '', marca: '', modelo: '', color: '', id_plaza: '', duracion: '60' });
       setActiveTab('activos');
       loadData();
 
@@ -328,7 +338,7 @@ export default function VehiculosTickets() {
         } else {
           const { data: vNuevo, error: vErr } = await supabase
             .from('vehiculos')
-            .insert({ placa, Marca: visitanteForm.marca || 'VISITANTE', Color: visitanteForm.color || 'N/A' })
+            .insert({ placa, Marca: visitanteForm.marca || 'VISITANTE', modelo: visitanteForm.modelo || null, Color: visitanteForm.color || 'N/A' })
             .select('id')
             .single();
           if (vErr) console.error('[RegistroAcceso] Error al crear vehículo:', vErr.message);
@@ -564,7 +574,7 @@ export default function VehiculosTickets() {
       const { error, count } = await supabase
         .from('vehiculos')
         .update(
-          { placa: editVehiculoForm.placa.toUpperCase(), Marca: editVehiculoForm.marca || null, Color: editVehiculoForm.color || null },
+          { placa: editVehiculoForm.placa.toUpperCase(), Marca: editVehiculoForm.marca || null, modelo: editVehiculoForm.modelo || null, Color: editVehiculoForm.color || null },
           { count: 'exact' }
         )
         .eq('id', editandoVehiculo.id);
@@ -592,11 +602,12 @@ export default function VehiculosTickets() {
         persona_id: vehiculoPersonalForm.persona_id,
         placa: vehiculoPersonalForm.placa.toUpperCase(),
         Marca: vehiculoPersonalForm.marca || null,
+        modelo: vehiculoPersonalForm.modelo || null,
         Color: vehiculoPersonalForm.color || null
       }]);
       if (error) throw error;
       Swal.fire('Registrado', 'Vehículo vinculado correctamente.', 'success');
-      setVehiculoPersonalForm({ persona_id: '', placa: '', marca: '', color: '' });
+      setVehiculoPersonalForm({ persona_id: '', placa: '', marca: '', modelo: '', color: '' });
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
@@ -677,13 +688,13 @@ export default function VehiculosTickets() {
              onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')}
              className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
            >
-             Principal ⬆️
+             PUERTA PRINCIPAL
            </button>
            <button 
              onClick={() => apiControlBarrera('open-vip', '¿Abrir Barrera VIP?')}
              className="bg-gray-800 hover:bg-black text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
            >
-            VIP ⬆️
+            PUERTA VIP
            </button>
         </div>
       </header>
@@ -713,7 +724,7 @@ export default function VehiculosTickets() {
                     const val = e.target.value;
                     if (val) {
                       const v = visitantesRegistrados.find(vis => vis.id === parseInt(val));
-                      if (v) setVisitanteForm(f => ({ ...f, id_visitante: v.id, nombre: v.nombre, apellido: v.apellido, telefono: v.telefono || '', sexo: v.sexo || 'M' }));
+                      if (v) setVisitanteForm(f => ({ ...f, id_visitante: v.id, nombre: v.personas?.nombre || '', apellido: v.personas?.apellido || '', telefono: v.personas?.telefono || '', sexo: v.personas?.sexo || 'M' }));
                     } else {
                       setVisitanteForm(f => ({ ...f, id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M' }));
                     }
@@ -721,7 +732,7 @@ export default function VehiculosTickets() {
                 >
                   <option value="">— Nuevo visitante —</option>
                   {visitantesRegistrados.map(v => (
-                    <option key={v.id} value={v.id}>{v.nombre} {v.apellido}{v.telefono ? ` — ${v.telefono}` : ''}</option>
+                    <option key={v.id} value={v.id}>{v.personas?.nombre} {v.personas?.apellido}{v.personas?.telefono ? ` — ${v.personas.telefono}` : ''}</option>
                   ))}
                 </select>
               </div>
@@ -780,9 +791,13 @@ export default function VehiculosTickets() {
                   <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Toyota" value={visitanteForm.marca} onChange={e => setVisitanteForm(f => ({ ...f, marca: e.target.value }))} />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Rojo" value={visitanteForm.color} onChange={e => setVisitanteForm(f => ({ ...f, color: e.target.value }))} />
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
+                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Corolla" value={visitanteForm.modelo} onChange={e => setVisitanteForm(f => ({ ...f, modelo: e.target.value }))} />
                 </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
+                <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Rojo" value={visitanteForm.color} onChange={e => setVisitanteForm(f => ({ ...f, color: e.target.value }))} />
               </div>
 
               <hr className="border-dashed" />
@@ -913,7 +928,7 @@ export default function VehiculosTickets() {
                         #{String(t.Id_Ticket).padStart(5, '0')}
                       </td>
                       <td className="px-5 py-4 font-medium text-gray-800">
-                        {t.visitantes?.nombre ?? t.personas?.nombre} {t.visitantes?.apellido ?? t.personas?.apellido}
+                        {t.visitantes?.personas?.nombre ?? t.personas?.nombre} {t.visitantes?.personas?.apellido ?? t.personas?.apellido}
                       </td>
                       <td className="px-5 py-4">
                         <span className="bg-gray-900 text-white font-mono text-xs px-2 py-1 rounded">
@@ -928,7 +943,7 @@ export default function VehiculosTickets() {
                         })()}
                       </td>
                       <td className="px-5 py-4 text-gray-500 text-xs">
-                        {[t.Marca_Vehiculo || t.vehiculos?.Marca, t.Color_Vehiculo || t.vehiculos?.Color].filter(Boolean).join(' · ') || '—'}
+                        {[t.Marca_Vehiculo || t.vehiculos?.Marca, t.Modelo_Vehiculo || t.vehiculos?.modelo, t.Color_Vehiculo || t.vehiculos?.Color].filter(Boolean).join(' · ') || '—'}
                       </td>
                       <td className="px-5 py-4">
                         <span className="font-bold text-green-700 bg-green-50 px-2 py-1 rounded-full text-xs border border-green-200">
@@ -1034,9 +1049,13 @@ export default function VehiculosTickets() {
                   <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Toyota" value={vehiculoPersonalForm.marca} onChange={e => setVehiculoPersonalForm(f => ({ ...f, marca: e.target.value }))} />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Azul" value={vehiculoPersonalForm.color} onChange={e => setVehiculoPersonalForm(f => ({ ...f, color: e.target.value }))} />
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
+                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Corolla" value={vehiculoPersonalForm.modelo} onChange={e => setVehiculoPersonalForm(f => ({ ...f, modelo: e.target.value }))} />
                 </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
+                <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Azul" value={vehiculoPersonalForm.color} onChange={e => setVehiculoPersonalForm(f => ({ ...f, color: e.target.value }))} />
               </div>
               <button
                 type="submit"
@@ -1061,7 +1080,7 @@ export default function VehiculosTickets() {
                   <tr>
                     <th className="px-5 py-3 text-left">Propietario</th>
                     <th className="px-5 py-3 text-left">Placa</th>
-                    <th className="px-5 py-3 text-left">Marca / Color</th>
+                    <th className="px-5 py-3 text-left">Marca / Modelo / Color</th>
                     <th className="px-5 py-3 text-left">Registro</th>
                     <th className="px-5 py-3 text-center">Acción</th>
                   </tr>
@@ -1078,7 +1097,7 @@ export default function VehiculosTickets() {
                         <span className="font-mono font-bold bg-gray-900 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span>
                       </td>
                       <td className="px-5 py-4 text-gray-500 text-xs">
-                        {[v.Marca, v.Color].filter(Boolean).join(' · ') || '—'}
+                        {[v.Marca, v.modelo, v.Color].filter(Boolean).join(' · ') || '—'}
                       </td>
                       <td className="px-5 py-4 text-xs text-gray-400">
                         {new Date(v.Fecha_Registro).toLocaleDateString('es-DO')}
@@ -1086,7 +1105,7 @@ export default function VehiculosTickets() {
                       <td className="px-5 py-4 text-center">
                         <div className="flex gap-1 justify-center">
                           <button
-                            onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, marca: v.Marca || '', color: v.Color || '' }); }}
+                            onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, marca: v.Marca || '', modelo: v.modelo || '', color: v.Color || '' }); }}
                             className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition"
                             title="Editar vehículo"
                           >
@@ -1134,12 +1153,19 @@ export default function VehiculosTickets() {
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Azul"
-                    value={editVehiculoForm.color}
-                    onChange={e => setEditVehiculoForm(f => ({ ...f, color: e.target.value }))}
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
+                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Corolla"
+                    value={editVehiculoForm.modelo}
+                    onChange={e => setEditVehiculoForm(f => ({ ...f, modelo: e.target.value }))}
                   />
                 </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
+                <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Azul"
+                  value={editVehiculoForm.color}
+                  onChange={e => setEditVehiculoForm(f => ({ ...f, color: e.target.value }))}
+                />
               </div>
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={() => setEditandoVehiculo(null)}

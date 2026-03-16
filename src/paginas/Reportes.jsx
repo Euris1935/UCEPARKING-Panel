@@ -11,12 +11,16 @@ export default function Reportes() {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Estados 
   const [showModal, setShowModal] = useState(false);
   const [tipoReporte, setTipoReporte] = useState('');
   const [descripcion, setDescripcion] = useState(''); 
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
+
+  // Estados Previas
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => { loadReportes(); }, []);
 
@@ -80,6 +84,73 @@ export default function Reportes() {
         Swal.fire('Error', error.message, 'error');
     } finally {
         setLoading(false);
+    }
+  };
+
+  const handlePreviewNewReport = async () => {
+    if (!tipoReporte) return Swal.fire('Atención', "Selecciona un tipo de reporte.", 'warning');
+    if (!fechaDesde || !fechaHasta) return Swal.fire('Atención', "Selecciona las fechas para el reporte.", 'warning');
+    if (new Date(fechaDesde) > new Date(fechaHasta)) return Swal.fire('Atención', "La fecha de inicio no puede ser mayor a la fecha de fin.", 'warning');
+    
+    setPreviewLoading(true);
+
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("No hay sesión activa.");
+
+        const url = 'http://localhost:4000/api/reports/preview';
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({
+            fechaDesde: `${fechaDesde}T00:00:00.000Z`,
+            fechaHasta: `${fechaHasta}T23:59:59.999Z`,
+            tipo: tipoReporte
+          })
+        });
+
+        const resData = await res.json();
+        if (!res.ok) throw new Error(resData.message || resData.error || "Error al previsualizar reporte.");
+
+        setPreviewData({
+            tipo: tipoReporte,
+            descripcion: descripcion || "Previsualización (Aún no guardado)",
+            fecha_creacion: new Date().toISOString(),
+            data: resData.data
+        });
+        setShowPreviewModal(true);
+
+    } catch (error) {
+        Swal.fire('Error', error.message, 'error');
+    } finally {
+        setPreviewLoading(false);
+    }
+  };
+
+  const handlePreviewExistingReport = async (id) => {
+    setPreviewLoading(true);
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("No hay sesión activa.");
+
+        const url = `http://localhost:4000/api/reports/${id}/preview`;
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${session.access_token}` }
+        });
+
+        const resData = await res.json();
+        if (!res.ok) throw new Error(resData.message || resData.error || "Error al previsualizar reporte.");
+
+        setPreviewData(resData);
+        setShowPreviewModal(true);
+    } catch (error) {
+        Swal.fire('Error', error.message, 'error');
+    } finally {
+        setPreviewLoading(false);
     }
   };
 
@@ -213,14 +284,21 @@ export default function Reportes() {
                 <div className="flex justify-end gap-2 pt-2 border-t">
                     <button 
                         onClick={() => setShowModal(false)} 
-                        className="px-4 py-2 text-gray-600 bg-gray-100 rounded hover:bg-gray-200 transition"
+                        className="px-4 py-2 text-gray-600 bg-gray-100 rounded hover:bg-gray-200 transition font-bold"
                     >
                         Cancelar
                     </button>
                     <button 
+                        onClick={handlePreviewNewReport} 
+                        disabled={previewLoading} 
+                        className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 disabled:opacity-50 transition shadow font-bold"
+                    >
+                        {previewLoading ? "Cargando..." : "Previsualizar"}
+                    </button>
+                    <button 
                         onClick={handleCreateReport} 
                         disabled={loading} 
-                        className="px-4 py-2 bg-primary text-white rounded hover:bg-blue-700 disabled:opacity-50 transition shadow"
+                        className="px-4 py-2 bg-primary text-white rounded hover:bg-blue-700 disabled:opacity-50 transition shadow font-bold"
                     >
                         {loading ? "Guardando..." : "Guardar"}
                     </button>
@@ -287,6 +365,13 @@ export default function Reportes() {
                   </td>
                   <td className="px-6 py-4 flex gap-3 justify-center">
                     <button 
+                        onClick={() => handlePreviewExistingReport(r.Id_Reporte)} 
+                        className="text-indigo-600 hover:text-indigo-800 bg-indigo-50 p-2 rounded-full transition" 
+                        title="Previsualizar"
+                    >
+                        <FaSearch />
+                    </button>
+                    <button 
                         onClick={() => handleDownloadExcel(r.Id_Reporte, r.Tipo_Reporte)} 
                         className="text-green-600 hover:text-green-800 bg-green-50 p-2 rounded-full transition" 
                         title="Descargar Excel"
@@ -307,6 +392,111 @@ export default function Reportes() {
           </table>
         </div>
       </div>
+
+      {/* Modal de Previsualización */}
+      {showPreviewModal && previewData && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+                {/* Header Navbar */}
+                <div className="bg-gray-50 border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+                    <div>
+                        <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                            <FaSearch className="text-indigo-600"/> Previsualización: {previewData.tipo}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-1">{previewData.descripcion}</p>
+                    </div>
+                    <button 
+                        onClick={() => setShowPreviewModal(false)}
+                        className="text-gray-400 hover:text-gray-700 bg-gray-200 hover:bg-gray-300 rounded-full w-8 h-8 flex items-center justify-center transition font-bold"
+                    >
+                        ✕
+                    </button>
+                </div>
+                
+                {/* Content Body */}
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-50/50">
+                    {previewData.tipo === 'EVENTOS' ? (
+                        <div className="bg-white rounded border overflow-x-auto shadow-sm">
+                            <table className="min-w-full text-sm text-left align-middle">
+                                <thead className="bg-gray-100 text-gray-600 uppercase text-xs font-bold border-b">
+                                    <tr>
+                                        <th className="px-4 py-3">Fecha</th>
+                                        <th className="px-4 py-3">Tipo</th>
+                                        <th className="px-4 py-3">Descripción</th>
+                                        <th className="px-4 py-3">Usuario</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                    {(previewData.data?.eventos || []).slice(0, 100).map((ev, i) => (
+                                        <tr key={i} className="hover:bg-gray-50">
+                                            <td className="px-4 py-2 font-mono text-xs text-gray-500">{new Date(ev.Fecha_Creacion || ev.Fecha_Hora).toLocaleString()}</td>
+                                            <td className="px-4 py-2 font-bold text-xs"><span className="bg-gray-200 text-gray-700 px-2 py-1 rounded">{ev.Tipo_Evento}</span></td>
+                                            <td className="px-4 py-2 truncate max-w-xs" title={ev.Descripcion}>{ev.Descripcion}</td>
+                                            <td className="px-4 py-2 text-gray-600">{ev.origen_evento || ev.Usuario || '-'}</td>
+                                        </tr>
+                                    ))}
+                                    {(previewData.data?.eventos || []).length === 0 && (
+                                        <tr><td colSpan="4" className="text-center py-4 text-gray-400">Sin eventos en este periodo.</td></tr>
+                                    )}
+                                    {previewData.data?.eventos?.length > 100 && (
+                                        <tr><td colSpan="4" className="text-center py-3 text-sm text-gray-500 italic bg-gray-50">Mostrando los primeros 100 registros... Descargue el Excel para ver todos.</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <div className="space-y-6">
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="bg-white p-4 rounded border shadow-sm border-l-4 border-blue-500 flex flex-col justify-center">
+                                    <p className="text-xs text-gray-500 font-bold uppercase mb-1">Total Entradas</p>
+                                    <p className="text-2xl font-bold text-gray-800">{previewData.data?.resumen_ocupacion?.total_entradas || 0}</p>
+                                </div>
+                                <div className="bg-white p-4 rounded border shadow-sm border-l-4 border-green-500 flex flex-col justify-center">
+                                    <p className="text-xs text-gray-500 font-bold uppercase mb-1">Total Salidas</p>
+                                    <p className="text-2xl font-bold text-gray-800">{previewData.data?.resumen_ocupacion?.total_salidas || 0}</p>
+                                </div>
+                                <div className="bg-white p-4 rounded border shadow-sm border-l-4 border-purple-500 flex flex-col justify-center">
+                                    <p className="text-xs text-gray-500 font-bold uppercase mb-1">Duración Media</p>
+                                    <p className="text-2xl font-bold text-gray-800">{previewData.data?.resumen_ocupacion?.duracion_promedio_minutos || 0}m</p>
+                                </div>
+                                <div className="bg-white p-4 rounded border shadow-sm border-l-4 border-amber-500 flex flex-col justify-center">
+                                    <p className="text-xs text-gray-500 font-bold uppercase mb-1">Pico de Ocupación</p>
+                                    <p className="text-2xl font-bold text-gray-800">{previewData.data?.resumen_ocupacion?.hora_pico || 'N/A'}</p>
+                                </div>
+                            </div>
+                            
+                            <h4 className="font-bold text-gray-800 border-b pb-2 mb-3 mt-4">Estadísticas Generales</h4>
+                            <div className="bg-white rounded border overflow-x-auto shadow-sm">
+                                <table className="min-w-full text-sm text-left align-middle">
+                                    <thead className="bg-gray-100 text-gray-600 uppercase text-xs font-bold border-b">
+                                        <tr>
+                                            <th className="px-4 py-3">Indicador</th>
+                                            <th className="px-4 py-3 text-center">Valor Registrado</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        <tr className="hover:bg-gray-50">
+                                            <td className="px-4 py-2 font-bold text-gray-700">Tickets Emitidos</td>
+                                            <td className="px-4 py-2 text-center font-bold">{previewData.data?.resumen_general?.tickets_emitidos || 0}</td>
+                                        </tr>
+                                        <tr className="hover:bg-gray-50">
+                                            <td className="px-4 py-2 font-bold text-gray-700">Vehículos Nuevos Reg.</td>
+                                            <td className="px-4 py-2 text-center font-bold">{previewData.data?.resumen_general?.nuevos_vehiculos_registrados || 0}</td>
+                                        </tr>
+                                        <tr className="hover:bg-gray-50">
+                                            <td className="px-4 py-2 font-bold text-gray-700">Total Reservas</td>
+                                            <td className="px-4 py-2 text-center font-bold">{previewData.data?.resumen_general?.total_reservas || 0}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+      )}
+
     </Layout>
   );
 }

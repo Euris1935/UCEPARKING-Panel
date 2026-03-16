@@ -6,12 +6,13 @@ import { useEffect, useState } from 'react';
 import {
   FaTachometerAlt, FaCar, FaClipboardList, FaUsers,
   FaMicrochip, FaChartBar, FaWrench, FaCog, FaSignOutAlt,
-  FaParking, FaTicketAlt, FaSuitcase, FaHistory, FaBell
+  FaParking, FaTicketAlt, FaSuitcase, FaHistory, FaBell, FaHandPaper
 } from 'react-icons/fa';
 
 const navItems = [
   { to: '/', icon: FaTachometerAlt, label: 'Dashboard' },
   { to: '/vehiculos-tickets', icon: FaTicketAlt, label: 'Vehículos y Tickets' },
+  { to: '/acceso-manual', icon: FaHandPaper, label: 'Acceso Manual' },
   { to: '/ocupacion', icon: FaCar, label: 'Ocupación' },
   { to: '/zonas-parqueo', icon: FaParking, label: 'Zonas de Parqueo' },
   { to: '/reservaciones', icon: FaClipboardList, label: 'Reservaciones' },
