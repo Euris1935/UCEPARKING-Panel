@@ -1,10 +1,10 @@
 ﻿
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import {
-  FaCar, FaTicketAlt, FaUserPlus, FaSave, FaTrash, FaEdit,
+  FaCar, FaTicketAlt, FaUserPlus, FaSave, FaTrash, FaEdit, FaSearch,
   FaPrint, FaSignOutAlt, FaClipboardCheck, FaSyncAlt, FaBan
 } from 'react-icons/fa';
 
@@ -27,7 +27,7 @@ function TicketPrintView({ ticket, onClose }) {
         <div id="ticket-print-area" className="p-6 space-y-3 text-sm">
           <Row label="N° Ticket" value={`#${String(ticket.Id_Ticket).padStart(6, '0')}`} bold />
           <hr />
-          <Row label="Visitante" value={`${ticket.visitantes?.nombre ?? ticket.personas?.nombre ?? '—'} ${ticket.visitantes?.apellido ?? ticket.personas?.apellido ?? ''}`} />
+          <Row label="Visitante" value={`${ticket.visitantes?.personas?.nombre ?? ticket.personas?.nombre ?? '—'} ${ticket.visitantes?.personas?.apellido ?? ticket.personas?.apellido ?? ''}`} />
           <Row label="Placa" value={ticket.Placa_Capturada} bold mono />
           <Row label="Marca" value={ticket.Marca_Vehiculo || ticket.vehiculos?.Marca || '—'} />
           <Row label="Color" value={ticket.Color_Vehiculo || ticket.vehiculos?.Color || '—'} />
@@ -72,6 +72,51 @@ function Row({ label, value, bold, mono }) {
   );
 }
 
+/* ── Componente SearchableSelect ── */
+function SearchableSelect({ value, onChange, options, placeholder, required }) {
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const selectedLabel = options.find(o => String(o.value) === String(value))?.label || '';
+  const filtered = options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="relative" ref={ref}>
+      <input type="hidden" value={value || ''} required={required} />
+      <input
+        type="text"
+        className="w-full border rounded-lg p-2 text-sm bg-gray-50 focus:ring-green-500"
+        placeholder={placeholder || 'Buscar...'}
+        value={open ? search : selectedLabel}
+        onFocus={() => { setOpen(true); setSearch(''); }}
+        onChange={e => setSearch(e.target.value)}
+      />
+      {open && (
+        <div className="absolute z-50 bg-white border rounded-lg shadow-lg mt-1 w-full max-h-48 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="p-2 text-sm text-gray-400">Sin resultados</div>
+          ) : filtered.map(o => (
+            <div
+              key={o.value}
+              className={`p-2 text-sm cursor-pointer hover:bg-green-50 ${String(o.value) === String(value) ? 'bg-green-100 font-bold' : ''}`}
+              onClick={() => { onChange(o.value); setSearch(''); setOpen(false); }}
+            >
+              {o.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─────────────────────────────────────────────
    Componente Principal
 ───────────────────────────────────────────── */
@@ -87,13 +132,16 @@ export default function VehiculosTickets() {
   const [visitantesRegistrados, setVisitantesRegistrados] = useState([]);
   const [plazasLibres, setPlazasLibres] = useState([]);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
+  const [flotaSearch, setFlotaSearch] = useState('');
+  const [vehiculosVisitantes, setVehiculosVisitantes] = useState([]);
+  const [flotaSubTab, setFlotaSubTab] = useState('flota');
 
   // Ticket para imprimir
   const [ticketParaImprimir, setTicketParaImprimir] = useState(null);
 
   // Formulario Visitante
   const [visitanteForm, setVisitanteForm] = useState({
-    id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M',
+    id_visitante: null, persona_id: null, nombre: '', apellido: '', telefono: '', sexo: 'M',
     placa: '', marca: '', color: '', id_plaza: '', duracion: '60'
   });
 
@@ -138,7 +186,7 @@ export default function VehiculosTickets() {
       hoy.setHours(0, 0, 0, 0);
       const { data: tks } = await supabase
         .from('tickets')
-        .select('*, visitantes(nombre, apellido), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(Marca, Color)')
+        .select('*, visitantes(id, persona_id, personas(nombre, apellido)), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(Marca, Color)')
         .gte('Fecha_Hora_Emision', hoy.toISOString())
         .order('Fecha_Hora_Emision', { ascending: false });
 
@@ -148,10 +196,10 @@ export default function VehiculosTickets() {
         .select('*, personas(nombre, apellido)')
         .order('Fecha_Registro', { ascending: false });
 
-      // ── Visitantes desde la tabla dedicada ──
+      // ── Visitantes desde la tabla dedicada (ahora enlazados a personas) ──
       const { data: visitantesData } = await supabase
         .from('visitantes')
-        .select('*')
+        .select('id, persona_id, rol_id, created_at, personas(id, nombre, apellido, telefono, sexo)')
         .order('created_at', { ascending: false });
 
       // ── Personal del sistema: 2 queries separadas para evitar FK inexistente entre usuarios y roles ──
@@ -178,12 +226,50 @@ export default function VehiculosTickets() {
       const listaPersonal = Array.from(mapaPersonas.values());
 
 
+      // Vehículos de visitantes (desde tickets, deduplicados por placa)
+      const { data: ticketsVis } = await supabase
+        .from('tickets')
+        .select('Placa_Capturada, Marca_Vehiculo, Color_Vehiculo, Fecha_Hora_Emision, visitantes(id, persona_id, personas(nombre, apellido))')
+        .not('visitante_id', 'is', null)
+        .order('Fecha_Hora_Emision', { ascending: false });
+      const vVisMap = new Map();
+      (ticketsVis || []).forEach(t => {
+        const placa = t.Placa_Capturada;
+        if (placa && !vVisMap.has(placa)) {
+          vVisMap.set(placa, {
+            placa,
+            Marca: t.Marca_Vehiculo || '',
+            Color: t.Color_Vehiculo || '',
+            nombre: t.visitantes?.personas?.nombre || '',
+            apellido: t.visitantes?.personas?.apellido || '',
+            telefono: '',
+            visitante_id: t.visitantes?.id || null,
+            persona_id: t.visitantes?.persona_id || null,
+            fecha: t.Fecha_Hora_Emision
+          });
+        }
+      });
+      // Enriquecer con teléfono desde visitantesData
+      const visMap = new Map();
+      (visitantesData || []).forEach(v => { if (v.persona_id) visMap.set(v.persona_id, v); });
+      vVisMap.forEach((val) => {
+        if (val.persona_id) {
+          const vis = visMap.get(val.persona_id);
+          if (vis?.personas?.telefono) val.telefono = vis.personas.telefono;
+        }
+      });
+
+      // Excluir vehiculos de visitantes de la flota
+      const visitantePersonaIds = new Set((visitantesData || []).filter(v => v.persona_id).map(v => v.persona_id));
+      const vehiculosSistema = (vhs || []).filter(v => !v.persona_id || !visitantePersonaIds.has(v.persona_id));
+
       setPlazasLibres(plazas || []);
       setTickets(tks || []);
       setTicketsActivos((tks || []).filter(t => t.Estado === 'Activo').length);
-      setVehiculos(vhs || []);
+      setVehiculos(vehiculosSistema);
       setVisitantesRegistrados(visitantesData || []);
       setPersonasSistema(listaPersonal);
+      setVehiculosVisitantes(Array.from(vVisMap.values()));
 
     } catch (err) { console.error('Error cargando datos:', err); }
   };
@@ -243,20 +329,42 @@ export default function VehiculosTickets() {
     setLoading(true);
     try {
       let visitanteId = visitanteForm.id_visitante;
+      let visitantePersonaId = visitanteForm.persona_id || null;
 
-      // 1. Crear visitante en la tabla 'visitantes' si es nuevo
+      // 1. Crear visitante: primero persona, luego visitante
       if (!visitanteId) {
         if (!visitanteForm.nombre.trim() || !visitanteForm.apellido.trim()) {
           setLoading(false);
           return Swal.fire('Atención', 'Nombre y Apellido del visitante son obligatorios.', 'warning');
         }
-        const { data: newV, error: vErr } = await supabase
-          .from('visitantes')
+
+        // 1a. Crear registro en personas
+        const { data: newPersona, error: pErr } = await supabase
+          .from('personas')
           .insert([{
             nombre: visitanteForm.nombre.trim(),
             apellido: visitanteForm.apellido.trim(),
             telefono: visitanteForm.telefono || null,
             sexo: visitanteForm.sexo
+          }])
+          .select()
+          .single();
+        if (pErr) throw pErr;
+        visitantePersonaId = newPersona.id;
+
+        // 1b. Obtener el rol_id de 'Visitante'
+        const { data: rolData } = await supabase
+          .from('roles')
+          .select('Id_Rol')
+          .eq('Nombre_Rol', 'Visitante')
+          .single();
+
+        // 1c. Crear registro en visitantes enlazado a persona
+        const { data: newV, error: vErr } = await supabase
+          .from('visitantes')
+          .insert([{
+            persona_id: newPersona.id,
+            rol_id: rolData?.Id_Rol || null
           }])
           .select()
           .single();
@@ -278,6 +386,7 @@ export default function VehiculosTickets() {
           Placa_Capturada: visitanteForm.placa.toUpperCase(),
           Id_Plaza_Asignada: parseInt(visitanteForm.id_plaza),
           visitante_id: visitanteId,
+          id_persona: visitantePersonaId,
           Estado: 'Activo',
           id_estado: 1,
           Fecha_Hora_Emision: ahora,
@@ -285,7 +394,7 @@ export default function VehiculosTickets() {
           Color_Vehiculo: visitanteForm.color || null,
           Marca_Vehiculo: visitanteForm.marca || null
         }])
-        .select('*, visitantes(nombre, apellido), plazas(Numero_Plaza)')
+        .select('*, visitantes(id, persona_id, personas(nombre, apellido)), plazas(Numero_Plaza)')
         .single();
       if (tErr) throw tErr;
 
@@ -305,7 +414,7 @@ export default function VehiculosTickets() {
       // 7. Mostrar ticket para imprimir (RF2)
       setTicketParaImprimir(nuevoTicket);
 
-      setVisitanteForm({ id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M', placa: '', marca: '', color: '', id_plaza: '', duracion: '60' });
+      setVisitanteForm({ id_visitante: null, persona_id: null, nombre: '', apellido: '', telefono: '', sexo: 'M', placa: '', marca: '', color: '', id_plaza: '', duracion: '60' });
       setActiveTab('activos');
       loadData();
 
@@ -325,10 +434,14 @@ export default function VehiculosTickets() {
 
         if (vExistente) {
           vehiculoId = vExistente.id;
+          // Actualizar persona_id si el vehículo no lo tenía
+          if (visitantePersonaId) {
+            await supabase.from('vehiculos').update({ persona_id: visitantePersonaId }).eq('id', vehiculoId).is('persona_id', null);
+          }
         } else {
           const { data: vNuevo, error: vErr } = await supabase
             .from('vehiculos')
-            .insert({ placa, Marca: visitanteForm.marca || 'VISITANTE', Color: visitanteForm.color || 'N/A' })
+            .insert({ placa, Marca: visitanteForm.marca || null, Color: visitanteForm.color || null, persona_id: visitantePersonaId })
             .select('id')
             .single();
           if (vErr) console.error('[RegistroAcceso] Error al crear vehículo:', vErr.message);
@@ -375,7 +488,7 @@ export default function VehiculosTickets() {
           fetch('http://localhost:4000/api/access/open-main', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${session.access_token}` }
-          }).catch(() => {}); // Silencioso si no está corriendo
+          }).catch(() => { }); // Silencioso si no está corriendo
         }
       } catch (barrError) {
         console.warn('[Barrera/Acceso] Error no crítico:', barrError.message);
@@ -454,9 +567,9 @@ export default function VehiculosTickets() {
           fetch('http://localhost:4000/api/access/open-main', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${session.access_token}` }
-          }).catch(() => {});
+          }).catch(() => { });
         }
-      } catch (_) {}
+      } catch (_) { }
 
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
@@ -601,6 +714,65 @@ export default function VehiculosTickets() {
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
 
+  /* ── Eliminar Visitante ── */
+  const handleEliminarVisitante = async (v) => {
+    const r = await Swal.fire({
+      title: '¿Eliminar visitante?',
+      html: `<b>${v.nombre} ${v.apellido}</b><br><small>Se eliminarán sus tickets, vehículos y datos asociados.</small>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      confirmButtonText: 'Sí, eliminar'
+    });
+    if (!r.isConfirmed) return;
+    try {
+      console.log('Eliminando visitante:', v);
+
+      if (v.visitante_id) {
+        // 1. Liberar plazas de tickets activos
+        const { data: tActivos } = await supabase.from('tickets').select('Id_Ticket, Id_Plaza_Asignada').eq('visitante_id', v.visitante_id).eq('Estado', 'Activo');
+        for (const t of (tActivos || [])) {
+          await supabase.from('plazas').update({ Estado_Actual: 'LIBRE', id_estado: 1 }).eq('Id_Plaza', t.Id_Plaza_Asignada);
+        }
+
+        // 2. Obtener IDs de tickets para limpiar registros_acceso
+        const { data: allTickets } = await supabase.from('tickets').select('Id_Ticket, Id_Vehiculo').eq('visitante_id', v.visitante_id);
+        const vehiculoIds = [...new Set((allTickets || []).map(t => t.Id_Vehiculo).filter(Boolean))];
+
+        // 3. Limpiar registros_acceso que referencian los vehículos
+        for (const vId of vehiculoIds) {
+          await supabase.from('registros_acceso').delete().eq('vehiculo_id', vId);
+        }
+
+        // 4. Desenlazar tickets del visitante (nullificar FK en vez de borrar, por si RLS bloquea DELETE)
+        const { error: unlinkErr } = await supabase.from('tickets').update({ visitante_id: null }).eq('visitante_id', v.visitante_id);
+        if (unlinkErr) {
+          console.warn('tickets unlink error:', unlinkErr.message);
+          // Intentar eliminar directamente
+          const { error: tkErr } = await supabase.from('tickets').delete().eq('visitante_id', v.visitante_id);
+          if (tkErr) throw new Error('No se pudieron desenlazar/eliminar los tickets. Verifica los permisos (RLS) de UPDATE y DELETE en la tabla tickets.');
+        }
+
+        // 5. Eliminar registro de visitante
+        const { error: visErr } = await supabase.from('visitantes').delete().eq('id', v.visitante_id);
+        if (visErr) throw new Error(`No se pudo eliminar el visitante: ${visErr.message}`);
+      }
+
+      if (v.persona_id) {
+        // 6. Eliminar vehículos vinculados a esta persona
+        const { error: vhErr } = await supabase.from('vehiculos').delete().eq('persona_id', v.persona_id);
+        if (vhErr) console.warn('vehiculos delete:', vhErr.message);
+
+        // 7. Eliminar persona
+        const { error: pErr } = await supabase.from('personas').delete().eq('id', v.persona_id);
+        if (pErr) console.warn('personas delete:', pErr.message);
+      }
+
+      Swal.fire('Eliminado', 'Visitante y sus datos eliminados.', 'success');
+      loadData();
+    } catch (err) { Swal.fire('Error al eliminar', err.message, 'error'); }
+  };
+
   /* ── Controles de Barrera Manuales ── */
   const apiControlBarrera = async (endpoint, tituloConfirmacion) => {
     const res = await Swal.fire({
@@ -612,21 +784,21 @@ export default function VehiculosTickets() {
       confirmButtonText: 'Sí, abrir',
       cancelButtonText: 'Cancelar'
     });
-    
+
     if (res.isConfirmed) {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        const respuesta = await fetch(`http://localhost:4000/api/access/${endpoint}`, { 
+        const respuesta = await fetch(`http://localhost:4000/api/access/${endpoint}`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${session?.access_token}`
           }
         });
         if (respuesta.ok) {
-           Swal.fire('Barrera Abierta', 'El comando se ha enviado exitosamente.', 'success');
-           registrarLog('APERTURA_MANUAL', `Apertura manual de ${tituloConfirmacion}`);
+          Swal.fire('Barrera Abierta', 'El comando se ha enviado exitosamente.', 'success');
+          registrarLog('APERTURA_MANUAL', `Apertura manual de ${tituloConfirmacion}`);
         } else {
-           Swal.fire('Error', 'El servidor respondió con un error.', 'error');
+          Swal.fire('Error', 'El servidor respondió con un error.', 'error');
         }
       } catch (e) {
         Swal.fire('Error de Conexión', 'No se pudo conectar con el backend local (Arduino). Asegúrese que esté corriendo en el puerto 4000.', 'error');
@@ -670,21 +842,21 @@ export default function VehiculosTickets() {
           <h2 className="text-3xl font-bold text-gray-900">Vehículos y Tickets</h2>
           <p className="text-gray-500 mt-1">Control de acceso, emisión de tickets y gestión de la flota.</p>
         </div>
-        
+
         {/* Controles Físicos Manuales */}
         <div className="flex gap-3">
-           <button 
-             onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')}
-             className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
-           >
-             Principal ⬆️
-           </button>
-           <button 
-             onClick={() => apiControlBarrera('open-vip', '¿Abrir Barrera VIP?')}
-             className="bg-gray-800 hover:bg-black text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
-           >
+          <button
+            onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')}
+            className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+          >
+            Principal ⬆️
+          </button>
+          <button
+            onClick={() => apiControlBarrera('open-vip', '¿Abrir Barrera VIP?')}
+            className="bg-gray-800 hover:bg-black text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+          >
             VIP ⬆️
-           </button>
+          </button>
         </div>
       </header>
 
@@ -706,24 +878,74 @@ export default function VehiculosTickets() {
             <form onSubmit={handleEmitirTicket} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Visitante ya registrado?</label>
-                <select
-                  className="w-full border rounded-lg p-2 text-sm focus:ring-green-500 bg-gray-50"
+                <SearchableSelect
                   value={visitanteForm.id_visitante ?? ''}
-                  onChange={(e) => {
-                    const val = e.target.value;
+                  onChange={async (val) => {
                     if (val) {
                       const v = visitantesRegistrados.find(vis => vis.id === parseInt(val));
-                      if (v) setVisitanteForm(f => ({ ...f, id_visitante: v.id, nombre: v.nombre, apellido: v.apellido, telefono: v.telefono || '', sexo: v.sexo || 'M' }));
+                      if (v) {
+                        // Auto-fill personal data
+                        const updates = {
+                          id_visitante: v.id,
+                          persona_id: v.persona_id,
+                          nombre: v.personas?.nombre || '',
+                          apellido: v.personas?.apellido || '',
+                          telefono: v.personas?.telefono || '',
+                          sexo: v.personas?.sexo || 'M'
+                        };
+                        // Auto-fill vehicle data if visitor has linked vehicles
+                        if (v.persona_id) {
+                          const { data: vehList } = await supabase
+                            .from('vehiculos')
+                            .select('placa, Marca, Color')
+                            .eq('persona_id', v.persona_id);
+                          if (vehList && vehList.length === 1) {
+                            updates.placa = vehList[0].placa || '';
+                            updates.marca = vehList[0].Marca || '';
+                            updates.color = vehList[0].Color || '';
+                          } else if (vehList && vehList.length > 1) {
+                            // Multiple vehicles — let user choose or register new
+                            const opciones = { nuevo: '+ Registrar nuevo vehículo' };
+                            vehList.forEach((vh, i) => {
+                              opciones[i] = `${vh.placa} — ${[vh.Marca, vh.Color].filter(Boolean).join(' ')}`;
+                            });
+                            const { value: idx } = await Swal.fire({
+                              title: 'Múltiples vehículos',
+                              text: 'Este visitante tiene más de un vehículo registrado. Seleccione cuál usar:',
+                              input: 'select',
+                              inputOptions: opciones,
+                              showCancelButton: true,
+                              confirmButtonText: 'Seleccionar',
+                              inputPlaceholder: 'Seleccionar vehículo'
+                            });
+                            if (idx === 'nuevo') {
+                              // Leave vehicle fields empty for manual entry
+                              updates.placa = '';
+                              updates.marca = '';
+                              updates.color = '';
+                            } else if (idx !== undefined && idx !== null) {
+                              const sel = vehList[parseInt(idx)];
+                              updates.placa = sel.placa || '';
+                              updates.marca = sel.Marca || '';
+                              updates.color = sel.Color || '';
+                            }
+                          }
+                        }
+                        setVisitanteForm(f => ({ ...f, ...updates }));
+                      }
                     } else {
-                      setVisitanteForm(f => ({ ...f, id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M' }));
+                      setVisitanteForm(f => ({ ...f, id_visitante: null, persona_id: null, nombre: '', apellido: '', telefono: '', sexo: 'M', placa: '', marca: '', color: '' }));
                     }
                   }}
-                >
-                  <option value="">— Nuevo visitante —</option>
-                  {visitantesRegistrados.map(v => (
-                    <option key={v.id} value={v.id}>{v.nombre} {v.apellido}{v.telefono ? ` — ${v.telefono}` : ''}</option>
-                  ))}
-                </select>
+                  placeholder="Buscar visitante..."
+                  options={[
+                    { value: '', label: '— Nuevo visitante —' },
+                    ...visitantesRegistrados.map(v => ({
+                      value: v.id,
+                      label: `${v.personas?.nombre || ''} ${v.personas?.apellido || ''}`.trim()
+                    }))
+                  ]}
+                />
               </div>
 
               {/* Datos personales */}
@@ -913,7 +1135,7 @@ export default function VehiculosTickets() {
                         #{String(t.Id_Ticket).padStart(5, '0')}
                       </td>
                       <td className="px-5 py-4 font-medium text-gray-800">
-                        {t.visitantes?.nombre ?? t.personas?.nombre} {t.visitantes?.apellido ?? t.personas?.apellido}
+                        {t.visitantes?.personas?.nombre ?? t.personas?.nombre} {t.visitantes?.personas?.apellido ?? t.personas?.apellido}
                       </td>
                       <td className="px-5 py-4">
                         <span className="bg-gray-900 text-white font-mono text-xs px-2 py-1 rounded">
@@ -1006,17 +1228,16 @@ export default function VehiculosTickets() {
             <form onSubmit={handleVehiculoPersonalSubmit} className="space-y-4">
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Propietario *</label>
-                <select
-                  className="w-full border rounded-lg p-2 text-sm mt-0.5 focus:ring-purple-500"
+                <SearchableSelect
                   value={vehiculoPersonalForm.persona_id}
-                  onChange={e => setVehiculoPersonalForm(f => ({ ...f, persona_id: e.target.value }))}
+                  onChange={val => setVehiculoPersonalForm(f => ({ ...f, persona_id: val }))}
+                  placeholder="Buscar persona..."
+                  options={personasSistema.map(p => ({
+                    value: p.id,
+                    label: `${p.nombre} ${p.apellido} (${p.rol})`
+                  }))}
                   required
-                >
-                  <option value="">— Seleccionar persona —</option>
-                  {personasSistema.map(p => (
-                    <option key={p.id} value={p.id}>{p.nombre} {p.apellido} ({p.rol})</option>
-                  ))}
-                </select>
+                />
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Placa *</label>
@@ -1049,63 +1270,145 @@ export default function VehiculosTickets() {
 
           {/* Tabla flota */}
           <section className="lg:col-span-3 bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-            <div className="p-5 border-b">
-              <h3 className="font-bold text-gray-800 flex items-center gap-2">
-                <FaCar className="text-purple-600" /> Flota Registrada
-                <span className="ml-2 bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-full">{vehiculos.length} vehículos</span>
-              </h3>
+            <div className="p-5 border-b flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setFlotaSubTab('flota'); setFlotaSearch(''); }}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-bold transition ${flotaSubTab === 'flota' ? 'bg-purple-600 text-white shadow' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                  >
+                    <FaCar className="inline mr-1.5" size={12} /> Flota Registrada
+                    <span className="ml-1.5 text-xs opacity-80">({vehiculos.length})</span>
+                  </button>
+                  <button
+                    onClick={() => { setFlotaSubTab('visitantes'); setFlotaSearch(''); }}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-bold transition ${flotaSubTab === 'visitantes' ? 'bg-orange-500 text-white shadow' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                  >
+                    <FaTicketAlt className="inline mr-1.5" size={12} /> Visitantes
+                    <span className="ml-1.5 text-xs opacity-80">({vehiculosVisitantes.length})</span>
+                  </button>
+                </div>
+                <div className="relative w-56">
+                  <input
+                    type="text"
+                    placeholder={flotaSubTab === 'flota' ? 'Buscar placa, propietario...' : 'Buscar visitante, placa...'}
+                    className="w-full pl-8 pr-3 py-1.5 border rounded-lg text-sm outline-none"
+                    value={flotaSearch}
+                    onChange={e => setFlotaSearch(e.target.value)}
+                  />
+                  <FaSearch className="absolute left-2.5 top-2.5 text-gray-400" size={12} />
+                </div>
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-100 text-sm">
-                <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase">
-                  <tr>
-                    <th className="px-5 py-3 text-left">Propietario</th>
-                    <th className="px-5 py-3 text-left">Placa</th>
-                    <th className="px-5 py-3 text-left">Marca / Color</th>
-                    <th className="px-5 py-3 text-left">Registro</th>
-                    <th className="px-5 py-3 text-center">Acción</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {vehiculos.length === 0 ? (
-                    <tr><td colSpan="5" className="text-center py-10 text-gray-400">No hay vehículos registrados.</td></tr>
-                  ) : vehiculos.map(v => (
-                    <tr key={v.id} className="hover:bg-gray-50 transition-all">
-                      <td className="px-5 py-4 font-medium text-gray-800">
-                        {v.personas?.nombre} {v.personas?.apellido}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="font-mono font-bold bg-gray-900 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span>
-                      </td>
-                      <td className="px-5 py-4 text-gray-500 text-xs">
-                        {[v.Marca, v.Color].filter(Boolean).join(' · ') || '—'}
-                      </td>
-                      <td className="px-5 py-4 text-xs text-gray-400">
-                        {new Date(v.Fecha_Registro).toLocaleDateString('es-DO')}
-                      </td>
-                      <td className="px-5 py-4 text-center">
-                        <div className="flex gap-1 justify-center">
-                          <button
-                            onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, marca: v.Marca || '', color: v.Color || '' }); }}
-                            className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition"
-                            title="Editar vehículo"
-                          >
-                            <FaEdit size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleEliminarVehiculo(v)}
-                            className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition"
-                            title="Eliminar vehículo"
-                          >
-                            <FaTrash size={14} />
-                          </button>
-                        </div>
-                      </td>
+
+            {/* Sub-tab: Flota Registrada */}
+            {flotaSubTab === 'flota' && (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-100 text-sm">
+                  <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase">
+                    <tr>
+                      <th className="px-5 py-3 text-left">Propietario</th>
+                      <th className="px-5 py-3 text-left">Placa</th>
+                      <th className="px-5 py-3 text-left">Marca / Color</th>
+                      <th className="px-5 py-3 text-left">Registro</th>
+                      <th className="px-5 py-3 text-center">Acción</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {(() => {
+                      const filtrados = vehiculos.filter(v => {
+                        const texto = `${v.personas?.nombre || ''} ${v.personas?.apellido || ''} ${v.placa || ''} ${v.Marca || ''} ${v.Color || ''}`.toLowerCase();
+                        return texto.includes(flotaSearch.toLowerCase());
+                      });
+                      return filtrados.length === 0 ? (
+                        <tr><td colSpan="5" className="text-center py-10 text-gray-400">No hay vehículos que coincidan.</td></tr>
+                      ) : filtrados.map(v => (
+                        <tr key={v.id} className="hover:bg-gray-50 transition-all">
+                          <td className="px-5 py-4 font-medium text-gray-800">
+                            {v.personas?.nombre} {v.personas?.apellido}
+                          </td>
+                          <td className="px-5 py-4">
+                            <span className="font-mono font-bold bg-gray-900 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span>
+                          </td>
+                          <td className="px-5 py-4 text-gray-500 text-xs">
+                            {[v.Marca, v.Color].filter(Boolean).join(' · ') || '—'}
+                          </td>
+                          <td className="px-5 py-4 text-xs text-gray-400">
+                            {new Date(v.Fecha_Registro).toLocaleDateString('es-DO')}
+                          </td>
+                          <td className="px-5 py-4 text-center">
+                            <div className="flex gap-1 justify-center">
+                              <button
+                                onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, marca: v.Marca || '', color: v.Color || '' }); }}
+                                className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition"
+                                title="Editar vehículo"
+                              >
+                                <FaEdit size={14} />
+                              </button>
+                              <button
+                                onClick={() => handleEliminarVehiculo(v)}
+                                className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition"
+                                title="Eliminar vehículo"
+                              >
+                                <FaTrash size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Sub-tab: Visitantes */}
+            {flotaSubTab === 'visitantes' && (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-100 text-sm">
+                  <thead className="bg-orange-50 text-xs font-bold text-orange-600 uppercase">
+                    <tr>
+                      <th className="px-5 py-3 text-left">Visitante</th>
+                      <th className="px-5 py-3 text-left">Teléfono</th>
+                      <th className="px-5 py-3 text-left">Placa</th>
+                      <th className="px-5 py-3 text-left">Marca / Color</th>
+                      <th className="px-5 py-3 text-left">Última Visita</th>
+                      <th className="px-5 py-3 text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {(() => {
+                      const filtrados = vehiculosVisitantes.filter(v => {
+                        const texto = `${v.nombre} ${v.apellido} ${v.placa} ${v.Marca} ${v.Color}`.toLowerCase();
+                        return texto.includes(flotaSearch.toLowerCase());
+                      });
+                      return filtrados.length === 0 ? (
+                        <tr><td colSpan="6" className="text-center py-10 text-gray-400">No hay vehículos de visitantes registrados.</td></tr>
+                      ) : filtrados.map((v, i) => (
+                        <tr key={`vis-${i}`} className="hover:bg-orange-50/30 transition-all">
+                          <td className="px-5 py-3 font-medium text-gray-700">{v.nombre} {v.apellido}</td>
+                          <td className="px-5 py-3 text-xs text-gray-500">{v.telefono || '—'}</td>
+                          <td className="px-5 py-3">
+                            <span className="font-mono font-bold bg-orange-700 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span>
+                          </td>
+                          <td className="px-5 py-3 text-gray-500 text-xs">{[v.Marca, v.Color].filter(Boolean).join(' · ') || '—'}</td>
+                          <td className="px-5 py-3 text-xs text-gray-400">{new Date(v.fecha).toLocaleDateString('es-DO')}</td>
+                          <td className="px-5 py-3 text-center">
+                            <button
+                              onClick={() => handleEliminarVisitante(v)}
+                              className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition"
+                              title="Eliminar visitante"
+                            >
+                              <FaTrash size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ));
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </div>
       )}

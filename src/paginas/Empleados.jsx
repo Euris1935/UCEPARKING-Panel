@@ -159,7 +159,8 @@ export default function Empleados() {
         try {
             Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading() });
 
-            const { nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion } = formData;
+            const { nombre, apellido, telefono, sexo, fecha_nacimiento, direccion } = formData;
+            const emailValue = formData.email.trim() || null; // null evita violación de UNIQUE constraint
             // Convertir a enteros para garantizar el tipo correcto en la BD
             const rol_id = parseInt(formData.rol_id);
             const departamento_id = parseInt(formData.departamento_id);
@@ -170,7 +171,7 @@ export default function Empleados() {
                 // Actualizar Persona
                 const { error: pError } = await supabase
                     .from('personas')
-                    .update({ nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion })
+                    .update({ nombre, apellido, email: emailValue, telefono, sexo, fecha_nacimiento, direccion })
                     .eq('id', editingPersonaId);
 
                 if (pError) throw pError;
@@ -192,12 +193,17 @@ export default function Empleados() {
                 const { data: personaData, error: pError } = await supabase
                     .from('personas')
                     .insert([{
-                        nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion
+                        nombre, apellido, email: emailValue, telefono, sexo, fecha_nacimiento, direccion
                     }])
                     .select()
                     .single();
 
-                if (pError) throw new Error("Error creando persona: " + pError.message);
+                if (pError) {
+                    if (pError.message.includes('persona_email_key') || pError.message.includes('duplicate key')) {
+                        throw new Error(`El correo "${emailValue}" ya está registrado para otra persona. Use un correo diferente o déjelo vacío.`);
+                    }
+                    throw new Error("Error creando persona: " + pError.message);
+                }
 
                 //  Crear Empleado vinculado al id de la persona
                 const { error: eError } = await supabase

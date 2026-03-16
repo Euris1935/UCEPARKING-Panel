@@ -1,9 +1,9 @@
 
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaBell, FaUserTie } from 'react-icons/fa';
+import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaUserTie } from 'react-icons/fa';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -17,8 +17,6 @@ export default function Dashboard() {
   });
 
   const [loading, setLoading] = useState(true);
-  const [alertaBanner, setAlertaBanner] = useState(null); // RF3: alerta de capacidad
-  const alertaYaEnviada = useRef(false); // evitar spam de notificaciones
 
   useEffect(() => {
     loadDashboardData();
@@ -79,50 +77,12 @@ export default function Dashboard() {
     }
   };
 
-  // RF3: Monitor de alerta de capacidad — se ejecuta cuando cambian las estadísticas
-  useEffect(() => {
-    if (stats.totalPlazas === 0) return;
-    const pct = Math.round(((stats.ocupadas + stats.reservadas) / stats.totalPlazas) * 100);
-    const savedSettings = localStorage.getItem('appSettings');
-    const umbral = savedSettings ? parseInt(JSON.parse(savedSettings).alertaCapacidad) : 90;
-
-    if (pct >= umbral) {
-      setAlertaBanner({ pct, umbral });
-      // Solo crear notificación una vez por sesión para no saturar la tabla
-      if (!alertaYaEnviada.current) {
-        alertaYaEnviada.current = true;
-        supabase.from('notificaciones').insert([{
-          Tipo: 'Alerta',
-          Contenido: `⚠️ Alerta de capacidad: el parqueo está al ${pct}% de ocupación (umbral configurado: ${umbral}%). Plazas libres: ${stats.libres}.`,
-          Leida: false
-        }]).then(({ error }) => { if (error) console.warn('Error alerta RF3:', error.message); });
-      }
-    } else {
-      setAlertaBanner(null);
-      alertaYaEnviada.current = false; // resetear para próxima subida
-    }
-  }, [stats]);
-
   const ocupacionPorcentaje = stats.totalPlazas > 0
     ? Math.round(((stats.ocupadas + stats.reservadas + stats.asignadas) / stats.totalPlazas) * 100)
     : 0;
 
   return (
     <Layout>
-      {/* RF3: Banner de alerta de capacidad */}
-      {alertaBanner && (
-        <div className="mb-6 flex items-center gap-4 bg-red-600 text-white px-5 py-3 rounded-xl shadow-lg animate-pulse">
-          <FaBell className="text-2xl shrink-0" />
-          <div className="flex-1">
-            <p className="font-bold text-sm">⚠️ ALERTA DE CAPACIDAD — Parqueo al {alertaBanner.pct}%</p>
-            <p className="text-xs opacity-90">Se superó el umbral configurado del {alertaBanner.umbral}%.
-              Solo quedan <strong>{stats.libres}</strong> plaza(s) libre(s).
-              Notificación registrada automáticamente.
-            </p>
-          </div>
-          <button onClick={() => setAlertaBanner(null)} className="text-white/70 hover:text-white text-lg font-bold px-2">✕</button>
-        </div>
-      )}
       <header className="mb-8">
         <h2 className="text-3xl font-bold text-gray-900">Vista General</h2>
         <p className="text-gray-500">Resumen de actividad en tiempo real.</p>

@@ -1,26 +1,72 @@
 
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import Swal from 'sweetalert2'; 
-import { 
-  FaSearch, FaEdit, FaCheckCircle, FaTimesCircle, 
-  FaPlus, FaCalendarAlt, FaTrash, FaLock 
+import Swal from 'sweetalert2';
+import {
+  FaSearch, FaEdit, FaCheckCircle, FaTimesCircle,
+  FaPlus, FaCalendarAlt, FaTrash, FaLock
 } from 'react-icons/fa';
+
+
+/* ── Componente SearchableSelect ── */
+function SearchableSelect({ value, onChange, options, placeholder, required }) {
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const selectedLabel = options.find(o => String(o.value) === String(value))?.label || '';
+  const filtered = options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="relative" ref={ref}>
+      <input type="hidden" value={value} required={required} />
+      <input
+        type="text"
+        className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm outline-none bg-gray-50/50"
+        placeholder={placeholder || 'Buscar...'}
+        value={open ? search : selectedLabel}
+        onFocus={() => { setOpen(true); setSearch(''); }}
+        onChange={e => setSearch(e.target.value)}
+      />
+      {open && (
+        <div className="absolute z-50 bg-white border rounded-lg shadow-lg mt-1 w-full max-h-48 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="p-2 text-sm text-gray-400">Sin resultados</div>
+          ) : filtered.map(o => (
+            <div
+              key={o.value}
+              className={`p-2 text-sm cursor-pointer hover:bg-blue-50 ${String(o.value) === String(value) ? 'bg-blue-100 font-bold' : ''}`}
+              onClick={() => { onChange(o.value); setSearch(''); setOpen(false); }}
+            >
+              {o.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Reservaciones() {
   const [reservas, setReservas] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(false);
-  
-  const [editingReservaId, setEditingReservaId] = useState(null);
-  const [originalPlazaId, setOriginalPlazaId] = useState(null); 
 
-  const [personasList, setPersonasList] = useState([]); 
+  const [editingReservaId, setEditingReservaId] = useState(null);
+  const [originalPlazaId, setOriginalPlazaId] = useState(null);
+
+  const [personasList, setPersonasList] = useState([]);
   const [plazasList, setPlazasList] = useState([]);
-  
+
   const initialForm = {
     id_persona: '',
     Id_Plaza: '',
@@ -40,33 +86,33 @@ export default function Reservaciones() {
   useEffect(() => {
     const timer = setInterval(() => {
       checkExpiredReservations();
-    }, 5000); 
+    }, 5000);
     return () => clearInterval(timer);
-  }, [reservas]); 
+  }, [reservas]);
 
   const loadReservas = async () => {
     try {
-        const { data, error } = await supabase
-          .from('RESERVA')
-          .select(`
+      const { data, error } = await supabase
+        .from('RESERVA')
+        .select(`
             *,
             personas (id, nombre, apellido),
             plazas (Id_Plaza, Numero_Plaza),
             estado_reserva ( nombre_estado ) 
           `)
-          .order('Fecha_Hora_Inicio', { ascending: false });
+        .order('Fecha_Hora_Inicio', { ascending: false });
 
-        if (error) throw error;
-        setReservas(data || []);
+      if (error) throw error;
+      setReservas(data || []);
     } catch (error) { console.error("Error cargando reservas:", error.message); }
   };
 
   const loadAuxData = async () => {
     try {
-        const { data: personas } = await supabase.from('personas').select('id, nombre, apellido').order('nombre');
-        const { data: plazas } = await supabase.from('plazas').select('Id_Plaza, Numero_Plaza, Estado_Actual').ilike('Estado_Actual', 'LIBRE').order('Numero_Plaza');
-        setPersonasList(personas || []);
-        setPlazasList(plazas || []);
+      const { data: personas } = await supabase.from('personas').select('id, nombre, apellido').order('nombre');
+      const { data: plazas } = await supabase.from('plazas').select('Id_Plaza, Numero_Plaza, Estado_Actual').ilike('Estado_Actual', 'LIBRE').order('Numero_Plaza');
+      setPersonasList(personas || []);
+      setPlazasList(plazas || []);
     } catch (error) { console.error("Error aux:", error); }
   };
 
@@ -96,33 +142,33 @@ export default function Reservaciones() {
 
   const handleMarkCompleted = async (id, idPlaza, isAuto = false) => {
     try {
-        await supabase.from('RESERVA').update({ Estado_Reserva: 'Completada', id_estado: 2 }).eq('Id_Reserva', id);
-        if (idPlaza) await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', idPlaza);
-        if (!isAuto) Swal.fire('Éxito', 'Reserva completada.', 'success');
-        loadReservas();
-        loadAuxData(); 
+      await supabase.from('RESERVA').update({ Estado_Reserva: 'Completada', id_estado: 2 }).eq('Id_Reserva', id);
+      if (idPlaza) await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', idPlaza);
+      if (!isAuto) Swal.fire('Éxito', 'Reserva completada.', 'success');
+      loadReservas();
+      loadAuxData();
     } catch (e) { console.error(e); }
   };
 
   const handleCancel = async (idReserva, idPlaza) => {
     const result = await Swal.fire({ title: '¿Cancelar?', text: "La plaza se liberará.", icon: 'warning', showCancelButton: true, confirmButtonColor: '#f59e0b' });
     if (result.isConfirmed) {
-        await supabase.from('RESERVA').update({ Estado_Reserva: 'Cancelada', id_estado: 3 }).eq('Id_Reserva', idReserva);
-        if (idPlaza) await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', idPlaza);
-        loadReservas();
-        loadAuxData();
+      await supabase.from('RESERVA').update({ Estado_Reserva: 'Cancelada', id_estado: 3 }).eq('Id_Reserva', idReserva);
+      if (idPlaza) await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', idPlaza);
+      loadReservas();
+      loadAuxData();
     }
   };
 
   const handleDelete = async (idReserva, idPlaza, estado) => {
     const result = await Swal.fire({ title: '¿Eliminar?', text: "Se borrará definitivamente.", icon: 'error', showCancelButton: true });
     if (result.isConfirmed) {
-        await supabase.from('RESERVA').delete().eq('Id_Reserva', idReserva);
-        if (estado === 'Activa' && idPlaza) {
-            await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', idPlaza);
-        }
-        loadReservas();
-        loadAuxData();
+      await supabase.from('RESERVA').delete().eq('Id_Reserva', idReserva);
+      if (estado === 'Activa' && idPlaza) {
+        await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', idPlaza);
+      }
+      loadReservas();
+      loadAuxData();
     }
   };
 
@@ -131,29 +177,29 @@ export default function Reservaciones() {
     e.preventDefault();
     setLoading(true);
     try {
-        const payload = {
-            id_persona: formData.id_persona,
-            Id_Plaza: parseInt(formData.Id_Plaza),
-            Fecha_Hora_Inicio: formData.Fecha_Hora_Inicio,
-            Fecha_Hora_Fin: formData.Fecha_Hora_Fin,
-            Estado_Reserva: 'Activa', 
-            id_estado: 1
-        };
+      const payload = {
+        id_persona: formData.id_persona,
+        Id_Plaza: parseInt(formData.Id_Plaza),
+        Fecha_Hora_Inicio: formData.Fecha_Hora_Inicio,
+        Fecha_Hora_Fin: formData.Fecha_Hora_Fin,
+        Estado_Reserva: 'Activa',
+        id_estado: 1
+      };
 
-        if (isUpdating) {
-            await supabase.from('RESERVA').update(payload).eq('Id_Reserva', editingReservaId);
-            if (parseInt(formData.Id_Plaza) !== originalPlazaId) {
-                await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', originalPlazaId);
-                await supabase.from('plazas').update({ Estado_Actual: 'RESERVADA', id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
-            }
-        } else {
-            await supabase.from('RESERVA').insert([payload]);
-            await supabase.from('plazas').update({ Estado_Actual: 'RESERVADA', id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
+      if (isUpdating) {
+        await supabase.from('RESERVA').update(payload).eq('Id_Reserva', editingReservaId);
+        if (parseInt(formData.Id_Plaza) !== originalPlazaId) {
+          await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', originalPlazaId);
+          await supabase.from('plazas').update({ Estado_Actual: 'RESERVADA', id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
         }
-        resetForm();
-        loadReservas();
-        loadAuxData();
-    } catch (error) { Swal.fire('Error', error.message, 'error'); } 
+      } else {
+        await supabase.from('RESERVA').insert([payload]);
+        await supabase.from('plazas').update({ Estado_Actual: 'RESERVADA', id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
+      }
+      resetForm();
+      loadReservas();
+      loadAuxData();
+    } catch (error) { Swal.fire('Error', error.message, 'error'); }
     finally { setLoading(false); }
   };
 
@@ -177,47 +223,53 @@ export default function Reservaciones() {
   };
 
   const formatDisplayDate = (dateStr) => {
-      if (!dateStr) return '-';
-      return dateStr.replace('T', ' ').split('.')[0].slice(0, 16);
+    if (!dateStr) return '-';
+    return dateStr.replace('T', ' ').split('.')[0].slice(0, 16);
   };
 
   return (
     <Layout>
       <header className="mb-8 flex justify-between items-center">
         <div>
-            <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Reservaciones</h2>
-            <p className="text-gray-500 font-medium">Gestión de tiempos y plazas reservadas.</p>
+          <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Reservaciones</h2>
+          <p className="text-gray-500 font-medium">Gestión de tiempos y plazas reservadas.</p>
         </div>
         <button onClick={() => { resetForm(); setShowModal(true); }} className="bg-primary hover:bg-blue-700 text-white py-2.5 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2">
-            <FaPlus /> Nueva Reserva
+          <FaPlus /> Nueva Reserva
         </button>
       </header>
 
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md border-t-8 border-primary">
-                <h3 className="text-2xl font-black mb-6 text-gray-800 flex items-center gap-2 uppercase tracking-tighter">
-                    <FaCalendarAlt className="text-primary"/> {isUpdating ? 'Editar' : 'Nueva'} Reserva
-                </h3>
-                <form onSubmit={handleSubmit} className="space-y-5">
-                    <select className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm outline-none bg-gray-50/50" value={formData.id_persona} onChange={(e) => setFormData({...formData, id_persona: e.target.value})} required>
-                        <option value="">-- Seleccionar Persona --</option>
-                        {personasList.map(p => <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>)}
-                    </select>
-                    <select className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm outline-none bg-gray-50/50" value={formData.Id_Plaza} onChange={(e) => setFormData({...formData, Id_Plaza: e.target.value})} required>
-                        <option value="">-- Seleccionar Plaza --</option>
-                        {plazasList.map(p => <option key={p.Id_Plaza} value={p.Id_Plaza}>{p.Numero_Plaza}</option>)}
-                    </select>
-                    <div className="grid grid-cols-1 gap-4">
-                        <input type="datetime-local" className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm" value={formData.Fecha_Hora_Inicio} onChange={(e) => setFormData({...formData, Fecha_Hora_Inicio: e.target.value})} required />
-                        <input type="datetime-local" className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm" value={formData.Fecha_Hora_Fin} onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})} required />
-                    </div>
-                    <div className="flex justify-end gap-3 pt-6 border-t">
-                        <button type="button" onClick={resetForm} className="px-6 py-2.5 text-gray-400 font-bold uppercase text-xs">Cancelar</button>
-                        <button type="submit" disabled={loading} className="px-8 py-2.5 bg-primary text-white rounded-xl font-black uppercase text-xs shadow-lg">Guardar</button>
-                    </div>
-                </form>
-            </div>
+          <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md border-t-8 border-primary">
+            <h3 className="text-2xl font-black mb-6 text-gray-800 flex items-center gap-2 uppercase tracking-tighter">
+              <FaCalendarAlt className="text-primary" /> {isUpdating ? 'Editar' : 'Nueva'} Reserva
+            </h3>
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <SearchableSelect
+                value={formData.id_persona}
+                onChange={val => setFormData({ ...formData, id_persona: val })}
+                placeholder="Buscar persona..."
+                options={personasList.map(p => ({ value: p.id, label: `${p.nombre} ${p.apellido}` }))}
+                required
+              />
+              <SearchableSelect
+                value={formData.Id_Plaza}
+                onChange={val => setFormData({ ...formData, Id_Plaza: val })}
+                placeholder="Buscar plaza..."
+                options={plazasList.map(p => ({ value: p.Id_Plaza, label: p.Numero_Plaza }))}
+                required
+              />
+              <div className="grid grid-cols-1 gap-4">
+                <input type="datetime-local" className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm" value={formData.Fecha_Hora_Inicio} onChange={(e) => setFormData({ ...formData, Fecha_Hora_Inicio: e.target.value })} required />
+                <input type="datetime-local" className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm" value={formData.Fecha_Hora_Fin} onChange={(e) => setFormData({ ...formData, Fecha_Hora_Fin: e.target.value })} required />
+              </div>
+              <div className="flex justify-end gap-3 pt-6 border-t">
+                <button type="button" onClick={resetForm} className="px-6 py-2.5 text-gray-400 font-bold uppercase text-xs">Cancelar</button>
+                <button type="submit" disabled={loading} className="px-8 py-2.5 bg-primary text-white rounded-xl font-black uppercase text-xs shadow-lg">Guardar</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -244,21 +296,21 @@ export default function Reservaciones() {
                     <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Inicio)}</td>
                     <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Fin)}</td>
                     <td className="px-6 py-4">
-                        <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${isActive ? 'bg-green-100 text-green-800' : r.Estado_Reserva === 'Cancelada' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
-                            {r.Estado_Reserva || 'Activa'}
-                        </span>
+                      <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${isActive ? 'bg-green-100 text-green-800' : r.Estado_Reserva === 'Cancelada' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
+                        {r.Estado_Reserva || 'Activa'}
+                      </span>
                     </td>
                     <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
                       {isActive ? (
                         <>
-                          <button onClick={() => handleMarkCompleted(r.Id_Reserva, r.Id_Plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>
-                          <button onClick={() => handleCancel(r.Id_Reserva, r.Id_Plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>
-                          <button onClick={() => handleEdit(r)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>
+                          <button onClick={() => handleMarkCompleted(r.Id_Reserva, r.Id_Plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20} /></button>
+                          <button onClick={() => handleCancel(r.Id_Reserva, r.Id_Plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20} /></button>
+                          <button onClick={() => handleEdit(r)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20} /></button>
                         </>
                       ) : (
                         <div className="text-gray-300 italic text-xs flex items-center gap-1"><FaLock size={12} /> Cerrada</div>
                       )}
-                      <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza, r.Estado_Reserva)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>
+                      <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza, r.Estado_Reserva)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18} /></button>
                     </td>
                   </tr>
                 );

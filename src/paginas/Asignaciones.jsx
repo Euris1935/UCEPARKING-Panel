@@ -1,12 +1,58 @@
 
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import {
     FaSearch, FaPlus, FaUserTie, FaTrash, FaSuitcase, FaCalendarAlt, FaCar, FaEdit
 } from 'react-icons/fa';
+
+
+/* ── Componente SearchableSelect ── */
+function SearchableSelect({ value, onChange, options, placeholder, required }) {
+    const [search, setSearch] = useState('');
+    const [open, setOpen] = useState(false);
+    const ref = useRef(null);
+
+    useEffect(() => {
+        const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    const selectedLabel = options.find(o => String(o.value) === String(value))?.label || '';
+    const filtered = options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()));
+
+    return (
+        <div className="relative" ref={ref}>
+            <input type="hidden" value={value} required={required} />
+            <input
+                type="text"
+                className="w-full border p-2 rounded bg-gray-50 text-sm focus:ring-purple-500 outline-none"
+                placeholder={placeholder || 'Buscar...'}
+                value={open ? search : selectedLabel}
+                onFocus={() => { setOpen(true); setSearch(''); }}
+                onChange={e => setSearch(e.target.value)}
+            />
+            {open && (
+                <div className="absolute z-50 bg-white border rounded shadow-lg mt-1 w-full max-h-48 overflow-y-auto">
+                    {filtered.length === 0 ? (
+                        <div className="p-2 text-sm text-gray-400">Sin resultados</div>
+                    ) : filtered.map(o => (
+                        <div
+                            key={o.value}
+                            className={`p-2 text-sm cursor-pointer hover:bg-purple-50 ${String(o.value) === String(value) ? 'bg-purple-100 font-bold' : ''}`}
+                            onClick={() => { onChange(o.value); setSearch(''); setOpen(false); }}
+                        >
+                            {o.label}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
 
 export default function Asignaciones() {
     const [asignaciones, setAsignaciones] = useState([]);
@@ -402,19 +448,16 @@ export default function Asignaciones() {
                             {/* Selector de Empleado */}
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1 font-bold">Empleado</label>
-                                <select
-                                    className="w-full border p-2 rounded focus:ring-purple-500 outline-none"
+                                <SearchableSelect
                                     value={formData.Id_Empleado}
-                                    onChange={e => handleEmpleadoChange(e.target.value)}
+                                    onChange={val => handleEmpleadoChange(val)}
+                                    placeholder="Buscar empleado..."
+                                    options={empleadosList.map(emp => ({
+                                        value: emp.Id_Empleado,
+                                        label: emp.personas ? `${emp.personas.nombre} ${emp.personas.apellido}` : `ID: ${emp.Id_Empleado}`
+                                    }))}
                                     required
-                                >
-                                    <option value="">-- Seleccionar Empleado --</option>
-                                    {empleadosList.map(emp => (
-                                        <option key={emp.Id_Empleado} value={emp.Id_Empleado}>
-                                            {emp.personas ? `${emp.personas.nombre} ${emp.personas.apellido}` : `ID: ${emp.Id_Empleado}`}
-                                        </option>
-                                    ))}
-                                </select>
+                                />
                             </div>
 
                             {/* Vehículo Vinculado (solo lectura) */}
@@ -447,20 +490,16 @@ export default function Asignaciones() {
                                 <label className="block text-sm font-medium text-gray-700 mb-1 font-bold">
                                     Plaza {editingAsignacion ? '(Disponibles + Actual)' : 'Disponible'}
                                 </label>
-                                <select
-                                    className="w-full border p-2 rounded focus:ring-purple-500 outline-none"
+                                <SearchableSelect
                                     value={formData.Id_Plaza}
-                                    onChange={e => setFormData({ ...formData, Id_Plaza: e.target.value })}
+                                    onChange={val => setFormData({ ...formData, Id_Plaza: val })}
+                                    placeholder="Buscar plaza..."
+                                    options={plazasDisponibles.map(p => ({
+                                        value: p.Id_Plaza,
+                                        label: p.Numero_Plaza + (editingAsignacion && p.Id_Plaza === editingAsignacion.Id_Plaza ? ' (actual)' : '')
+                                    }))}
                                     required
-                                >
-                                    <option value="">-- Seleccionar Plaza --</option>
-                                    {plazasDisponibles.map(p => (
-                                        <option key={p.Id_Plaza} value={p.Id_Plaza}>
-                                            {p.Numero_Plaza}
-                                            {editingAsignacion && p.Id_Plaza === editingAsignacion.Id_Plaza ? ' (actual)' : ''}
-                                        </option>
-                                    ))}
-                                </select>
+                                />
                             </div>
 
                             {/* Fechas */}
