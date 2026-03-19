@@ -230,20 +230,20 @@ export default function ZonasParqueo() {
 
     const prefijo = generarIniciales(zonaActual.Nombre_Zona);
     const plazasExistentes = plazas.filter(p => p.Id_Zona === idZona);
-    
+
     let maxSeq = 0;
     plazasExistentes.forEach(p => {
       // Extraer número de formato "PREFIJO-01" o al final del string
       const partes = p.Numero_Plaza.split('-');
       if (partes.length > 1) {
-         const num = parseInt(partes[partes.length - 1], 10);
-         if (!isNaN(num) && num > maxSeq) maxSeq = num;
+        const num = parseInt(partes[partes.length - 1], 10);
+        if (!isNaN(num) && num > maxSeq) maxSeq = num;
       } else {
-         const numMatch = p.Numero_Plaza.match(/\d+$/);
-         if (numMatch) {
-            const num = parseInt(numMatch[0], 10);
-            if (!isNaN(num) && num > maxSeq) maxSeq = num;
-         }
+        const numMatch = p.Numero_Plaza.match(/\d+$/);
+        if (numMatch) {
+          const num = parseInt(numMatch[0], 10);
+          if (!isNaN(num) && num > maxSeq) maxSeq = num;
+        }
       }
     });
 
@@ -398,6 +398,10 @@ export default function ZonasParqueo() {
                   <div key={plaza.Id_Plaza} className="group relative p-3 rounded border bg-gray-50 hover:border-blue-400 transition-all cursor-pointer h-24 flex flex-col items-center justify-center">
                     <span className="font-bold text-lg text-gray-800">{plaza.Numero_Plaza}</span>
                     <span className="text-[10px] text-gray-400">{plaza.Amplitud}m x {plaza.Longitud}m</span>
+                    {/* #30: Fecha de creación de la plaza */}
+                    {plaza.created_at && (
+                      <span className="text-[8px] text-gray-300 mt-0.5">{new Date(plaza.created_at).toLocaleDateString('es-DO')}</span>
+                    )}
                     <div className="absolute inset-0 bg-white/90 hidden group-hover:flex items-center justify-center gap-2 rounded transition-all">
                       <button onClick={() => openPlazaModal(plaza)} className="text-blue-600 bg-blue-100 p-2 rounded-full hover:bg-blue-200" title="Editar"><FaEdit /></button>
                       <button onClick={() => handleDeletePlaza(plaza.Id_Plaza)} className="text-red-600 bg-red-100 p-2 rounded-full hover:bg-red-200" title="Borrar"><FaTrash /></button>

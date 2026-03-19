@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList } from 'react-icons/fa';
+import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch } from 'react-icons/fa';
 
 export default function AccesoManual() {
   const [loading, setLoading] = useState(false);
@@ -24,9 +24,10 @@ export default function AccesoManual() {
 
   const [busquedaVehiculo, setBusquedaVehiculo] = useState('');
   const [mostrarDropdown, setMostrarDropdown] = useState(false);
+  const [busquedaActivos, setBusquedaActivos] = useState(''); // #25: búsqueda en accesos activos
 
-  const vehiculosFiltrados = vehiculos.filter(v => 
-    (v.placa && v.placa.toLowerCase().includes(busquedaVehiculo.toLowerCase())) || 
+  const vehiculosFiltrados = vehiculos.filter(v =>
+    (v.placa && v.placa.toLowerCase().includes(busquedaVehiculo.toLowerCase())) ||
     (v.personas?.nombre && v.personas.nombre.toLowerCase().includes(busquedaVehiculo.toLowerCase())) ||
     (v.personas?.apellido && v.personas.apellido.toLowerCase().includes(busquedaVehiculo.toLowerCase()))
   );
@@ -58,24 +59,24 @@ export default function AccesoManual() {
         setTodasPlazas(plazas);
         setPlazasLibres(plazas.filter(p => p.Estado_Actual?.toLowerCase() === 'libre'));
       }
-      
+
       // Vehículos registrados (con dueños)
       const { data: vhs, error: vErr } = await supabase
         .from('vehiculos')
         .select('*, personas(nombre, apellido)')
         .order('Fecha_Registro', { ascending: false });
-      if(vErr) console.error('Error cargando vehiculos:', vErr);
-        
+      if (vErr) console.error('Error cargando vehiculos:', vErr);
+
       // Accesos activos (entradas manuales sin salida)
       // Eliminamos plazas(Numero_Plaza) del select porque no hay Foreign Key en la BD para eso
       const { data: activos, error: activosErr } = await supabase
         .from('registros_acceso')
-        .select('*, vehiculos(placa, Marca, modelo, Color, personas(nombre, apellido))')
+        .select('*, vehiculos(placa, Marca, modelo, Color, persona_id, personas(nombre, apellido, telefono))')
         .is('salida_at', null)
         .in('tipo_evento', ['ENTRADA_MANUAL', 'ENTRADA_AUTO'])
         .order('entrada_at', { ascending: false });
-      
-      if(activosErr) console.error('Error cargando accesos activos:', activosErr);
+
+      if (activosErr) console.error('Error cargando accesos activos:', activosErr);
 
       setVehiculos(vhs || []);
       setAccesosActivos(activos || []);
@@ -105,7 +106,7 @@ export default function AccesoManual() {
     setLoading(true);
     try {
       const vehiculoSelect = vehiculos.find(v => v.id === parseInt(entradaForm.vehiculo_id));
-      
+
       // Validación: Verificar si el vehículo ya tiene un acceso activo
       const vehiculoYaEstaAdentro = accesosActivos.find(a => a.vehiculo_id === vehiculoSelect.id);
       if (vehiculoYaEstaAdentro) {
@@ -148,9 +149,9 @@ export default function AccesoManual() {
           fetch(`http://localhost:4000/api/access/open-${entradaForm.puertaDestino}`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${session.access_token}` }
-          }).catch(() => {});
+          }).catch(() => { });
         }
-      } catch (_) {}
+      } catch (_) { }
 
       const nombrePuerta = entradaForm.puertaDestino === 'vip' ? 'VIP' : 'Principal';
       Swal.fire('¡Éxito!', `Entrada registrada para ${vehiculoSelect.placa}. Barrera ${nombrePuerta} abriéndose.`, 'success');
@@ -179,7 +180,7 @@ export default function AccesoManual() {
       cancelButtonText: 'Cancelar'
     });
     if (!result.isConfirmed && !result.isDenied) return;
-    
+
     const barreraSalida = result.isConfirmed ? 'main' : 'vip';
 
     try {
@@ -200,10 +201,11 @@ export default function AccesoManual() {
         }).eq('Id_Plaza', acceso.Id_Plaza);
       }
 
-      // 3. Log
+      // 3. Log — incluye nombre de persona (#16)
+      const nombreSalida = `${acceso.vehiculos?.personas?.nombre || ''} ${acceso.vehiculos?.personas?.apellido || ''}`.trim() || 'Desconocido';
       await registrarLog(
         'ACCESO_MANUAL_SALIDA',
-        `Salida manual: ${acceso.vehiculos?.placa} — Plaza ${plazaEncontrada?.Numero_Plaza || 'N/A'}.`,
+        `Salida manual: ${nombreSalida} — ${acceso.vehiculos?.placa} — Plaza ${plazaEncontrada?.Numero_Plaza || 'N/A'}.`,
         acceso.Id_Plaza
       );
 
@@ -214,9 +216,9 @@ export default function AccesoManual() {
           fetch(`http://localhost:4000/api/access/open-${barreraSalida}`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${session.access_token}` }
-          }).catch(() => {});
+          }).catch(() => { });
         }
-      } catch (_) {}
+      } catch (_) { }
 
       const nombrePuertaSalida = barreraSalida === 'vip' ? 'VIP' : 'Principal';
       Swal.fire('¡Salida Registrada!', `La plaza quedó libre y la barrera ${nombrePuertaSalida} se está abriendo.`, 'success');
@@ -228,30 +230,30 @@ export default function AccesoManual() {
 
   const apiControlBarrera = async (endpoint, tituloConfirmacion) => {
     const res = await Swal.fire({
-       title: tituloConfirmacion,
-       text: "Esto abrirá la barrera físicamente.",
-       icon: 'warning',
-       showCancelButton: true,
-       confirmButtonColor: '#eab308',
-       confirmButtonText: 'Sí, abrir',
-       cancelButtonText: 'Cancelar'
+      title: tituloConfirmacion,
+      text: "Esto abrirá la barrera físicamente.",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#eab308',
+      confirmButtonText: 'Sí, abrir',
+      cancelButtonText: 'Cancelar'
     });
     if (res.isConfirmed) {
-       try {
-         const { data: { session } } = await supabase.auth.getSession();
-         const respuesta = await fetch(`http://localhost:4000/api/access/${endpoint}`, { 
-           method: 'POST',
-           headers: { 'Authorization': `Bearer ${session?.access_token}` }
-         });
-         if (respuesta.ok) {
-            Swal.fire('Barrera Abierta', 'El comando se ha enviado exitosamente.', 'success');
-            registrarLog('APERTURA_MANUAL_BARRERA', `Apertura manual de ${tituloConfirmacion}`);
-         } else {
-            Swal.fire('Error', 'El servidor respondió con un error.', 'error');
-         }
-       } catch (e) {
-         Swal.fire('Error de Conexión', 'No se pudo conectar con el backend local (Arduino).', 'error');
-       }
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const respuesta = await fetch(`http://localhost:4000/api/access/${endpoint}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${session?.access_token}` }
+        });
+        if (respuesta.ok) {
+          Swal.fire('Barrera Abierta', 'El comando se ha enviado exitosamente.', 'success');
+          registrarLog('APERTURA_MANUAL_BARRERA', `Apertura manual de ${tituloConfirmacion}`);
+        } else {
+          Swal.fire('Error', 'El servidor respondió con un error.', 'error');
+        }
+      } catch (e) {
+        Swal.fire('Error de Conexión', 'No se pudo conectar con el backend local (Arduino).', 'error');
+      }
     }
   };
 
@@ -266,9 +268,8 @@ export default function AccesoManual() {
   const tabBtn = (id, label, icon) => (
     <button
       onClick={() => setActiveTab(id)}
-      className={`flex items-center gap-2 pb-3 px-4 font-bold text-sm border-b-4 transition-all ${
-        activeTab === id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-400 hover:text-gray-600'
-      }`}
+      className={`flex items-center gap-2 pb-3 px-4 font-bold text-sm border-b-4 transition-all ${activeTab === id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-400 hover:text-gray-600'
+        }`}
     >
       {icon} {label}
       {id === 'activos' && accesosActivos.length > 0 && (
@@ -285,18 +286,18 @@ export default function AccesoManual() {
           <p className="text-gray-500 mt-1">Dar acceso manual a clientes registrados sin LPR.</p>
         </div>
         <div className="flex gap-3">
-          <button 
-             onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')}
-             className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
-           >
-             PUERTA PRINCIPAL 
-           </button>
-           <button 
-             onClick={() => apiControlBarrera('open-vip', '¿Abrir Barrera VIP?')}
-             className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
-           >
-             PUERTA VIP
-           </button>
+          <button
+            onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')}
+            className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+          >
+            PUERTA PRINCIPAL
+          </button>
+          <button
+            onClick={() => apiControlBarrera('open-vip', '¿Abrir Barrera VIP?')}
+            className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+          >
+            PUERTA VIP
+          </button>
         </div>
       </header>
 
@@ -329,15 +330,15 @@ export default function AccesoManual() {
                 onBlur={() => setTimeout(() => setMostrarDropdown(false), 200)}
                 required={!entradaForm.vehiculo_id}
               />
-              
+
               {mostrarDropdown && (
                 <ul className="absolute z-10 w-full bg-white border border-gray-200 shadow-xl max-h-60 overflow-y-auto rounded-lg mt-1">
                   {vehiculosFiltrados.length === 0 ? (
                     <li className="p-3 text-sm text-gray-500 text-center">No se encontraron vehículos</li>
                   ) : (
                     vehiculosFiltrados.map(v => (
-                      <li 
-                        key={v.id} 
+                      <li
+                        key={v.id}
                         className="p-3 hover:bg-indigo-50 border-b last:border-0 cursor-pointer transition-colors"
                         onMouseDown={() => {
                           setEntradaForm({ ...entradaForm, vehiculo_id: v.id });
@@ -408,6 +409,17 @@ export default function AccesoManual() {
             <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
               <FaList className="text-indigo-600" /> Control de Salidas
             </h3>
+            {/* #25: Búsqueda en accesos activos */}
+            <div className="relative w-64">
+              <input
+                type="text"
+                placeholder="Buscar placa, nombre, tel..."
+                className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:ring-indigo-500 outline-none"
+                value={busquedaActivos}
+                onChange={e => setBusquedaActivos(e.target.value)}
+              />
+              <FaSearch className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm whitespace-nowrap">
@@ -415,21 +427,34 @@ export default function AccesoManual() {
                 <tr>
                   <th className="py-3 px-4">Placa</th>
                   <th className="py-3 px-4">Cliente / Info</th>
+                  <th className="py-3 px-4">Teléfono</th>
                   <th className="py-3 px-4">Plaza</th>
                   <th className="py-3 px-4">Hora Entrada</th>
                   <th className="py-3 px-4 text-center">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {accesosActivos.length === 0 ? (
-                  <tr><td colSpan="5" className="text-center py-8 text-gray-400">No hay accesos manuales activos</td></tr>
-                ) : (
-                  accesosActivos.map((acc) => (
+                {(() => {
+                  const busq = busquedaActivos.toLowerCase();
+                  const filtrados = accesosActivos.filter(acc => {
+                    if (!busq) return true;
+                    const placa = acc.vehiculos?.placa?.toLowerCase() || '';
+                    const nombre = `${acc.vehiculos?.personas?.nombre || ''} ${acc.vehiculos?.personas?.apellido || ''}`.toLowerCase();
+                    const tel = (acc.vehiculos?.personas?.telefono || '').toLowerCase();
+                    return placa.includes(busq) || nombre.includes(busq) || tel.includes(busq);
+                  });
+                  if (filtrados.length === 0) {
+                    return <tr><td colSpan="6" className="text-center py-8 text-gray-400">No hay accesos manuales activos</td></tr>;
+                  }
+                  return filtrados.map((acc) => (
                     <tr key={acc.id} className="hover:bg-gray-50 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-indigo-700 text-base">{acc.vehiculos?.placa}</td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-gray-800">{acc.vehiculos?.personas?.nombre} {acc.vehiculos?.personas?.apellido}</div>
                         <div className="text-xs text-gray-500">{acc.vehiculos?.Marca} {acc.vehiculos?.modelo}</div>
+                      </td>
+                      <td className="py-3 px-4 text-gray-600">
+                        {acc.vehiculos?.personas?.telefono || <span className="text-gray-300 italic">—</span>}
                       </td>
                       <td className="py-3 px-4">
                         <span className="bg-gray-200 text-gray-800 px-2 py-1 rounded font-bold text-xs">
@@ -446,8 +471,8 @@ export default function AccesoManual() {
                         </button>
                       </td>
                     </tr>
-                  ))
-                )}
+                  ));
+                })()}
               </tbody>
             </table>
           </div>

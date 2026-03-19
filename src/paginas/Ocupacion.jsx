@@ -188,6 +188,8 @@ export default function Ocupacion() {
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
+  // #17: Mapa de plaza → info del vehículo/persona que la ocupa
+  const [ocupacionInfo, setOcupacionInfo] = useState({});
 
   useEffect(() => {
     // Obtener persona_id del usuario activo para los logs
@@ -229,6 +231,24 @@ export default function Ocupacion() {
         };
       });
       setPlazas(plazasCompletas);
+
+      // #17: Obtener info de quién ocupa cada plaza (accesos activos)
+      const { data: accesosActivos } = await supabase
+        .from('registros_acceso')
+        .select('Id_Plaza, vehiculos(placa, Marca, personas(nombre, apellido))')
+        .is('salida_at', null);
+
+      const mapaOcupacion = {};
+      (accesosActivos || []).forEach(acc => {
+        if (acc.Id_Plaza && acc.vehiculos) {
+          mapaOcupacion[acc.Id_Plaza] = {
+            placa: acc.vehiculos.placa,
+            marca: acc.vehiculos.Marca,
+            nombre: `${acc.vehiculos.personas?.nombre || ''} ${acc.vehiculos.personas?.apellido || ''}`.trim()
+          };
+        }
+      });
+      setOcupacionInfo(mapaOcupacion);
     } catch (error) { console.error("Error cargando datos:", error); } finally { setLoading(false); }
   };
 
@@ -415,6 +435,13 @@ export default function Ocupacion() {
                       <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel)}`}>
                         {plaza.Nombre_Estado_Rel}
                       </span>
+                      {/* #17: Info persona/vehículo en plazas ocupadas */}
+                      {plaza.Nombre_Estado_Rel === 'OCUPADA' && ocupacionInfo[plaza.Id_Plaza] && (
+                        <div className="mt-1 text-[9px] text-red-700 leading-tight">
+                          <div className="font-mono font-bold">{ocupacionInfo[plaza.Id_Plaza].placa}</div>
+                          <div className="text-[8px] text-gray-500 truncate max-w-[90px]">{ocupacionInfo[plaza.Id_Plaza].nombre}</div>
+                        </div>
+                      )}
 
                       <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={(e) => handleSpecialState(e, plaza, 'RESERVADA')} className="p-1.5 bg-white text-yellow-600 hover:bg-yellow-50 rounded-full shadow" title="Reservar"><FaClock size={12} /></button>

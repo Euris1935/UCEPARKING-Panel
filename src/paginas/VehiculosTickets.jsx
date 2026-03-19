@@ -3,29 +3,86 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   FaCar, FaTicketAlt, FaUserPlus, FaSave, FaTrash, FaEdit,
   FaPrint, FaSignOutAlt, FaClipboardCheck, FaSyncAlt, FaBan
 } from 'react-icons/fa';
 
+/* ── Catálogos de vehículos (#7, #12, #13, #24) ── */
+const MARCAS_VEHICULO = [
+  'Toyota', 'Honda', 'Hyundai', 'Kia', 'Nissan', 'Ford', 'Chevrolet',
+  'BMW', 'Mercedes-Benz', 'Audi', 'Volkswagen', 'Mazda', 'Mitsubishi',
+  'Suzuki', 'Jeep', 'Dodge', 'Subaru', 'Lexus', 'Otra'
+];
+
+const MODELOS_POR_MARCA = {
+  'Toyota': ['Corolla', 'Camry', 'RAV4', 'Hilux', 'Yaris', 'Land Cruiser', 'Fortuner', 'Prado', 'Rush', 'Otro'],
+  'Honda': ['Civic', 'Accord', 'CR-V', 'HR-V', 'Fit', 'Pilot', 'City', 'Otro'],
+  'Hyundai': ['Tucson', 'Elantra', 'Santa Fe', 'Accent', 'Sonata', 'Creta', 'Kona', 'Venue', 'Otro'],
+  'Kia': ['Sportage', 'Seltos', 'Forte', 'Sorento', 'Rio', 'Soul', 'Carnival', 'K5', 'Otro'],
+  'Nissan': ['Sentra', 'Altima', 'Pathfinder', 'Rogue', 'Kicks', 'Versa', 'Frontier', 'X-Trail', 'Otro'],
+  'Ford': ['F-150', 'Explorer', 'Escape', 'Ranger', 'Edge', 'Bronco', 'Maverick', 'Otro'],
+  'Chevrolet': ['Silverado', 'Equinox', 'Spark', 'Cruze', 'Traverse', 'Tahoe', 'Trax', 'Otro'],
+  'BMW': ['Serie 3', 'Serie 5', 'X1', 'X3', 'X5', 'Serie 1', 'Otro'],
+  'Mercedes-Benz': ['Clase C', 'Clase E', 'GLC', 'GLE', 'Clase A', 'CLA', 'Otro'],
+  'Audi': ['A3', 'A4', 'Q3', 'Q5', 'Q7', 'A6', 'Otro'],
+  'Volkswagen': ['Jetta', 'Tiguan', 'Golf', 'Passat', 'T-Cross', 'Taos', 'Otro'],
+  'Mazda': ['CX-5', 'CX-30', 'Mazda3', 'CX-50', 'CX-9', 'Otro'],
+  'Mitsubishi': ['Outlander', 'L200', 'ASX', 'Eclipse Cross', 'Montero', 'Otro'],
+  'Suzuki': ['Vitara', 'Swift', 'Jimny', 'S-Cross', 'Baleno', 'Otro'],
+  'Jeep': ['Wrangler', 'Cherokee', 'Grand Cherokee', 'Compass', 'Renegade', 'Otro'],
+  'Dodge': ['Charger', 'Durango', 'Challenger', 'Journey', 'RAM 1500', 'Otro'],
+  'Subaru': ['Forester', 'Outback', 'Impreza', 'Crosstrek', 'WRX', 'Otro'],
+  'Lexus': ['RX', 'NX', 'IS', 'ES', 'UX', 'Otro'],
+  'Otra': ['Otro']
+};
+
+const COLORES_VEHICULO = [
+  'Blanco', 'Negro', 'Gris', 'Plata', 'Rojo', 'Azul', 'Verde',
+  'Amarillo', 'Naranja', 'Marrón', 'Beige', 'Dorado', 'Otro'
+];
+
 /* ─────────────────────────────────────────────
    Sub-componente: Vista de Ticket para Impresión
 ───────────────────────────────────────────── */
-function TicketPrintView({ ticket, onClose }) {
+function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
   const handlePrint = () => window.print();
+
+  // Calcular tiempo de estancia si el ticket ya fue cerrado (#20)
+  const calcTiempoTicket = () => {
+    if (ticket.Estado === 'Usado' && ticket._horaSalida) {
+      const diff = Math.floor((new Date(ticket._horaSalida) - new Date(ticket.Fecha_Hora_Emision)) / 60000);
+      if (diff < 60) return `${diff} min`;
+      return `${Math.floor(diff / 60)}h ${diff % 60}min`;
+    }
+    return null;
+  };
+
+  const tiempoEstancia = calcTiempoTicket();
+  const qrData = `TICKET-${ticket.Id_Ticket}-${ticket.Placa_Capturada}`;
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
         {/* Cabecera */}
-        <div className="bg-green-700 text-white p-5 text-center">
+        <div className="bg-green-700 text-white p-5 text-center relative">
           <h2 className="text-2xl font-extrabold tracking-widest">UCE PARKING</h2>
           <p className="text-green-200 text-xs mt-1">TICKET DE ACCESO / VISITANTE</p>
+          {/* Sello de reimpresión (#18) */}
+          {esReimpresion && (
+            <div className="absolute top-2 right-2 bg-yellow-400 text-yellow-900 text-[9px] font-black px-2 py-0.5 rounded rotate-12 border border-yellow-600 shadow">
+              ⚠ REIMPRESIÓN
+            </div>
+          )}
         </div>
 
         {/* Cuerpo */}
         <div id="ticket-print-area" className="p-6 space-y-3 text-sm">
           <Row label="N° Ticket" value={`#${String(ticket.Id_Ticket).padStart(6, '0')}`} bold />
+          {esReimpresion && (
+            <p className="text-center text-[10px] font-bold text-yellow-600 bg-yellow-50 border border-yellow-200 rounded px-2 py-1">⚠ COPIA — TICKET REIMPRESO</p>
+          )}
           <hr />
           <Row label="Visitante" value={`${ticket.visitantes?.personas?.nombre ?? ticket.personas?.nombre ?? '—'} ${ticket.visitantes?.personas?.apellido ?? ticket.personas?.apellido ?? ''}`} />
           <Row label="Placa" value={ticket.Placa_Capturada} bold mono />
@@ -35,10 +92,21 @@ function TicketPrintView({ ticket, onClose }) {
           <hr />
           <Row label="Plaza Asignada" value={ticket.plazas?.Numero_Plaza || `#${ticket.Id_Plaza_Asignada}`} bold />
           <Row label="Hora de Entrada" value={new Date(ticket.Fecha_Hora_Emision).toLocaleString('es-DO')} />
+          {/* Hora de salida y duración (#20) */}
+          {ticket.Estado === 'Usado' && ticket._horaSalida && (
+            <>
+              <Row label="Hora de Salida" value={new Date(ticket._horaSalida).toLocaleString('es-DO')} />
+              {tiempoEstancia && <Row label="Duración" value={tiempoEstancia} bold />}
+            </>
+          )}
           <Row label="Estado" value={ticket.Estado} />
           <hr />
-          <p className="text-center text-[10px] text-gray-400 mt-2">
-            Por favor presente este ticket al salir del parqueo.
+          {/* Código QR (#19) */}
+          <div className="flex justify-center py-2">
+            <QRCodeSVG value={qrData} size={120} level="M" />
+          </div>
+          <p className="text-center text-[10px] text-gray-400 mt-1">
+            Presente este código QR al salir del parqueo.
           </p>
         </div>
 
@@ -131,8 +199,8 @@ export default function VehiculosTickets() {
 
   const loadData = async () => {
     try {
-      // Plazas libres
-      const { data: plazas } = await supabase.from('plazas').select('*').ilike('Estado_Actual', 'libre');
+      // Plazas libres — ordenadas alfabéticamente (#14)
+      const { data: plazas } = await supabase.from('plazas').select('*').ilike('Estado_Actual', 'libre').order('Numero_Plaza');
 
       // Tickets de hoy (todos los estados para mostrar historial del día)
       const hoy = new Date();
@@ -239,6 +307,9 @@ export default function VehiculosTickets() {
   const handleEmitirTicket = async (e) => {
     e.preventDefault();
     if (!visitanteForm.placa.trim()) return Swal.fire('Atención', 'La placa es obligatoria.', 'warning');
+    // Validación de placa máx 6 caracteres (#11)
+    const placaLimpia = visitanteForm.placa.replace(/[^A-Z0-9]/gi, '');
+    if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres (sin guiones).', 'warning');
     if (!visitanteForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
 
     setLoading(true);
@@ -385,7 +456,7 @@ export default function VehiculosTickets() {
           fetch('http://localhost:4000/api/access/open-main', {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${session.access_token}` }
-          }).catch(() => {}); // Silencioso si no está corriendo
+          }).catch(() => { }); // Silencioso si no está corriendo
         }
       } catch (barrError) {
         console.warn('[Barrera/Acceso] Error no crítico:', barrError.message);
@@ -417,56 +488,77 @@ export default function VehiculosTickets() {
       if (tkErr) throw tkErr;
       if (tkCount === 0) throw new Error('No se pudo actualizar el ticket (0 filas). Agrega la política UPDATE en tickets en Supabase.');
 
+      // 2-5. Ejecutar operaciones independientes en PARALELO para mayor velocidad
+      const parallelOps = [];
+
       // 2. Liberar plaza
-      await supabase.from('plazas').update({
-        Estado_Actual: 'LIBRE',
-        id_estado: 1
-      }).eq('Id_Plaza', ticket.Id_Plaza_Asignada);
-
-      // 3. Cerrar registro de acceso en Supabase directamente
-      try {
-        // Buscar por ticket_id primero (lo más confiable)
-        const { data: raActivo } = await supabase
-          .from('registros_acceso')
-          .select('id')
-          .eq('ticket_id', ticket.Id_Ticket)
-          .is('salida_at', null)
-          .maybeSingle();
-
-        if (raActivo) {
-          const { error: raErr } = await supabase
-            .from('registros_acceso')
-            .update({ salida_at: ahora, tipo_evento: 'SALIDA' })
-            .eq('id', raActivo.id);
-          if (raErr) console.error('[RegistroAcceso] Error al cerrar:', raErr.message);
-          else console.log('[RegistroAcceso] ✅ Salida registrada en id:', raActivo.id);
-        } else {
-          console.warn('[RegistroAcceso] No se encontró registro activo para ticket:', ticket.Id_Ticket);
-        }
-      } catch (raError) {
-        console.warn('[RegistroAcceso] Error no crítico en salida:', raError.message);
-      }
-
-      // 4. Log (RF10)
-      await registrarLog(
-        'SALIDA_VEHICULO',
-        `Salida registrada: ${ticket.Placa_Capturada} — Plaza ${ticket.plazas?.Numero_Plaza}. Tiempo: ${calcTiempo(ticket.Fecha_Hora_Emision, ahora)}.`,
-        ticket.Id_Plaza_Asignada
+      parallelOps.push(
+        supabase.from('plazas').update({
+          Estado_Actual: 'LIBRE',
+          id_estado: 1
+        }).eq('Id_Plaza', ticket.Id_Plaza_Asignada)
       );
+
+      // 3. Cerrar registro de acceso
+      parallelOps.push(
+        (async () => {
+          try {
+            const { data: raActivo } = await supabase
+              .from('registros_acceso')
+              .select('id')
+              .eq('ticket_id', ticket.Id_Ticket)
+              .is('salida_at', null)
+              .maybeSingle();
+            if (raActivo) {
+              await supabase
+                .from('registros_acceso')
+                .update({ salida_at: ahora, tipo_evento: 'SALIDA' })
+                .eq('id', raActivo.id);
+            }
+          } catch (raError) {
+            console.warn('[RegistroAcceso] Error no crítico en salida:', raError.message);
+          }
+        })()
+      );
+
+      // 4. Log (RF10) — incluye nombre de persona (#16)
+      const nombreSalida = `${ticket.visitantes?.personas?.nombre ?? ticket.personas?.nombre ?? ''} ${ticket.visitantes?.personas?.apellido ?? ticket.personas?.apellido ?? ''}`.trim() || 'Desconocido';
+      parallelOps.push(
+        registrarLog(
+          'SALIDA_VEHICULO',
+          `Salida registrada: ${nombreSalida} — ${ticket.Placa_Capturada} — Plaza ${ticket.plazas?.Numero_Plaza}. Tiempo: ${calcTiempo(ticket.Fecha_Hora_Emision, ahora)}.`,
+          ticket.Id_Plaza_Asignada
+        )
+      );
+
+      // 5. Abrir barrera física (no bloquea)
+      parallelOps.push(
+        (async () => {
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.access_token) {
+              fetch('http://localhost:4000/api/access/open-main', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${session.access_token}` }
+              }).catch(() => { });
+            }
+          } catch (_) { }
+        })()
+      );
+
+      // Ejecutar todo en paralelo
+      await Promise.all(parallelOps);
+
+      // 6. Mostrar ticket con hora de salida y duración (#20)
+      setTicketParaImprimir({
+        ...ticket,
+        Estado: 'Usado',
+        _horaSalida: ahora,
+        _esReimpresion: false
+      });
 
       Swal.fire('¡Salida Registrada!', `La plaza ${ticket.plazas?.Numero_Plaza} quedó libre.`, 'success');
       loadData();
-
-      // 5. Abrir barrera física (solo si el backend está corriendo)
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) {
-          fetch('http://localhost:4000/api/access/open-main', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${session.access_token}` }
-          }).catch(() => {});
-        }
-      } catch (_) {}
 
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
@@ -597,6 +689,9 @@ export default function VehiculosTickets() {
   /* ── Registrar Vehículo Personal ── */
   const handleVehiculoPersonalSubmit = async (e) => {
     e.preventDefault();
+    // Validación de placa (#11)
+    const placaLimpia = vehiculoPersonalForm.placa.replace(/[^A-Z0-9]/gi, '');
+    if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres (sin guiones).', 'warning');
     try {
       const { error } = await supabase.from('vehiculos').insert([{
         persona_id: vehiculoPersonalForm.persona_id,
@@ -623,21 +718,21 @@ export default function VehiculosTickets() {
       confirmButtonText: 'Sí, abrir',
       cancelButtonText: 'Cancelar'
     });
-    
+
     if (res.isConfirmed) {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        const respuesta = await fetch(`http://localhost:4000/api/access/${endpoint}`, { 
+        const respuesta = await fetch(`http://localhost:4000/api/access/${endpoint}`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${session?.access_token}`
           }
         });
         if (respuesta.ok) {
-           Swal.fire('Barrera Abierta', 'El comando se ha enviado exitosamente.', 'success');
-           registrarLog('APERTURA_MANUAL', `Apertura manual de ${tituloConfirmacion}`);
+          Swal.fire('Barrera Abierta', 'El comando se ha enviado exitosamente.', 'success');
+          registrarLog('APERTURA_MANUAL', `Apertura manual de ${tituloConfirmacion}`);
         } else {
-           Swal.fire('Error', 'El servidor respondió con un error.', 'error');
+          Swal.fire('Error', 'El servidor respondió con un error.', 'error');
         }
       } catch (e) {
         Swal.fire('Error de Conexión', 'No se pudo conectar con el backend local (Arduino). Asegúrese que esté corriendo en el puerto 4000.', 'error');
@@ -671,9 +766,9 @@ export default function VehiculosTickets() {
   ═══════════════════════════════════════════════ */
   return (
     <Layout>
-      {/* Ticket modal de impresión */}
+      {/* Ticket modal de impresión — esReimpresion=true si se imprime desde la lista (#18) */}
       {ticketParaImprimir && (
-        <TicketPrintView ticket={ticketParaImprimir} onClose={() => setTicketParaImprimir(null)} />
+        <TicketPrintView ticket={ticketParaImprimir} onClose={() => setTicketParaImprimir(null)} esReimpresion={ticketParaImprimir._esReimpresion || false} />
       )}
 
       <header className="mb-6 flex justify-between items-center">
@@ -681,21 +776,21 @@ export default function VehiculosTickets() {
           <h2 className="text-3xl font-bold text-gray-900">Vehículos y Tickets</h2>
           <p className="text-gray-500 mt-1">Control de acceso, emisión de tickets y gestión de la flota.</p>
         </div>
-        
+
         {/* Controles Físicos Manuales */}
         <div className="flex gap-3">
-           <button 
-             onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')}
-             className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
-           >
-             PUERTA PRINCIPAL
-           </button>
-           <button 
-             onClick={() => apiControlBarrera('open-vip', '¿Abrir Barrera VIP?')}
-             className="bg-gray-800 hover:bg-black text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
-           >
+          <button
+            onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')}
+            className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+          >
+            PUERTA PRINCIPAL
+          </button>
+          <button
+            onClick={() => apiControlBarrera('open-vip', '¿Abrir Barrera VIP?')}
+            className="bg-gray-800 hover:bg-black text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+          >
             PUERTA VIP
-           </button>
+          </button>
         </div>
       </header>
 
@@ -776,28 +871,41 @@ export default function VehiculosTickets() {
               {/* Datos del vehículo (RF7) */}
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Datos del Vehículo (RF7)</p>
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa *</label>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (máx. 6 caracteres)</label>
                 <input
                   className="w-full border-2 border-green-300 focus:border-green-500 rounded-lg p-2 text-sm font-mono font-bold uppercase mt-0.5 text-center tracking-widest text-lg"
-                  placeholder="ABC-1234"
+                  placeholder="ABC123"
                   value={visitanteForm.placa}
-                  onChange={e => setVisitanteForm(f => ({ ...f, placa: e.target.value.toUpperCase() }))}
+                  maxLength={7}
+                  onChange={e => {
+                    const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                    if (val.length <= 6) setVisitanteForm(f => ({ ...f, placa: val }));
+                  }}
                   required
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
-                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Toyota" value={visitanteForm.marca} onChange={e => setVisitanteForm(f => ({ ...f, marca: e.target.value }))} />
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.marca} onChange={e => setVisitanteForm(f => ({ ...f, marca: e.target.value, modelo: '' }))}>
+                    <option value="">— Seleccionar —</option>
+                    {MARCAS_VEHICULO.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
-                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Corolla" value={visitanteForm.modelo} onChange={e => setVisitanteForm(f => ({ ...f, modelo: e.target.value }))} />
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.modelo} onChange={e => setVisitanteForm(f => ({ ...f, modelo: e.target.value }))} disabled={!visitanteForm.marca}>
+                    <option value="">— Seleccionar —</option>
+                    {(MODELOS_POR_MARCA[visitanteForm.marca] || []).map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
                 </div>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-                <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Rojo" value={visitanteForm.color} onChange={e => setVisitanteForm(f => ({ ...f, color: e.target.value }))} />
+                <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.color} onChange={e => setVisitanteForm(f => ({ ...f, color: e.target.value }))}>
+                  <option value="">— Seleccionar —</option>
+                  {COLORES_VEHICULO.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
 
               <hr className="border-dashed" />
@@ -977,8 +1085,8 @@ export default function VehiculosTickets() {
                       <td className="px-5 py-4 text-center">
                         <div className="flex gap-1 justify-center">
                           <button
-                            onClick={() => setTicketParaImprimir(t)}
-                            title="Ver / Imprimir ticket"
+                            onClick={() => setTicketParaImprimir({ ...t, _esReimpresion: true })}
+                            title="Ver / Reimprimir ticket"
                             className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition"
                           >
                             <FaPrint size={15} />
@@ -1034,28 +1142,41 @@ export default function VehiculosTickets() {
                 </select>
               </div>
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa *</label>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (máx. 6 caracteres)</label>
                 <input
                   className="w-full border-2 border-purple-200 rounded-lg p-2 text-sm font-mono uppercase tracking-widest text-center text-base mt-0.5"
-                  placeholder="ABC-1234"
+                  placeholder="ABC123"
                   value={vehiculoPersonalForm.placa}
-                  onChange={e => setVehiculoPersonalForm(f => ({ ...f, placa: e.target.value.toUpperCase() }))}
+                  maxLength={7}
+                  onChange={e => {
+                    const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                    if (val.length <= 6) setVehiculoPersonalForm(f => ({ ...f, placa: val }));
+                  }}
                   required
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
-                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Toyota" value={vehiculoPersonalForm.marca} onChange={e => setVehiculoPersonalForm(f => ({ ...f, marca: e.target.value }))} />
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.marca} onChange={e => setVehiculoPersonalForm(f => ({ ...f, marca: e.target.value, modelo: '' }))}>
+                    <option value="">— Seleccionar —</option>
+                    {MARCAS_VEHICULO.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
-                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Corolla" value={vehiculoPersonalForm.modelo} onChange={e => setVehiculoPersonalForm(f => ({ ...f, modelo: e.target.value }))} />
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.modelo} onChange={e => setVehiculoPersonalForm(f => ({ ...f, modelo: e.target.value }))} disabled={!vehiculoPersonalForm.marca}>
+                    <option value="">— Seleccionar —</option>
+                    {(MODELOS_POR_MARCA[vehiculoPersonalForm.marca] || []).map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
                 </div>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-                <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Azul" value={vehiculoPersonalForm.color} onChange={e => setVehiculoPersonalForm(f => ({ ...f, color: e.target.value }))} />
+                <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.color} onChange={e => setVehiculoPersonalForm(f => ({ ...f, color: e.target.value }))}>
+                  <option value="">— Seleccionar —</option>
+                  {COLORES_VEHICULO.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
               <button
                 type="submit"
@@ -1136,36 +1257,50 @@ export default function VehiculosTickets() {
             <h3 className="text-lg font-bold mb-4 text-gray-800">Editar Vehículo</h3>
             <form onSubmit={handleEditarVehiculo} className="space-y-3">
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa *</label>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (máx. 6 caracteres)</label>
                 <input
                   className="w-full border-2 border-purple-200 rounded-lg p-2 font-mono uppercase tracking-widest text-center text-base mt-0.5"
                   value={editVehiculoForm.placa}
-                  onChange={e => setEditVehiculoForm(f => ({ ...f, placa: e.target.value.toUpperCase() }))}
+                  maxLength={7}
+                  onChange={e => {
+                    const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                    if (val.length <= 6) setEditVehiculoForm(f => ({ ...f, placa: val }));
+                  }}
                   required
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
-                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Toyota"
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5"
                     value={editVehiculoForm.marca}
-                    onChange={e => setEditVehiculoForm(f => ({ ...f, marca: e.target.value }))}
-                  />
+                    onChange={e => setEditVehiculoForm(f => ({ ...f, marca: e.target.value, modelo: '' }))}
+                  >
+                    <option value="">— Seleccionar —</option>
+                    {MARCAS_VEHICULO.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
-                  <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Corolla"
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5"
                     value={editVehiculoForm.modelo}
                     onChange={e => setEditVehiculoForm(f => ({ ...f, modelo: e.target.value }))}
-                  />
+                    disabled={!editVehiculoForm.marca}
+                  >
+                    <option value="">— Seleccionar —</option>
+                    {(MODELOS_POR_MARCA[editVehiculoForm.marca] || []).map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
                 </div>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-                <input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Azul"
+                <select className="w-full border rounded-lg p-2 text-sm mt-0.5"
                   value={editVehiculoForm.color}
                   onChange={e => setEditVehiculoForm(f => ({ ...f, color: e.target.value }))}
-                />
+                >
+                  <option value="">— Seleccionar —</option>
+                  {COLORES_VEHICULO.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={() => setEditandoVehiculo(null)}

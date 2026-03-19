@@ -979,6 +979,9 @@ export default function Sensores() {
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  // #27: Marcas/modelos existentes para combobox
+  const [marcasExistentes, setMarcasExistentes] = useState([]);
+  const [modelosPorMarcaHW, setModelosPorMarcaHW] = useState({});
 
   const initialForm = {
     tipo_nombre: '',
@@ -1023,6 +1026,22 @@ export default function Sensores() {
 
       const { data: estSensor } = await supabase.from('estado_sensor').select('*').order('nombre_estado');
       setEstadosSensor(estSensor || []);
+
+      // #27: Cargar marcas y modelos existentes de equipos
+      const { data: modelosData } = await supabase.from('modelos_equipo').select('Marca, Modelo').order('Marca');
+      const marcasSet = new Set();
+      const modelosMapa = {};
+      (modelosData || []).forEach(m => {
+        marcasSet.add(m.Marca);
+        if (!modelosMapa[m.Marca]) modelosMapa[m.Marca] = [];
+        if (!modelosMapa[m.Marca].includes(m.Modelo)) modelosMapa[m.Marca].push(m.Modelo);
+      });
+      setMarcasExistentes([...marcasSet]);
+      setModelosPorMarcaHW(modelosMapa);
+
+      // #29: Filtrar plazas que ya tienen dispositivo asignado
+      const plazasAsignadas = new Set((dispData || []).filter(d => d.id_plaza).map(d => d.id_plaza));
+      setPlazas((plazaData || []).filter(p => !plazasAsignadas.has(p.Id_Plaza)));
 
     } catch (error) {
       console.error("Error cargando datos:", error.message);
@@ -1263,8 +1282,28 @@ export default function Sensores() {
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <input type="text" placeholder="Marca" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.marca} onChange={e => setFormData({ ...formData, marca: e.target.value })} required />
-                <input type="text" placeholder="Modelo" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.modelo} onChange={e => setFormData({ ...formData, modelo: e.target.value })} required />
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">MARCA</label>
+                  <select className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.marca} onChange={e => setFormData({ ...formData, marca: e.target.value, modelo: '' })} required>
+                    <option value="">— Seleccionar —</option>
+                    {marcasExistentes.map(m => <option key={m} value={m}>{m}</option>)}
+                    <option value="__nueva__">➕ Nueva marca...</option>
+                  </select>
+                  {formData.marca === '__nueva__' && (
+                    <input type="text" placeholder="Escribir nueva marca" className="w-full border p-2 rounded-lg text-sm mt-1 outline-none focus:ring-2 focus:ring-blue-100" onChange={e => setFormData({ ...formData, marca: e.target.value })} />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">MODELO</label>
+                  <select className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.modelo} onChange={e => setFormData({ ...formData, modelo: e.target.value })} required disabled={!formData.marca || formData.marca === '__nueva__'}>
+                    <option value="">— Seleccionar —</option>
+                    {(modelosPorMarcaHW[formData.marca] || []).map(m => <option key={m} value={m}>{m}</option>)}
+                    <option value="__nuevo__">➕ Nuevo modelo...</option>
+                  </select>
+                  {formData.modelo === '__nuevo__' && (
+                    <input type="text" placeholder="Escribir nuevo modelo" className="w-full border p-2 rounded-lg text-sm mt-1 outline-none focus:ring-2 focus:ring-blue-100" onChange={e => setFormData({ ...formData, modelo: e.target.value })} />
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1276,7 +1315,12 @@ export default function Sensores() {
                   <label className="block text-xs font-bold text-gray-600 mb-1">VINCULAR PLAZA</label>
                   <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.id_plaza} onChange={e => setFormData({ ...formData, id_plaza: e.target.value })}>
                     <option value="">Ninguna</option>
+                    {/* #29: Solo plazas no asignadas (más la plaza actual si está editando) */}
                     {plazas.map(p => <option key={p.Id_Plaza} value={p.Id_Plaza}>{p.Numero_Plaza}</option>)}
+                    {/* Si estamos editando y la plaza actual no está en la lista, añadirla */}
+                    {editingId && formData.id_plaza && !plazas.find(p => String(p.Id_Plaza) === String(formData.id_plaza)) && (
+                      <option value={formData.id_plaza}>Plaza actual (asignada a este dispositivo)</option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -1345,12 +1389,15 @@ export default function Sensores() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className={`grid ${editingId ? 'grid-cols-2' : ''} gap-3`}>
                 <input type="text" placeholder="Ubicación física" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400" value={formData.ubicacion} onChange={e => setFormData({ ...formData, ubicacion: e.target.value })} required />
-                <div className="flex flex-col">
-                  <label className="text-[10px] font-bold text-gray-400 ml-1 uppercase">Últ. Mant.</label>
-                  <input type="date" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400" value={formData.ultimo_mantenimiento} onChange={e => setFormData({ ...formData, ultimo_mantenimiento: e.target.value })} />
-                </div>
+                {/* #28: Solo mostrar mantenimiento al editar, no al crear */}
+                {editingId && (
+                  <div className="flex flex-col">
+                    <label className="text-[10px] font-bold text-gray-400 ml-1 uppercase">Últ. Mant.</label>
+                    <input type="date" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400" value={formData.ultimo_mantenimiento} onChange={e => setFormData({ ...formData, ultimo_mantenimiento: e.target.value })} />
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t">

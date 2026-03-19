@@ -52,6 +52,12 @@ export default function Empleados() {
         setDepartamentos(deptData || []);
         setOrganizaciones(orgData || []);
 
+        // (#22) UCE como organización por defecto
+        const uceOrg = (orgData || []).find(o => o.Nombre_Organizacion?.toUpperCase().includes('UCE'));
+        if (uceOrg && !editingEmpleadoId) {
+            setFormData(prev => ({ ...prev, organizacion_id: prev.organizacion_id || uceOrg.Id_Organizacion }));
+        }
+
         // Cargar empleados
         await loadEmpleados(rolesData, deptData, orgData);
     };
