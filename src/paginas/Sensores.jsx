@@ -41,7 +41,7 @@ export default function Sensores() {
         .select(`
           *,
           tipos_dispositivos(id_tipo, nombre_tipo, descripcion),
-          modelos_equipo(Id_Modelo, Modelo, Marca),
+          modelos_equipo_cat(id_modelo_equipo, nombre, marcas_equipo(nombre)),
           plazas(Id_Plaza, Numero_Plaza),
           estado_sensor(id_estado, nombre_estado)
         `)
@@ -67,8 +67,8 @@ export default function Sensores() {
     setFormData({
       tipo_nombre: disp.tipos_dispositivos?.nombre_tipo || '',
       tipo_descripcion: disp.tipos_dispositivos?.descripcion || '',
-      marca: disp.modelos_equipo?.Marca || '',
-      modelo: disp.modelos_equipo?.Modelo || '',
+      marca: disp.modelos_equipo_cat?.marcas_equipo?.nombre || '',
+      modelo: disp.modelos_equipo_cat?.nombre || '',
       ubicacion: disp.ubicacion || '',
       id_plaza: disp.id_plaza || '',
       estado_operativo: disp.estado_operativo || 'Operativo',
@@ -96,10 +96,10 @@ export default function Sensores() {
       }
 
       let id_modelo;
-      const { data: exMod } = await supabase.from('modelos_equipo').select('Id_Modelo').ilike('Modelo', formData.modelo.trim()).ilike('Marca', formData.marca.trim()).maybeSingle();
+      const { data: exMod } = await supabase.from('modelos_equipo_cat').select('id_modelo_equipo').ilike('nombre', formData.modelo.trim()).maybeSingle();
       if (exMod) { id_modelo = exMod.Id_Modelo; } 
       else {
-        const { data: nMod } = await supabase.from('modelos_equipo').insert([{ Modelo: formData.modelo.trim(), Marca: formData.marca.trim(), Tipo: formData.tipo_nombre.trim() }]).select();
+        const { data: nMod } = await supabase.from('modelos_equipo_cat').insert([{ nombre: formData.modelo.trim(), id_marca: null, tipo: formData.tipo_nombre.trim() }]).select();
         id_modelo = nMod[0].Id_Modelo;
       }
 
@@ -145,7 +145,7 @@ export default function Sensores() {
 
     if (result.isConfirmed) {
       await supabase.from('dispositivos').delete().eq('id_dispositivo', disp.id_dispositivo);
-      if (disp.id_modelo) await supabase.from('modelos_equipo').delete().eq('Id_Modelo', disp.id_modelo);
+      if (disp.id_modelo_equipo) await supabase.from('modelos_equipo_cat').delete().eq('id_modelo_equipo', disp.id_modelo_equipo);
       if (disp.id_tipo) await supabase.from('tipos_dispositivos').delete().eq('id_tipo', disp.id_tipo);
       loadData();
     }
@@ -202,7 +202,7 @@ export default function Sensores() {
                     <div className="text-[10px] text-gray-400">{disp.tipos_dispositivos?.descripcion || '-'}</div>
                   </td>
                   <td className="px-6 py-4">
-                    {disp.modelos_equipo?.Marca} - {disp.modelos_equipo?.Modelo}
+                    {disp.modelos_equipo_cat?.marcas_equipo?.nombre} - {disp.modelos_equipo_cat?.nombre}
                   </td>
                   <td className="px-6 py-4 text-gray-500">
                     {disp.fecha_instalacion ? new Date(disp.fecha_instalacion).toLocaleDateString() : '-'}
@@ -355,7 +355,7 @@ export default function Sensores() {
         .select(`
           *,
           tipos_dispositivos(id_tipo, nombre_tipo, descripcion),
-          modelos_equipo(Id_Modelo, Modelo, Marca),
+          modelos_equipo_cat(id_modelo_equipo, nombre, marcas_equipo(nombre)),
           plazas(Id_Plaza, Numero_Plaza),
           estado_sensor(id_estado, nombre_estado)
         `)
@@ -380,8 +380,8 @@ export default function Sensores() {
     setFormData({
       tipo_nombre: disp.tipos_dispositivos?.nombre_tipo || '',
       tipo_descripcion: disp.tipos_dispositivos?.descripcion || '',
-      marca: disp.modelos_equipo?.Marca || '',
-      modelo: disp.modelos_equipo?.Modelo || '',
+      marca: disp.modelos_equipo_cat?.marcas_equipo?.nombre || '',
+      modelo: disp.modelos_equipo_cat?.nombre || '',
       ubicacion: disp.ubicacion || '',
       id_plaza: disp.id_plaza || '',
       estado_operativo: disp.estado_operativo || 'Operativo',
@@ -411,10 +411,10 @@ export default function Sensores() {
       }
 
       let id_modelo;
-      const { data: exMod } = await supabase.from('modelos_equipo').select('Id_Modelo').ilike('Modelo', formData.modelo.trim()).ilike('Marca', formData.marca.trim()).maybeSingle();
+      const { data: exMod } = await supabase.from('modelos_equipo_cat').select('id_modelo_equipo').ilike('nombre', formData.modelo.trim()).maybeSingle();
       if (exMod) { id_modelo = exMod.Id_Modelo; } 
       else {
-        const { data: nMod } = await supabase.from('modelos_equipo').insert([{ Modelo: formData.modelo.trim(), Marca: formData.marca.trim(), Tipo: formData.tipo_nombre.trim() }]).select();
+        const { data: nMod } = await supabase.from('modelos_equipo_cat').insert([{ nombre: formData.modelo.trim(), id_marca: null, tipo: formData.tipo_nombre.trim() }]).select();
         id_modelo = nMod[0].Id_Modelo;
       }
 
@@ -462,7 +462,7 @@ export default function Sensores() {
 
     if (result.isConfirmed) {
       await supabase.from('dispositivos').delete().eq('id_dispositivo', disp.id_dispositivo);
-      if (disp.id_modelo) await supabase.from('modelos_equipo').delete().eq('Id_Modelo', disp.id_modelo);
+      if (disp.id_modelo_equipo) await supabase.from('modelos_equipo_cat').delete().eq('id_modelo_equipo', disp.id_modelo_equipo);
       if (disp.id_tipo) await supabase.from('tipos_dispositivos').delete().eq('id_tipo', disp.id_tipo);
       loadData();
     }
@@ -518,7 +518,7 @@ export default function Sensores() {
                     <div className="text-[10px] text-gray-400">{disp.tipos_dispositivos?.descripcion || '-'}</div>
                   </td>
                   <td className="px-6 py-4">
-                    {disp.modelos_equipo?.Marca} - {disp.modelos_equipo?.Modelo}
+                    {disp.modelos_equipo_cat?.marcas_equipo?.nombre} - {disp.modelos_equipo_cat?.nombre}
                   </td>
                   <td className="px-6 py-4 text-gray-500 italic">
                     {disp.ubicacion} {disp.plazas && <span className="block text-blue-600 font-bold not-italic text-[10px]">P: {disp.plazas.Numero_Plaza}</span>}
@@ -672,7 +672,7 @@ export default function Sensores() {
         .select(`
           *,
           tipos_dispositivos(id_tipo, nombre_tipo, descripcion),
-          modelos_equipo(Id_Modelo, Modelo, Marca),
+          modelos_equipo_cat(id_modelo_equipo, nombre, marcas_equipo(nombre)),
           plazas(Id_Plaza, Numero_Plaza),
           estado_sensor(id_estado, nombre_estado)
         `)
@@ -697,8 +697,8 @@ export default function Sensores() {
     setFormData({
       tipo_nombre: disp.tipos_dispositivos?.nombre_tipo || '',
       tipo_descripcion: disp.tipos_dispositivos?.descripcion || '',
-      marca: disp.modelos_equipo?.Marca || '',
-      modelo: disp.modelos_equipo?.Modelo || '',
+      marca: disp.modelos_equipo_cat?.marcas_equipo?.nombre || '',
+      modelo: disp.modelos_equipo_cat?.nombre || '',
       ubicacion: disp.ubicacion || '',
       id_plaza: disp.id_plaza || '',
       estado_operativo: disp.estado_operativo || 'Operativo',
@@ -727,10 +727,10 @@ export default function Sensores() {
       }
 
       let id_modelo;
-      const { data: exMod } = await supabase.from('modelos_equipo').select('Id_Modelo').ilike('Modelo', formData.modelo.trim()).ilike('Marca', formData.marca.trim()).maybeSingle();
+      const { data: exMod } = await supabase.from('modelos_equipo_cat').select('id_modelo_equipo').ilike('nombre', formData.modelo.trim()).maybeSingle();
       if (exMod) { id_modelo = exMod.Id_Modelo; } 
       else {
-        const { data: nMod } = await supabase.from('modelos_equipo').insert([{ Modelo: formData.modelo.trim(), Marca: formData.marca.trim(), Tipo: formData.tipo_nombre.trim() }]).select();
+        const { data: nMod } = await supabase.from('modelos_equipo_cat').insert([{ nombre: formData.modelo.trim(), id_marca: null, tipo: formData.tipo_nombre.trim() }]).select();
         id_modelo = nMod[0].Id_Modelo;
       }
 
@@ -781,7 +781,7 @@ export default function Sensores() {
 
     if (result.isConfirmed) {
       await supabase.from('dispositivos').delete().eq('id_dispositivo', disp.id_dispositivo);
-      if (disp.id_modelo) await supabase.from('modelos_equipo').delete().eq('Id_Modelo', disp.id_modelo);
+      if (disp.id_modelo_equipo) await supabase.from('modelos_equipo_cat').delete().eq('id_modelo_equipo', disp.id_modelo_equipo);
       if (disp.id_tipo) await supabase.from('tipos_dispositivos').delete().eq('id_tipo', disp.id_tipo);
       loadData();
     }
@@ -846,7 +846,7 @@ export default function Sensores() {
                     <div className="text-[10px] text-gray-400">{disp.tipos_dispositivos?.descripcion || '-'}</div>
                   </td>
                   <td className="px-6 py-4">
-                    {disp.modelos_equipo?.Marca} - {disp.modelos_equipo?.Modelo}
+                    {disp.modelos_equipo_cat?.marcas_equipo?.nombre} - {disp.modelos_equipo_cat?.nombre}
                   </td>
                   <td className="px-6 py-4">
                     <div className="text-gray-500 text-xs italic mb-1">{disp.ubicacion}</div>
@@ -1012,7 +1012,7 @@ export default function Sensores() {
         .select(`
           *,
           tipos_dispositivos(id_tipo, nombre_tipo, descripcion),
-          modelos_equipo(Id_Modelo, Modelo, Marca),
+          modelos_equipo_cat(id_modelo_equipo, nombre, marcas_equipo(nombre)),
           plazas(Id_Plaza, Numero_Plaza),
           estado_sensor(id_estado, nombre_estado)
         `)
@@ -1067,8 +1067,8 @@ export default function Sensores() {
     setFormData({
       tipo_nombre: disp.tipos_dispositivos?.nombre_tipo || '',
       tipo_descripcion: descTexto,
-      marca: disp.modelos_equipo?.Marca || '',
-      modelo: disp.modelos_equipo?.Modelo || '',
+      marca: disp.modelos_equipo_cat?.marcas_equipo?.nombre || '',
+      modelo: disp.modelos_equipo_cat?.nombre || '',
       ubicacion: disp.ubicacion || '',
       id_plaza: disp.id_plaza || '',
       estado_operativo: disp.estado_operativo || 'Operativo',
@@ -1109,10 +1109,10 @@ export default function Sensores() {
       }
 
       let id_modelo;
-      const { data: exMod } = await supabase.from('modelos_equipo').select('Id_Modelo').ilike('Modelo', formData.modelo.trim()).ilike('Marca', formData.marca.trim()).maybeSingle();
+      const { data: exMod } = await supabase.from('modelos_equipo_cat').select('id_modelo_equipo').ilike('nombre', formData.modelo.trim()).maybeSingle();
       if (exMod) { id_modelo = exMod.Id_Modelo; }
       else {
-        const { data: nMod } = await supabase.from('modelos_equipo').insert([{ Modelo: formData.modelo.trim(), Marca: formData.marca.trim(), Tipo: formData.tipo_nombre.trim() }]).select();
+        const { data: nMod } = await supabase.from('modelos_equipo_cat').insert([{ nombre: formData.modelo.trim(), id_marca: null, tipo: formData.tipo_nombre.trim() }]).select();
         id_modelo = nMod[0].Id_Modelo;
       }
 
@@ -1163,7 +1163,7 @@ export default function Sensores() {
 
     if (result.isConfirmed) {
       await supabase.from('dispositivos').delete().eq('id_dispositivo', disp.id_dispositivo);
-      if (disp.id_modelo) await supabase.from('modelos_equipo').delete().eq('Id_Modelo', disp.id_modelo);
+      if (disp.id_modelo_equipo) await supabase.from('modelos_equipo_cat').delete().eq('id_modelo_equipo', disp.id_modelo_equipo);
       if (disp.id_tipo) await supabase.from('tipos_dispositivos').delete().eq('id_tipo', disp.id_tipo);
       loadData();
     }
@@ -1227,7 +1227,7 @@ export default function Sensores() {
                     <div className="text-[10px] text-gray-400 italic">{disp.tipos_dispositivos?.descripcion || '-'}</div>
                   </td>
                   <td className="px-6 py-4 font-medium text-gray-600">
-                    {disp.modelos_equipo?.Marca} - {disp.modelos_equipo?.Modelo}
+                    {disp.modelos_equipo_cat?.marcas_equipo?.nombre} - {disp.modelos_equipo_cat?.nombre}
                   </td>
                   <td className="px-6 py-4">
                     <div className="text-gray-500 text-[10px] uppercase font-bold mb-1.5">{disp.ubicacion}</div>

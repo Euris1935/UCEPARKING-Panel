@@ -33,8 +33,8 @@ export default function Mantenimiento() {
         const getPersona = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-                const { data } = await supabase.from('usuarios').select('persona_id').eq('id', user.id).single();
-                if (data) setCurrentPersonaId(data.persona_id);
+                const { data } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+                if (data) setCurrentPersonaId(data.id_persona);
             }
         };
         getPersona();
@@ -71,7 +71,7 @@ export default function Mantenimiento() {
 
             const { data: dispData, error: dispError } = await supabase
                 .from('dispositivos')
-                .select('id_dispositivo, ubicacion, estado_operativo, tipos_dispositivos(nombre_tipo), modelos_equipo(Modelo, Marca)')
+                .select('id_dispositivo, ubicacion, id_estado, tipos_dispositivos(nombre_tipo), modelos_equipo_cat(nombre, marcas_equipo(nombre))')
                 .order('id_dispositivo', { ascending: true });
             if (dispError) console.warn('Error cargando dispositivos:', dispError.message);
             const { data: empData } = await supabase.from('empleados').select('Id_Empleado, personas(nombre, apellido)');
@@ -93,13 +93,15 @@ export default function Mantenimiento() {
     const registrarLog = async (tipo, descripcion, idDispositivo = null) => {
         if (!currentPersonaId) return;
         try {
+            const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+            const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Mantenimiento').maybeSingle();
             await supabase.from('eventos').insert([{
                 Fecha_Hora: new Date().toISOString(),
-                Tipo_Evento: tipo,
                 Descripcion: descripcion,
                 id_persona: currentPersonaId,
                 id_dispositivo: idDispositivo,
-                origen_evento: 'Panel Web - Mantenimiento'
+                id_tipo_evento: te?.id_tipo || null,
+                id_origen_evento: oe?.id_origen || null
             }]);
         } catch (err) { console.warn('Error log:', err.message); }
     };
@@ -116,9 +118,7 @@ export default function Mantenimiento() {
                 id_dispositivo: parseInt(formData.id_dispositivo),
                 ID_Empleado_Tecnico: parseInt(formData.id_tecnico),
                 id_tipo_mantenimiento: parseInt(formData.id_tipo),
-                id_estado: estadoInicial,
-                Tipo_Dispositivo_Afectado: 'Hardware',
-                Estado_Mantenimiento: 'Pendiente'
+                id_estado: estadoInicial
             }]);
 
             if (error) throw error;
@@ -156,8 +156,7 @@ export default function Mantenimiento() {
 
             const { error } = await supabase.from('mantenimientos').update({
                 id_estado: idResuelto,
-                Fecha_Fin: new Date().toISOString(),
-                Estado_Mantenimiento: 'Resuelto' // Legacy
+                Fecha_Fin: new Date().toISOString()
             }).eq('Id_Mantenimiento', id);
 
             if (!error) {
@@ -243,8 +242,8 @@ export default function Mantenimiento() {
                                         </td>
                                         <td className="px-6 py-4">
                                             <span className={`px-2 py-1 text-xs rounded-full border ${item.tipo_mantenimiento?.nombre_tipo === 'Preventivo'
-                                                    ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                                    : 'bg-orange-50 text-orange-700 border-orange-200'
+                                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                                : 'bg-orange-50 text-orange-700 border-orange-200'
                                                 }`}>
                                                 {item.tipo_mantenimiento?.nombre_tipo || 'N/A'}
                                             </span>
@@ -260,8 +259,8 @@ export default function Mantenimiento() {
                                         </td>
                                         <td className="px-6 py-4">
                                             <span className={`px-2 py-1 text-xs font-bold rounded-full ${item.estado_mantenimiento?.nombre_estado === 'Resuelto'
-                                                    ? 'bg-green-100 text-green-800'
-                                                    : 'bg-yellow-100 text-yellow-800'
+                                                ? 'bg-green-100 text-green-800'
+                                                : 'bg-yellow-100 text-yellow-800'
                                                 }`}>
                                                 {item.estado_mantenimiento?.nombre_estado || item.Estado_Mantenimiento}
                                             </span>
@@ -312,7 +311,7 @@ export default function Mantenimiento() {
                                         )}
                                         {dispositivos.map(d => (
                                             <option key={d.id_dispositivo} value={d.id_dispositivo}>
-                                                [{d.id_dispositivo}] {d.tipos_dispositivos?.nombre_tipo || 'Dispositivo'}{d.modelos_equipo ? ` — ${d.modelos_equipo.Marca} ${d.modelos_equipo.Modelo}` : ''}{d.ubicacion ? ` (${d.ubicacion})` : ''} · {d.estado_operativo || 'N/A'}
+                                                [{d.id_dispositivo}] {d.tipos_dispositivos?.nombre_tipo || 'Dispositivo'}{d.modelos_equipo_cat ? ` — ${d.modelos_equipo_cat.marcas_equipo?.nombre || ''} ${d.modelos_equipo_cat.nombre}` : ''}{d.ubicacion ? ` (${d.ubicacion})` : ''}
                                             </option>
                                         ))}
                                     </select>

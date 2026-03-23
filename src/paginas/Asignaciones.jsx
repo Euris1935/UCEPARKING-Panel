@@ -82,18 +82,18 @@ export default function Asignaciones() {
             // 5. Empleados con persona_id para el selector
             const { data: empData } = await supabase
                 .from('empleados')
-                .select(`Id_Empleado, persona_id, personas ( nombre, apellido )`);
+                .select(`Id_Empleado, id_persona, personas ( nombre, apellido )`);
             setEmpleadosList(empData || []);
 
             // 6. Mapa de vehículos por persona_id
             const { data: vehData } = await supabase
                 .from('vehiculos')
-                .select('id, persona_id, placa, Marca, Color');
+                .select('id_vehiculo, id_persona, placa, marcas_vehiculo(nombre), colores_vehiculo(nombre)');
 
             const mapa = {};
             (vehData || []).forEach(v => {
-                if (v.persona_id && !mapa[v.persona_id]) {
-                    mapa[v.persona_id] = v;
+                if (v.id_persona && !mapa[v.id_persona]) {
+                    mapa[v.id_persona] = v;
                 }
             });
             setVehiculosMap(mapa);
@@ -101,8 +101,8 @@ export default function Asignaciones() {
             // 7. Plazas libres para el selector (al crear, solo libres; al editar se añade la plaza actual)
             const { data: plazaData } = await supabase
                 .from('plazas')
-                .select('Id_Plaza, Numero_Plaza, Estado_Actual')
-                .ilike('Estado_Actual', 'LIBRE')
+                .select('Id_Plaza, Numero_Plaza')
+                .eq('id_estado', 1)
                 .order('Numero_Plaza');
             setPlazasList(plazaData || []);
 
@@ -121,7 +121,7 @@ export default function Asignaciones() {
             return;
         }
         const empleado = empleadosList.find(e => String(e.Id_Empleado) === String(idEmpleado));
-        const vehiculo = empleado?.persona_id ? (vehiculosMap[empleado.persona_id] || null) : null;
+        const vehiculo = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || null) : null;
         setVehiculoVinculado(vehiculo);
     };
 
@@ -140,7 +140,7 @@ export default function Asignaciones() {
 
         // Buscar el vehículo del empleado actual
         const empleado = empleadosList.find(e => e.Id_Empleado === asignacion.Id_Empleado_Asignado);
-        const vehiculo = empleado?.persona_id ? (vehiculosMap[empleado.persona_id] || null) : null;
+        const vehiculo = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || null) : null;
         setVehiculoVinculado(vehiculo);
 
         setFormData({
@@ -155,8 +155,8 @@ export default function Asignaciones() {
         // Cargar plazas libres + la plaza actual de la asignación
         const { data: plazaData } = await supabase
             .from('plazas')
-            .select('Id_Plaza, Numero_Plaza, Estado_Actual')
-            .or(`Estado_Actual.ilike.LIBRE,Id_Plaza.eq.${asignacion.Id_Plaza}`)
+            .select('Id_Plaza, Numero_Plaza')
+            .or(`id_estado.eq.1,Id_Plaza.eq.${asignacion.Id_Plaza}`)
             .order('Numero_Plaza');
         setPlazasList(plazaData || []);
 
@@ -183,12 +183,12 @@ export default function Asignaciones() {
             Fecha_Inicio: formData.Fecha_Inicio,
             Fecha_Fin: isPermanent ? null : (formData.Fecha_Fin || null),
             Notas: formData.Notas,
-            Estado_Asignacion: 'Activa'
+            id_estado: 1
         }]);
         if (insertError) throw insertError;
 
         await supabase.from('plazas').update({
-            Estado_Actual: 'ASIGNADA', id_estado: idAsignada
+            id_estado: idAsignada
         }).eq('Id_Plaza', formData.Id_Plaza);
 
         Swal.fire('Éxito', 'Plaza asignada correctamente.', 'success');
@@ -220,12 +220,12 @@ export default function Asignaciones() {
         if (plazaCambia) {
             // Liberar la plaza anterior
             await supabase.from('plazas').update({
-                Estado_Actual: 'LIBRE', id_estado: 1
+                id_estado: 1
             }).eq('Id_Plaza', plazaAnterior);
 
             // Asignar la nueva plaza
             await supabase.from('plazas').update({
-                Estado_Actual: 'ASIGNADA', id_estado: idAsignada
+                id_estado: idAsignada
             }).eq('Id_Plaza', plazaNueva);
         }
 
@@ -273,7 +273,7 @@ export default function Asignaciones() {
                 if (error) throw error;
 
                 await supabase.from('plazas').update({
-                    Estado_Actual: 'LIBRE', id_estado: 1
+                    id_estado: 1
                 }).eq('Id_Plaza', asignacion.Id_Plaza);
 
                 Swal.fire('Liberado', 'La plaza está disponible nuevamente.', 'success');

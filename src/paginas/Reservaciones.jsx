@@ -50,7 +50,7 @@ export default function Reservaciones() {
           .from('RESERVA')
           .select(`
             *,
-            personas (id, nombre, apellido),
+            personas (id_persona, nombre, apellido),
             plazas (Id_Plaza, Numero_Plaza),
             estado_reserva ( nombre_estado ) 
           `)
@@ -63,8 +63,8 @@ export default function Reservaciones() {
 
   const loadAuxData = async () => {
     try {
-        const { data: personas } = await supabase.from('personas').select('id, nombre, apellido').order('nombre');
-        const { data: plazas } = await supabase.from('plazas').select('Id_Plaza, Numero_Plaza, Estado_Actual').ilike('Estado_Actual', 'LIBRE').order('Numero_Plaza');
+        const { data: personas } = await supabase.from('personas').select('id_persona, nombre, apellido').order('nombre');
+        const { data: plazas } = await supabase.from('plazas').select('Id_Plaza, Numero_Plaza').eq('id_estado', 1).order('Numero_Plaza');
         setPersonasList(personas || []);
         setPlazasList(plazas || []);
     } catch (error) { console.error("Error aux:", error); }
@@ -79,7 +79,7 @@ export default function Reservaciones() {
     const ahoraString = new Date(ahora - tzOffset).toISOString().slice(0, 16);
 
     const vencidas = reservas.filter(r => {
-      const nombreEstado = r.Estado_Reserva?.trim();
+      const nombreEstado = r.estado_reserva?.nombre_estado?.trim();
       const esActiva = nombreEstado === 'Activa' || r.id_estado === 1;
       if (!esActiva) return false;
 
@@ -96,8 +96,8 @@ export default function Reservaciones() {
 
   const handleMarkCompleted = async (id, idPlaza, isAuto = false) => {
     try {
-        await supabase.from('RESERVA').update({ Estado_Reserva: 'Completada', id_estado: 2 }).eq('Id_Reserva', id);
-        if (idPlaza) await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', idPlaza);
+        await supabase.from('RESERVA').update({ id_estado: 2 }).eq('Id_Reserva', id);
+        if (idPlaza) await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
         if (!isAuto) Swal.fire('Éxito', 'Reserva completada.', 'success');
         loadReservas();
         loadAuxData(); 
@@ -107,8 +107,8 @@ export default function Reservaciones() {
   const handleCancel = async (idReserva, idPlaza) => {
     const result = await Swal.fire({ title: '¿Cancelar?', text: "La plaza se liberará.", icon: 'warning', showCancelButton: true, confirmButtonColor: '#f59e0b' });
     if (result.isConfirmed) {
-        await supabase.from('RESERVA').update({ Estado_Reserva: 'Cancelada', id_estado: 3 }).eq('Id_Reserva', idReserva);
-        if (idPlaza) await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', idPlaza);
+        await supabase.from('RESERVA').update({ id_estado: 3 }).eq('Id_Reserva', idReserva);
+        if (idPlaza) await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
         loadReservas();
         loadAuxData();
     }
@@ -119,7 +119,7 @@ export default function Reservaciones() {
     if (result.isConfirmed) {
         await supabase.from('RESERVA').delete().eq('Id_Reserva', idReserva);
         if (estado === 'Activa' && idPlaza) {
-            await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', idPlaza);
+            await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
         }
         loadReservas();
         loadAuxData();
@@ -136,19 +136,18 @@ export default function Reservaciones() {
             Id_Plaza: parseInt(formData.Id_Plaza),
             Fecha_Hora_Inicio: formData.Fecha_Hora_Inicio,
             Fecha_Hora_Fin: formData.Fecha_Hora_Fin,
-            Estado_Reserva: 'Activa', 
             id_estado: 1
         };
 
         if (isUpdating) {
             await supabase.from('RESERVA').update(payload).eq('Id_Reserva', editingReservaId);
             if (parseInt(formData.Id_Plaza) !== originalPlazaId) {
-                await supabase.from('plazas').update({ Estado_Actual: 'Libre', id_estado: 1 }).eq('Id_Plaza', originalPlazaId);
-                await supabase.from('plazas').update({ Estado_Actual: 'RESERVADA', id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
+                await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', originalPlazaId);
+                await supabase.from('plazas').update({ id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
             }
         } else {
             await supabase.from('RESERVA').insert([payload]);
-            await supabase.from('plazas').update({ Estado_Actual: 'RESERVADA', id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
+            await supabase.from('plazas').update({ id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
         }
         resetForm();
         loadReservas();
@@ -202,7 +201,7 @@ export default function Reservaciones() {
                 <form onSubmit={handleSubmit} className="space-y-5">
                     <select className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm outline-none bg-gray-50/50" value={formData.id_persona} onChange={(e) => setFormData({...formData, id_persona: e.target.value})} required>
                         <option value="">-- Seleccionar Persona --</option>
-                        {personasList.map(p => <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>)}
+                        {personasList.map(p => <option key={p.id_persona} value={p.id_persona}>{p.nombre} {p.apellido}</option>)}
                     </select>
                     <select className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm outline-none bg-gray-50/50" value={formData.Id_Plaza} onChange={(e) => setFormData({...formData, Id_Plaza: e.target.value})} required>
                         <option value="">-- Seleccionar Plaza --</option>
@@ -236,7 +235,8 @@ export default function Reservaciones() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-50">
               {reservas.filter(r => `${r.personas?.nombre} ${r.personas?.apellido} ${r.plazas?.Numero_Plaza}`.toLowerCase().includes(searchTerm.toLowerCase())).map(r => {
-                const isActive = r.Estado_Reserva === 'Activa' || r.id_estado === 1;
+                const nombreEstado = r.estado_reserva?.nombre_estado;
+                const isActive = nombreEstado === 'Activa' || r.id_estado === 1;
                 return (
                   <tr key={r.Id_Reserva} className="hover:bg-gray-50/50 transition-all text-sm">
                     <td className="px-6 py-4 font-bold text-gray-700">{r.personas?.nombre} {r.personas?.apellido}</td>
@@ -244,8 +244,8 @@ export default function Reservaciones() {
                     <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Inicio)}</td>
                     <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Fin)}</td>
                     <td className="px-6 py-4">
-                        <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${isActive ? 'bg-green-100 text-green-800' : r.Estado_Reserva === 'Cancelada' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
-                            {r.Estado_Reserva || 'Activa'}
+                        <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${isActive ? 'bg-green-100 text-green-800' : nombreEstado === 'Cancelada' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
+                            {nombreEstado || 'Activa'}
                         </span>
                     </td>
                     <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
@@ -258,7 +258,7 @@ export default function Reservaciones() {
                       ) : (
                         <div className="text-gray-300 italic text-xs flex items-center gap-1"><FaLock size={12} /> Cerrada</div>
                       )}
-                      <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza, r.Estado_Reserva)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>
+                      <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza, nombreEstado)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>
                     </td>
                   </tr>
                 );

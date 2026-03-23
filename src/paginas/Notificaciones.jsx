@@ -29,7 +29,7 @@ export default function Notificaciones() {
   const [form, setForm] = useState({
     Tipo: '',
     Contenido: '',
-    persona_id: '',
+    id_persona: '',
     id_tipo: '',
   });
 
@@ -39,8 +39,8 @@ export default function Notificaciones() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data } = await supabase
-          .from('usuarios').select('persona_id').eq('id', user.id).single();
-        if (data) setCurrentPersonaId(data.persona_id);
+          .from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (data) setCurrentPersonaId(data.id_persona);
       }
     };
     init();
@@ -67,7 +67,7 @@ export default function Notificaciones() {
           Contenido,
           Leida,
           created_at,
-          persona_id,
+          id_persona,
           id_tipo,
           personas ( nombre, apellido ),
           tipo_notificacion ( id_tipo, nombre_tipo )
@@ -118,7 +118,7 @@ export default function Notificaciones() {
         Tipo:       form.Tipo,
         Contenido:  form.Contenido.trim(),
         Leida:      false,
-        persona_id: form.persona_id || null,
+        id_persona: form.id_persona || null,
         id_tipo:    parseInt(form.id_tipo),
       };
 
@@ -127,7 +127,7 @@ export default function Notificaciones() {
 
       Swal.fire('Enviada', 'Notificación creada correctamente.', 'success');
       setShowModal(false);
-      setForm({ Tipo: '', Contenido: '', persona_id: '', id_tipo: '' });
+      setForm({ Tipo: '', Contenido: '', id_persona: '', id_tipo: '' });
       loadAll();
     } catch (e) {
       Swal.fire('Error', e.message, 'error');
@@ -248,8 +248,8 @@ export default function Notificaciones() {
                 </label>
                 <select
                   className="w-full border p-2 rounded-lg text-sm bg-gray-50 focus:ring-blue-500"
-                  value={form.persona_id}
-                  onChange={e => setForm(f => ({ ...f, persona_id: e.target.value }))}
+                  value={form.id_persona}
+                  onChange={e => setForm(f => ({ ...f, id_persona: e.target.value }))}
                 >
                   <option value="">— General / Todos —</option>
                   {personasList.map(p => (
@@ -274,7 +274,7 @@ export default function Notificaciones() {
 
               <div className="flex justify-end gap-3 pt-2 border-t">
                 <button
-                  onClick={() => { setShowModal(false); setForm({ Tipo: '', Contenido: '', persona_id: '', id_tipo: '' }); }}
+                  onClick={() => { setShowModal(false); setForm({ Tipo: '', Contenido: '', id_persona: '', id_tipo: '' }); }}
                   className="px-4 py-2 text-gray-500 font-medium hover:bg-gray-100 rounded-lg transition"
                 >
                   Cancelar

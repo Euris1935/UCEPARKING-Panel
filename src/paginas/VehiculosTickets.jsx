@@ -86,14 +86,14 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
           <hr />
           <Row label="Visitante" value={`${ticket.visitantes?.personas?.nombre ?? ticket.personas?.nombre ?? '—'} ${ticket.visitantes?.personas?.apellido ?? ticket.personas?.apellido ?? ''}`} />
           <Row label="Placa" value={ticket.Placa_Capturada} bold mono />
-          <Row label="Marca" value={ticket.Marca_Vehiculo || ticket.vehiculos?.Marca || '—'} />
-          <Row label="Modelo" value={ticket.Modelo_Vehiculo || ticket.vehiculos?.modelo || '—'} />
-          <Row label="Color" value={ticket.Color_Vehiculo || ticket.vehiculos?.Color || '—'} />
+          <Row label="Marca" value={ticket._marca || ticket.vehiculos?.marcas_vehiculo?.nombre || '—'} />
+          <Row label="Modelo" value={ticket._modelo || ticket.vehiculos?.modelos_vehiculo?.nombre || '—'} />
+          <Row label="Color" value={ticket._color || ticket.vehiculos?.colores_vehiculo?.nombre || '—'} />
           <hr />
           <Row label="Plaza Asignada" value={ticket.plazas?.Numero_Plaza || `#${ticket.Id_Plaza_Asignada}`} bold />
           <Row label="Hora de Entrada" value={new Date(ticket.Fecha_Hora_Emision).toLocaleString('es-DO')} />
           {/* Hora de salida y duración (#20) */}
-          {ticket.Estado === 'Usado' && ticket._horaSalida && (
+          {(ticket.estado_ticket?.nombre_estado === 'Usado' || ticket.Estado === 'Usado') && ticket._horaSalida && (
             <>
               <Row label="Hora de Salida" value={new Date(ticket._horaSalida).toLocaleString('es-DO')} />
               {tiempoEstancia && <Row label="Duración" value={tiempoEstancia} bold />}
@@ -179,8 +179,8 @@ export default function VehiculosTickets() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data } = await supabase.from('usuarios').select('persona_id').eq('id', user.id).single();
-        if (data) setCurrentPersonaId(data.persona_id);
+        const { data } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (data) setCurrentPersonaId(data.id_persona);
       }
     };
     init();
@@ -200,50 +200,50 @@ export default function VehiculosTickets() {
   const loadData = async () => {
     try {
       // Plazas libres — ordenadas alfabéticamente (#14)
-      const { data: plazas } = await supabase.from('plazas').select('*').ilike('Estado_Actual', 'libre').order('Numero_Plaza');
+      const { data: plazas } = await supabase.from('plazas').select('*').eq('id_estado', 1).order('Numero_Plaza');
 
       // Tickets de hoy (todos los estados para mostrar historial del día)
       const hoy = new Date();
       hoy.setHours(0, 0, 0, 0);
       const { data: tks } = await supabase
         .from('tickets')
-        .select('*, visitantes(id, personas(nombre, apellido)), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(Marca, Color, modelo)')
+        .select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(marcas_vehiculo(nombre), colores_vehiculo(nombre), modelos_vehiculo(nombre))')
         .gte('Fecha_Hora_Emision', hoy.toISOString())
         .order('Fecha_Hora_Emision', { ascending: false });
 
       // Vehículos registrados
       const { data: vhs } = await supabase
         .from('vehiculos')
-        .select('*, personas(nombre, apellido)')
+        .select('*, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido)')
         .order('Fecha_Registro', { ascending: false });
 
       // ── Visitantes desde la tabla dedicada (con join a personas) ──
       const { data: visitantesData } = await supabase
         .from('visitantes')
-        .select('id, created_at, personas(id, nombre, apellido, telefono, sexo)')
+        .select('id_visitante, created_at, personas(id_persona, nombre, apellido, telefono, sexo)')
         .order('created_at', { ascending: false });
 
-      // ── Personal del sistema: 2 queries separadas para evitar FK inexistente entre usuarios y roles ──
-      const { data: usuariosRaw } = await supabase.from('usuarios').select('persona_id');
-      const personaIdsUsuarios = (usuariosRaw || []).filter(u => u.persona_id).map(u => u.persona_id);
+      // ── Personal del sistema ──
+      const { data: usuariosRaw } = await supabase.from('usuarios').select('id_persona');
+      const personaIdsUsuarios = (usuariosRaw || []).filter(u => u.id_persona).map(u => u.id_persona);
 
       let personasDeUsuarios = [];
       if (personaIdsUsuarios.length > 0) {
         const { data: pData } = await supabase
-          .from('personas').select('id, nombre, apellido').in('id', personaIdsUsuarios);
+          .from('personas').select('id_persona, nombre, apellido').in('id_persona', personaIdsUsuarios);
         personasDeUsuarios = (pData || []).map(p => ({ ...p, rol: 'Usuario' }));
       }
 
       // ── Empleados ──
       const { data: empleadosData } = await supabase
-        .from('empleados').select('persona_id, personas(id, nombre, apellido)');
+        .from('empleados').select('id_persona, personas(id_persona, nombre, apellido)');
       const personalEmpleados = (empleadosData || [])
         .filter(e => e.personas).map(e => ({ ...e.personas, rol: 'Empleado' }));
 
-      // Unificar — empleados sobrescriben si la persona es también usuario
+      // Unificar
       const mapaPersonas = new Map();
-      personasDeUsuarios.forEach(p => { if (p.id) mapaPersonas.set(p.id, p); });
-      personalEmpleados.forEach(p => { if (p.id) mapaPersonas.set(p.id, p); });
+      personasDeUsuarios.forEach(p => { if (p.id_persona) mapaPersonas.set(p.id_persona, p); });
+      personalEmpleados.forEach(p => { if (p.id_persona) mapaPersonas.set(p.id_persona, p); });
       const listaPersonal = Array.from(mapaPersonas.values());
 
 
@@ -261,14 +261,16 @@ export default function VehiculosTickets() {
   const registrarLog = async (tipo, descripcion, idPlaza = null, idDispositivo = null) => {
     if (!currentPersonaId) return;
     try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Vehículos y Tickets').maybeSingle();
       await supabase.from('eventos').insert([{
         Fecha_Hora: new Date().toISOString(),
-        Tipo_Evento: tipo,
         Descripcion: descripcion,
         Id_Plaza: idPlaza,
         id_persona: currentPersonaId,
         id_dispositivo: idDispositivo,
-        origen_evento: 'Panel Web - Vehículos y Tickets'
+        id_tipo_evento: te?.id_tipo || null,
+        id_origen_evento: oe?.id_origen || null
       }]);
     } catch (e) { console.warn('Log error:', e.message); }
   };
@@ -281,7 +283,7 @@ export default function VehiculosTickets() {
       const { data: vencidos } = await supabase
         .from('tickets')
         .select('Id_Ticket, Id_Plaza_Asignada')
-        .eq('Estado', 'Activo')
+        .eq('id_estado', 1)
         .not('Fecha_Hora_Vencimiento', 'is', null)
         .lt('Fecha_Hora_Vencimiento', ahora);
 
@@ -290,12 +292,12 @@ export default function VehiculosTickets() {
       for (const t of vencidos) {
         // Marcar ticket como Vencido (sin id_estado para evitar FK)
         await supabase.from('tickets')
-          .update({ Estado: 'Vencido' })
+          .update({ id_estado: 3 })
           .eq('Id_Ticket', t.Id_Ticket);
 
         // Liberar plaza
         await supabase.from('plazas')
-          .update({ Estado_Actual: 'LIBRE', id_estado: 1 })
+          .update({ id_estado: 1 })
           .eq('Id_Plaza', t.Id_Plaza_Asignada);
       }
 
@@ -331,17 +333,17 @@ export default function VehiculosTickets() {
             telefono: visitanteForm.telefono || null,
             sexo: visitanteForm.sexo || null
           }])
-          .select('id')
+          .select('id_persona')
           .single();
         if (pErr) throw pErr;
         // 1b. Insertar en visitantes con la persona recién creada
         const { data: newV, error: vErr } = await supabase
           .from('visitantes')
-          .insert([{ persona_id: newPersona.id }])
-          .select('id')
+          .insert([{ id_persona: newPersona.id_persona }])
+          .select('id_visitante')
           .single();
         if (vErr) throw vErr;
-        visitanteId = newV.id;
+        visitanteId = newV.id_visitante;
       }
 
       const ahora = new Date().toISOString();
@@ -354,25 +356,25 @@ export default function VehiculosTickets() {
       const { data: nuevoTicket, error: tErr } = await supabase
         .from('tickets')
         .insert([{
-          Id_Vehiculo: null,
+          id_vehiculo: null,
           Placa_Capturada: visitanteForm.placa.toUpperCase(),
           Id_Plaza_Asignada: parseInt(visitanteForm.id_plaza),
-          visitante_id: visitanteId,
-          Estado: 'Activo',
+          id_visitante: visitanteId,
           id_estado: 1,
           Fecha_Hora_Emision: ahora,
-          Fecha_Hora_Vencimiento: vencimiento,
-          Color_Vehiculo: visitanteForm.color || null,
-          Marca_Vehiculo: visitanteForm.marca || null,
-          Modelo_Vehiculo: visitanteForm.modelo || null
+          Fecha_Hora_Vencimiento: vencimiento
         }])
-        .select('*, visitantes(id, personas(nombre, apellido)), plazas(Numero_Plaza)')
+        .select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), plazas(Numero_Plaza)')
         .single();
       if (tErr) throw tErr;
 
+      // Attach visitor vehicle info for immediate display (not stored in DB)
+      nuevoTicket._marca = visitanteForm.marca || null;
+      nuevoTicket._modelo = visitanteForm.modelo || null;
+      nuevoTicket._color = visitanteForm.color || null;
+
       // 4. Actualizar plaza a Ocupada
       await supabase.from('plazas').update({
-        Estado_Actual: 'OCUPADA',
         id_estado: 2
       }).eq('Id_Plaza', visitanteForm.id_plaza);
 
@@ -400,36 +402,36 @@ export default function VehiculosTickets() {
         let vehiculoId = null;
         const { data: vExistente } = await supabase
           .from('vehiculos')
-          .select('id')
+          .select('id_vehiculo')
           .eq('placa', placa)
           .maybeSingle();
 
         if (vExistente) {
-          vehiculoId = vExistente.id;
+          vehiculoId = vExistente.id_vehiculo;
         } else {
           const { data: vNuevo, error: vErr } = await supabase
             .from('vehiculos')
-            .insert({ placa, Marca: visitanteForm.marca || 'VISITANTE', modelo: visitanteForm.modelo || null, Color: visitanteForm.color || 'N/A' })
-            .select('id')
+            .insert({ placa })
+            .select('id_vehiculo')
             .single();
           if (vErr) console.error('[RegistroAcceso] Error al crear vehículo:', vErr.message);
-          else vehiculoId = vNuevo.id;
+          else vehiculoId = vNuevo.id_vehiculo;
         }
 
         if (vehiculoId) {
           // 8b. Si ya hay registro activo para ese vehículo, cerrarlo primero
           const { data: raActivo } = await supabase
             .from('registros_acceso')
-            .select('id')
-            .eq('vehiculo_id', vehiculoId)
+            .select('id_registro')
+            .eq('id_vehiculo', vehiculoId)
             .is('salida_at', null)
             .maybeSingle();
 
           if (raActivo) {
             await supabase
               .from('registros_acceso')
-              .update({ salida_at: new Date().toISOString(), tipo_evento: 'SALIDA_AUTO' })
-              .eq('id', raActivo.id);
+              .update({ salida_at: new Date().toISOString() })
+              .eq('id_registro', raActivo.id_registro);
           }
 
           // 8c. Insertar nuevo registro de acceso
@@ -437,17 +439,16 @@ export default function VehiculosTickets() {
             .from('registros_acceso')
             .insert({
               entrada_at: new Date().toISOString(),
-              vehiculo_id: vehiculoId,
-              tipo_evento: 'ENTRADA_VISITANTE',
+              id_vehiculo: vehiculoId,
               ticket_id: ticketId,
               Id_Plaza: plazaId,
               id_dispositivo_entrada: null
             })
-            .select('id')
+            .select('id_registro')
             .single();
 
           if (raErr) console.error('[RegistroAcceso] Error al insertar:', raErr.message);
-          else console.log('[RegistroAcceso] ✅ Acceso registrado id:', raNew.id);
+          else console.log('[RegistroAcceso] ✅ Acceso registrado id:', raNew.id_registro);
         }
 
         // 8d. Abrir barrera física (solo si el backend está corriendo)
@@ -483,7 +484,7 @@ export default function VehiculosTickets() {
       // 1. Cambiar estado del ticket a Usado
       const { error: tkErr, count: tkCount } = await supabase
         .from('tickets')
-        .update({ Estado: 'Usado' }, { count: 'exact' })
+        .update({ id_estado: 4 }, { count: 'exact' })
         .eq('Id_Ticket', ticket.Id_Ticket);
       if (tkErr) throw tkErr;
       if (tkCount === 0) throw new Error('No se pudo actualizar el ticket (0 filas). Agrega la política UPDATE en tickets en Supabase.');
@@ -494,7 +495,6 @@ export default function VehiculosTickets() {
       // 2. Liberar plaza
       parallelOps.push(
         supabase.from('plazas').update({
-          Estado_Actual: 'LIBRE',
           id_estado: 1
         }).eq('Id_Plaza', ticket.Id_Plaza_Asignada)
       );
@@ -505,15 +505,15 @@ export default function VehiculosTickets() {
           try {
             const { data: raActivo } = await supabase
               .from('registros_acceso')
-              .select('id')
+              .select('id_registro')
               .eq('ticket_id', ticket.Id_Ticket)
               .is('salida_at', null)
               .maybeSingle();
             if (raActivo) {
               await supabase
                 .from('registros_acceso')
-                .update({ salida_at: ahora, tipo_evento: 'SALIDA' })
-                .eq('id', raActivo.id);
+                .update({ salida_at: ahora })
+                .eq('id_registro', raActivo.id_registro);
             }
           } catch (raError) {
             console.warn('[RegistroAcceso] Error no crítico en salida:', raError.message);
@@ -586,9 +586,26 @@ export default function VehiculosTickets() {
       if (tkCount === 0) throw new Error('No se pudo anular el ticket (0 filas). Agrega la política UPDATE en tickets en Supabase.');
 
       await supabase.from('plazas').update({
-        Estado_Actual: 'LIBRE',
         id_estado: 1
       }).eq('Id_Plaza', ticket.Id_Plaza_Asignada);
+
+      if (ticket.id_vehiculo) {
+        const { data: raActivo } = await supabase
+          .from('registros_acceso')
+          .select('id_registro')
+          .eq('ticket_id', ticket.Id_Ticket)
+          .is('salida_at', null)
+          .maybeSingle();
+
+        if (raActivo) {
+          const { error: raErr } = await supabase
+            .from('registros_acceso')
+            .update({ salida_at: ahora })
+            .eq('id_registro', raActivo.id_registro);
+          if (raErr) console.error('[RegistroAcceso] Error al cerrar:', raErr.message);
+          else console.log('[RegistroAcceso] ✅ Salida registrada en id:', raActivo.id_registro);
+        }
+      }
 
       await registrarLog(
         'TICKET_ANULADO',
@@ -607,8 +624,8 @@ export default function VehiculosTickets() {
     const { data: ticketsActivos } = await supabase
       .from('tickets')
       .select('Id_Ticket')
-      .eq('Id_Vehiculo', vehiculo.id)
-      .eq('Estado', 'Activo');
+      .eq('id_vehiculo', vehiculo.id_vehiculo)
+      .eq('id_estado', 1);
 
     if (ticketsActivos && ticketsActivos.length > 0) {
       return Swal.fire(
@@ -630,18 +647,18 @@ export default function VehiculosTickets() {
 
     try {
       // 2. Eliminar primero registros de acceso históricos (FK dep)
-      const { error: raErr } = await supabase.from('registros_acceso').delete().eq('vehiculo_id', vehiculo.id);
+      const { error: raErr } = await supabase.from('registros_acceso').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
       if (raErr) console.warn('registros_acceso delete:', raErr.message);
 
       // 3. Eliminar tickets completados/cancelados (FK dep)
-      const { error: tkErr } = await supabase.from('tickets').delete().eq('Id_Vehiculo', vehiculo.id).neq('Estado', 'Activo');
+      const { error: tkErr } = await supabase.from('tickets').delete().eq('id_vehiculo', vehiculo.id_vehiculo).neq('id_estado', 1);
       if (tkErr) console.warn('tickets delete:', tkErr.message);
 
       // 4. Eliminar el vehículo y verificar que realmente se eliminó
       const { error, count } = await supabase
         .from('vehiculos')
         .delete({ count: 'exact' })
-        .eq('id', vehiculo.id);
+        .eq('id_vehiculo', vehiculo.id_vehiculo);
 
       if (error) throw error;
       if (count === 0) {
@@ -669,7 +686,7 @@ export default function VehiculosTickets() {
           { placa: editVehiculoForm.placa.toUpperCase(), Marca: editVehiculoForm.marca || null, modelo: editVehiculoForm.modelo || null, Color: editVehiculoForm.color || null },
           { count: 'exact' }
         )
-        .eq('id', editandoVehiculo.id);
+        .eq('id_vehiculo', editandoVehiculo.id_vehiculo);
 
       if (error) throw error;
       if (count === 0) {
@@ -694,11 +711,8 @@ export default function VehiculosTickets() {
     if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres (sin guiones).', 'warning');
     try {
       const { error } = await supabase.from('vehiculos').insert([{
-        persona_id: vehiculoPersonalForm.persona_id,
-        placa: vehiculoPersonalForm.placa.toUpperCase(),
-        Marca: vehiculoPersonalForm.marca || null,
-        modelo: vehiculoPersonalForm.modelo || null,
-        Color: vehiculoPersonalForm.color || null
+        id_persona: vehiculoPersonalForm.persona_id,
+        placa: vehiculoPersonalForm.placa.toUpperCase()
       }]);
       if (error) throw error;
       Swal.fire('Registrado', 'Vehículo vinculado correctamente.', 'success');
@@ -818,8 +832,8 @@ export default function VehiculosTickets() {
                   onChange={(e) => {
                     const val = e.target.value;
                     if (val) {
-                      const v = visitantesRegistrados.find(vis => vis.id === parseInt(val));
-                      if (v) setVisitanteForm(f => ({ ...f, id_visitante: v.id, nombre: v.personas?.nombre || '', apellido: v.personas?.apellido || '', telefono: v.personas?.telefono || '', sexo: v.personas?.sexo || 'M' }));
+                      const v = visitantesRegistrados.find(vis => vis.id_visitante === parseInt(val));
+                      if (v) setVisitanteForm(f => ({ ...f, id_visitante: v.id_visitante, nombre: v.personas?.nombre || '', apellido: v.personas?.apellido || '', telefono: v.personas?.telefono || '', sexo: v.personas?.sexo || 'M' }));
                     } else {
                       setVisitanteForm(f => ({ ...f, id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M' }));
                     }
@@ -827,7 +841,7 @@ export default function VehiculosTickets() {
                 >
                   <option value="">— Nuevo visitante —</option>
                   {visitantesRegistrados.map(v => (
-                    <option key={v.id} value={v.id}>{v.personas?.nombre} {v.personas?.apellido}{v.personas?.telefono ? ` — ${v.personas.telefono}` : ''}</option>
+                    <option key={v.id_visitante} value={v.id_visitante}>{v.personas?.nombre} {v.personas?.apellido}{v.personas?.telefono ? ` — ${v.personas.telefono}` : ''}</option>
                   ))}
                 </select>
               </div>
@@ -1045,13 +1059,14 @@ export default function VehiculosTickets() {
                       </td>
                       <td className="px-5 py-4">
                         {(() => {
+                          const estadoNombre = t.estado_ticket?.nombre_estado || t.Estado || '—';
                           const s = { Activo: { c: "bg-green-100 text-green-700 border border-green-200", l: "Activo" }, Vencido: { c: "bg-amber-100 text-amber-700 border border-amber-200", l: "Vencido" }, Anulado: { c: "bg-red-100 text-red-700 border border-red-200", l: "Anulado" }, Usado: { c: "bg-gray-100 text-gray-600 border border-gray-200", l: "Usado" } };
-                          const e = s[t.Estado] || { c: "bg-gray-100 text-gray-500", l: t.Estado };
+                          const e = s[estadoNombre] || { c: "bg-gray-100 text-gray-500", l: estadoNombre };
                           return <span className={"font-bold text-xs px-2 py-1 rounded-full " + e.c}>{e.l}</span>;
                         })()}
                       </td>
                       <td className="px-5 py-4 text-gray-500 text-xs">
-                        {[t.Marca_Vehiculo || t.vehiculos?.Marca, t.Modelo_Vehiculo || t.vehiculos?.modelo, t.Color_Vehiculo || t.vehiculos?.Color].filter(Boolean).join(' · ') || '—'}
+                        {[t._marca || t.vehiculos?.marcas_vehiculo?.nombre, t._modelo || t.vehiculos?.modelos_vehiculo?.nombre, t._color || t.vehiculos?.colores_vehiculo?.nombre].filter(Boolean).join(' · ') || '—'}
                       </td>
                       <td className="px-5 py-4">
                         <span className="font-bold text-green-700 bg-green-50 px-2 py-1 rounded-full text-xs border border-green-200">
@@ -1062,16 +1077,16 @@ export default function VehiculosTickets() {
                         {new Date(t.Fecha_Hora_Emision).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })}
                       </td>
                       <td className="px-5 py-4 text-xs font-bold text-amber-600">
-                        {t.Estado === 'Activo'
+                        {(t.estado_ticket?.nombre_estado || t.Estado) === 'Activo'
                           ? calcTiempo(t.Fecha_Hora_Emision, new Date().toISOString())
-                          : t.Fecha_Hora_Vencimiento && t.Estado === 'Vencido'
+                          : t.Fecha_Hora_Vencimiento && (t.estado_ticket?.nombre_estado || t.Estado) === 'Vencido'
                             ? calcTiempo(t.Fecha_Hora_Emision, t.Fecha_Hora_Vencimiento)
                             : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-5 py-4 text-xs">
                         {t.Fecha_Hora_Vencimiento ? (() => {
                           const msLeft = new Date(t.Fecha_Hora_Vencimiento) - Date.now();
-                          const activo = t.Estado === 'Activo';
+                          const activo = (t.estado_ticket?.nombre_estado || t.Estado) === 'Activo';
                           // Parpadea solo si está activo Y ya venció o está por vencer (<10 min)
                           const pulsar = activo && msLeft < 10 * 60000;
                           return (
@@ -1091,7 +1106,7 @@ export default function VehiculosTickets() {
                           >
                             <FaPrint size={15} />
                           </button>
-                          {t.Estado === 'Activo' && (<>
+                          {(t.estado_ticket?.nombre_estado || t.Estado) === 'Activo' && (<>
                             <button
                               onClick={() => handleCerrarTicket(t)}
                               title="Registrar salida"

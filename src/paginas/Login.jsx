@@ -101,7 +101,7 @@ export default function Login() {
                 .from('usuarios')
                 .insert([{
                     id: authData.user.id,
-                    persona_id: personaData.id,
+                    id_persona: personaData.id_persona,
                     rol_id: parseInt(rol_id)
                 }]);
 
@@ -111,7 +111,7 @@ export default function Login() {
             const { error: eError } = await supabase
                 .from('empleados')
                 .insert([{
-                    persona_id: personaData.id,
+                    id_persona: personaData.id_persona,
                     rol_id: parseInt(rol_id),
                     departamento_id: parseInt(departamento_id),
                     organizacion_id: parseInt(organizacion_id)

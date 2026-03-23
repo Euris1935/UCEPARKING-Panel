@@ -37,6 +37,8 @@ export default function Logs() {
                 .select(`
           *,
           personas ( nombre, apellido ),
+          tipo_evento ( nombre_tipo ),
+          origen_evento ( nombre ),
           dispositivos (
             ubicacion,
             tipos_dispositivos ( nombre_tipo )
@@ -54,13 +56,13 @@ export default function Logs() {
         }
     };
 
-    const tiposUnicos = ['TODOS', ...new Set(eventos.map(e => e.Tipo_Evento).filter(Boolean))];
+    const tiposUnicos = ['TODOS', ...new Set(eventos.map(e => e.tipo_evento?.nombre_tipo).filter(Boolean))];
 
     const filtered = eventos.filter(e => {
-        const matchTipo = filtroTipo === 'TODOS' || e.Tipo_Evento === filtroTipo;
+        const matchTipo = filtroTipo === 'TODOS' || e.tipo_evento?.nombre_tipo === filtroTipo;
         const matchSearch = searchTerm === '' ||
             e.Descripcion?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            e.Tipo_Evento?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            e.tipo_evento?.nombre_tipo?.toLowerCase().includes(searchTerm.toLowerCase()) ||
             `${e.personas?.nombre} ${e.personas?.apellido}`.toLowerCase().includes(searchTerm.toLowerCase());
         return matchTipo && matchSearch;
     });
@@ -133,7 +135,7 @@ export default function Logs() {
                                 <tr><td colSpan="6" className="text-center py-10 text-gray-400">No hay logs registrados aún.</td></tr>
                             ) : (
                                 filtered.map(ev => {
-                                    const config = TIPO_COLORES[ev.Tipo_Evento] || TIPO_DEFAULT;
+                                    const config = TIPO_COLORES[ev.tipo_evento?.nombre_tipo] || TIPO_DEFAULT;
                                     const Icon = config.icon;
                                     return (
                                         <tr key={ev.Id_Log} className="hover:bg-gray-50 transition-all">
@@ -143,7 +145,7 @@ export default function Logs() {
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${config.bg} ${config.text} ${config.border}`}>
                                                     <Icon size={10} />
-                                                    {ev.Tipo_Evento || 'N/A'}
+                                                    {ev.tipo_evento?.nombre_tipo || 'N/A'}
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 max-w-xs">
@@ -168,7 +170,7 @@ export default function Logs() {
                                             </td>
                                             <td className="px-6 py-4 text-xs text-gray-600">
                                                 <span className="block font-medium">{ev.personas ? `${ev.personas.nombre} ${ev.personas.apellido}` : 'Sistema'}</span>
-                                                {ev.origen_evento && <span className="text-gray-400 italic">{ev.origen_evento}</span>}
+                                                {ev.origen_evento?.nombre && <span className="text-gray-400 italic">{ev.origen_evento.nombre}</span>}
                                             </td>
                                         </tr>
                                     );

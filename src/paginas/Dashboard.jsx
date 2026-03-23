@@ -44,7 +44,7 @@ export default function Dashboard() {
       const { count: reservasTablaCount } = await supabase
         .from('RESERVA')
         .select('*', { count: 'exact', head: true })
-        .eq('Estado_Reserva', 'ACTIVA');
+        .eq('id_estado', 1);
 
       const getId = (name) => estados?.find(e => e.nombre_estado.trim().toUpperCase() === name.toUpperCase())?.id_estado;
 
@@ -92,7 +92,6 @@ export default function Dashboard() {
       if (!alertaYaEnviada.current) {
         alertaYaEnviada.current = true;
         supabase.from('notificaciones').insert([{
-          Tipo: 'Alerta',
           Contenido: `⚠️ Alerta de capacidad: el parqueo está al ${pct}% de ocupación (umbral configurado: ${umbral}%). Plazas libres: ${stats.libres}.`,
           Leida: false
         }]).then(({ error }) => { if (error) console.warn('Error alerta RF3:', error.message); });

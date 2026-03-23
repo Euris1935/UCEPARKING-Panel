@@ -62,7 +62,6 @@ export default function ZonasParqueo() {
           Numero_Plaza: codigo,
           Id_Zona: idZona,
           id_estado: idLibre,
-          Estado_Actual: 'LIBRE',
           Amplitud: 2.50,
           Longitud: 5.00
         });
@@ -278,8 +277,7 @@ export default function ZonasParqueo() {
 
         const { error } = await supabase.from('plazas').insert([{
           ...payload,
-          id_estado: idLibre,
-          Estado_Actual: 'LIBRE'
+          id_estado: idLibre
         }]);
         if (error) throw error;
 

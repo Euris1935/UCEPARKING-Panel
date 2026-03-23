@@ -51,12 +51,12 @@ export default function Usuarios() {
       if (!usrs || !pers) return;
 
       const listaCompleta = usrs.map(u => {
-        const persona = pers.find(p => p.id === u.persona_id);
+        const persona = pers.find(p => p.id_persona === u.id_persona);
         const rol = rolesUso.find(r => r.Id_Rol === u.rol_id);
 
         return {
           id_usuario: u.id,
-          id_persona: u.persona_id,
+          id_persona: u.id_persona,
           rol_id: u.rol_id,
           nombre: persona?.nombre || 'Sin Nombre',
           apellido: persona?.apellido || '',
@@ -120,7 +120,7 @@ export default function Usuarios() {
 
         await supabase.from('personas')
           .update({ nombre, apellido, telefono, email, sexo, fecha_nacimiento, direccion })
-          .eq('id', editingPersonaId);
+          .eq('id_persona', editingPersonaId);
 
         await supabase.from('usuarios').update({ rol_id }).eq('id', editingUserId);
         Swal.fire('Éxito', 'Usuario actualizado', 'success');
@@ -151,7 +151,7 @@ export default function Usuarios() {
         });
 
         if (authError) {
-          await supabase.from('personas').delete().eq('id', personaData.id);
+          await supabase.from('personas').delete().eq('id_persona', personaData.id_persona);
           throw authError;
         }
 
@@ -161,7 +161,7 @@ export default function Usuarios() {
             .from('usuarios')
             .insert([{
               id: authData.user.id,
-              persona_id: personaData.id,
+              id_persona: personaData.id_persona,
               rol_id
             }]);
 

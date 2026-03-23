@@ -37,7 +37,7 @@ export default function Ocupacion() {
             const estadoObj = (estData || []).find(e => e.id_estado === p.id_estado);
             return {
                 ...p,
-                Nombre_Estado_Rel: estadoObj ? estadoObj.nombre_estado.toUpperCase() : (p.Estado_Actual?.toUpperCase() || 'LIBRE')
+                Nombre_Estado_Rel: estadoObj ? estadoObj.nombre_estado.toUpperCase() : 'LIBRE'
             };
         });
         setPlazas(plazasCompletas);
@@ -53,7 +53,7 @@ export default function Ocupacion() {
     
     setPlazas(prev => prev.map(p => p.Id_Plaza === idPlaza ? { ...p, Nombre_Estado_Rel: nombreNuevoEstado } : p));
 
-    const { error } = await supabase.from('plazas').update({ id_estado: idNuevoEstado, Estado_Actual: nombreNuevoEstado }).eq('Id_Plaza', idPlaza);
+    const { error } = await supabase.from('plazas').update({ id_estado: idNuevoEstado }).eq('Id_Plaza', idPlaza);
     if (error) { Swal.fire('Error', error.message, 'error'); loadData(); }
   };
 
@@ -198,10 +198,10 @@ export default function Ocupacion() {
       if (user) {
         const { data } = await supabase
           .from('usuarios')
-          .select('persona_id')
+          .select('id_persona')
           .eq('id', user.id)
           .single();
-        if (data) setCurrentPersonaId(data.persona_id);
+        if (data) setCurrentPersonaId(data.id_persona);
       }
     };
     getCurrentPersona();
@@ -227,7 +227,7 @@ export default function Ocupacion() {
         const estadoObj = (estData || []).find(e => e.id_estado === p.id_estado);
         return {
           ...p,
-          Nombre_Estado_Rel: estadoObj ? estadoObj.nombre_estado.toUpperCase() : (p.Estado_Actual?.toUpperCase() || 'LIBRE')
+          Nombre_Estado_Rel: estadoObj ? estadoObj.nombre_estado.toUpperCase() : 'LIBRE'
         };
       });
       setPlazas(plazasCompletas);
@@ -235,7 +235,7 @@ export default function Ocupacion() {
       // #17: Obtener info de quién ocupa cada plaza (accesos activos)
       const { data: accesosActivos } = await supabase
         .from('registros_acceso')
-        .select('Id_Plaza, vehiculos(placa, Marca, personas(nombre, apellido))')
+        .select('Id_Plaza, vehiculos(placa, marcas_vehiculo(nombre), personas(nombre, apellido))')
         .is('salida_at', null);
 
       const mapaOcupacion = {};
@@ -243,7 +243,7 @@ export default function Ocupacion() {
         if (acc.Id_Plaza && acc.vehiculos) {
           mapaOcupacion[acc.Id_Plaza] = {
             placa: acc.vehiculos.placa,
-            marca: acc.vehiculos.Marca,
+            marca: acc.vehiculos.marcas_vehiculo?.nombre,
             nombre: `${acc.vehiculos.personas?.nombre || ''} ${acc.vehiculos.personas?.apellido || ''}`.trim()
           };
         }
@@ -260,13 +260,15 @@ export default function Ocupacion() {
   const registrarLog = async (tipo, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return; // Necesita sesión activa
     try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Control de Ocupación').maybeSingle();
       await supabase.from('eventos').insert([{
         Fecha_Hora: new Date().toISOString(),
-        Tipo_Evento: tipo,
         Descripcion: descripcion,
         Id_Plaza: idPlaza,
         id_persona: currentPersonaId,
-        origen_evento: 'Panel Web - Control de Ocupación'
+        id_tipo_evento: te?.id_tipo || null,
+        id_origen_evento: oe?.id_origen || null
       }]);
     } catch (err) {
       console.warn('Error registrando log:', err.message);
@@ -290,8 +292,7 @@ export default function Ocupacion() {
     const { error } = await supabase
       .from('plazas')
       .update({
-        id_estado: idNuevoEstado,
-        Estado_Actual: nombreNuevoEstado.toUpperCase()
+        id_estado: idNuevoEstado
       })
       .eq('Id_Plaza', idPlaza);
 

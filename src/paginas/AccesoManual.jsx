@@ -36,8 +36,8 @@ export default function AccesoManual() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data } = await supabase.from('usuarios').select('persona_id').eq('id', user.id).single();
-        if (data) setCurrentPersonaId(data.persona_id);
+        const { data } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (data) setCurrentPersonaId(data.id_persona);
       }
     };
     init();
@@ -57,13 +57,13 @@ export default function AccesoManual() {
       const { data: plazas } = await supabase.from('plazas').select('*').order('Numero_Plaza');
       if (plazas) {
         setTodasPlazas(plazas);
-        setPlazasLibres(plazas.filter(p => p.Estado_Actual?.toLowerCase() === 'libre'));
+        setPlazasLibres(plazas.filter(p => p.id_estado === 1));
       }
 
       // Vehículos registrados (con dueños)
       const { data: vhs, error: vErr } = await supabase
         .from('vehiculos')
-        .select('*, personas(nombre, apellido)')
+        .select('*, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido, telefono)')
         .order('Fecha_Registro', { ascending: false });
       if (vErr) console.error('Error cargando vehiculos:', vErr);
 
@@ -71,9 +71,8 @@ export default function AccesoManual() {
       // Eliminamos plazas(Numero_Plaza) del select porque no hay Foreign Key en la BD para eso
       const { data: activos, error: activosErr } = await supabase
         .from('registros_acceso')
-        .select('*, vehiculos(placa, Marca, modelo, Color, persona_id, personas(nombre, apellido, telefono))')
+        .select('*, vehiculos(placa, id_persona, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido, telefono))')
         .is('salida_at', null)
-        .in('tipo_evento', ['ENTRADA_MANUAL', 'ENTRADA_AUTO'])
         .order('entrada_at', { ascending: false });
 
       if (activosErr) console.error('Error cargando accesos activos:', activosErr);
@@ -87,13 +86,15 @@ export default function AccesoManual() {
   const registrarLog = async (tipo, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return;
     try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Acceso Manual').maybeSingle();
       await supabase.from('eventos').insert([{
         Fecha_Hora: new Date().toISOString(),
-        Tipo_Evento: tipo,
         Descripcion: descripcion,
         Id_Plaza: idPlaza,
         id_persona: currentPersonaId,
-        origen_evento: 'Panel Web - Acceso Manual'
+        id_tipo_evento: te?.id_tipo || null,
+        id_origen_evento: oe?.id_origen || null
       }]);
     } catch (e) { console.warn('Log error:', e.message); }
   };
@@ -105,10 +106,10 @@ export default function AccesoManual() {
 
     setLoading(true);
     try {
-      const vehiculoSelect = vehiculos.find(v => v.id === parseInt(entradaForm.vehiculo_id));
+      const vehiculoSelect = vehiculos.find(v => v.id_vehiculo === parseInt(entradaForm.vehiculo_id));
 
       // Validación: Verificar si el vehículo ya tiene un acceso activo
-      const vehiculoYaEstaAdentro = accesosActivos.find(a => a.vehiculo_id === vehiculoSelect.id);
+      const vehiculoYaEstaAdentro = accesosActivos.find(a => a.id_vehiculo === vehiculoSelect.id_vehiculo);
       if (vehiculoYaEstaAdentro) {
         setLoading(false);
         return Swal.fire('Acceso Denegado', 'Este vehículo ya tiene un acceso activo registrado y no ha salido del parqueo.', 'error');
@@ -121,8 +122,7 @@ export default function AccesoManual() {
         .from('registros_acceso')
         .insert({
           entrada_at: new Date().toISOString(),
-          vehiculo_id: vehiculoSelect.id,
-          tipo_evento: 'ENTRADA_MANUAL',
+          id_vehiculo: vehiculoSelect.id_vehiculo,
           ticket_id: null,
           Id_Plaza: plazaSelect.Id_Plaza,
           id_dispositivo_entrada: null
@@ -131,7 +131,6 @@ export default function AccesoManual() {
 
       // 2. Actualizar Plaza
       await supabase.from('plazas').update({
-        Estado_Actual: 'OCUPADA',
         id_estado: 2
       }).eq('Id_Plaza', plazaSelect.Id_Plaza);
 
@@ -189,14 +188,13 @@ export default function AccesoManual() {
       // 1. Marcar salida en registros_acceso
       const { error: raErr } = await supabase
         .from('registros_acceso')
-        .update({ salida_at: ahora, tipo_evento: 'SALIDA_MANUAL' })
-        .eq('id', acceso.id);
+        .update({ salida_at: ahora })
+        .eq('id_registro', acceso.id_registro);
       if (raErr) throw raErr;
 
       // 2. Liberar Plaza si existe
       if (acceso.Id_Plaza) {
         await supabase.from('plazas').update({
-          Estado_Actual: 'LIBRE',
           id_estado: 1
         }).eq('Id_Plaza', acceso.Id_Plaza);
       }
@@ -338,17 +336,17 @@ export default function AccesoManual() {
                   ) : (
                     vehiculosFiltrados.map(v => (
                       <li
-                        key={v.id}
+                        key={v.id_vehiculo}
                         className="p-3 hover:bg-indigo-50 border-b last:border-0 cursor-pointer transition-colors"
                         onMouseDown={() => {
-                          setEntradaForm({ ...entradaForm, vehiculo_id: v.id });
+                          setEntradaForm({ ...entradaForm, vehiculo_id: v.id_vehiculo });
                           setBusquedaVehiculo(`${v.placa} — ${v.personas?.nombre} ${v.personas?.apellido}`);
                           setMostrarDropdown(false);
                         }}
                       >
                         <div className="flex justify-between items-center">
                           <span className="font-bold text-indigo-700 text-base font-mono">{v.placa}</span>
-                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">{v.Marca} {v.modelo}</span>
+                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">{v.marcas_vehiculo?.nombre} {v.modelos_vehiculo?.nombre}</span>
                         </div>
                         <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
                           <FaUserPlus className="text-[10px]" /> {v.personas?.nombre} {v.personas?.apellido}
@@ -447,11 +445,11 @@ export default function AccesoManual() {
                     return <tr><td colSpan="6" className="text-center py-8 text-gray-400">No hay accesos manuales activos</td></tr>;
                   }
                   return filtrados.map((acc) => (
-                    <tr key={acc.id} className="hover:bg-gray-50 transition-colors">
+                    <tr key={acc.id_registro} className="hover:bg-gray-50 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-indigo-700 text-base">{acc.vehiculos?.placa}</td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-gray-800">{acc.vehiculos?.personas?.nombre} {acc.vehiculos?.personas?.apellido}</div>
-                        <div className="text-xs text-gray-500">{acc.vehiculos?.Marca} {acc.vehiculos?.modelo}</div>
+                        <div className="text-xs text-gray-500">{acc.vehiculos?.marcas_vehiculo?.nombre} {acc.vehiculos?.modelos_vehiculo?.nombre}</div>
                       </td>
                       <td className="py-3 px-4 text-gray-600">
                         {acc.vehiculos?.personas?.telefono || <span className="text-gray-300 italic">—</span>}

@@ -73,7 +73,7 @@ export default function Empleados() {
 
 
             const listaCompleta = empData.map(emp => {
-                const persona = persData.find(p => p.id === emp.persona_id);
+                const persona = persData.find(p => p.id_persona === emp.id_persona);
 
 
                 const rol = rolesList?.find(r => r.Id_Rol === emp.rol_id);
@@ -83,7 +83,7 @@ export default function Empleados() {
                 return {
 
                     Id_Empleado: emp.Id_Empleado,
-                    persona_id: emp.persona_id,
+                    persona_id: emp.id_persona,
 
                     // Datos Persona
                     nombre: persona?.nombre || 'Sin Nombre',
@@ -115,7 +115,7 @@ export default function Empleados() {
 
     const handleEdit = (empleado) => {
         setEditingEmpleadoId(empleado.Id_Empleado);
-        setEditingPersonaId(empleado.persona_id);
+        setEditingPersonaId(empleado.id_persona);
 
         setFormData({
             nombre: empleado.nombre,
@@ -209,7 +209,7 @@ export default function Empleados() {
                 const { error: eError } = await supabase
                     .from('empleados')
                     .insert([{
-                        persona_id: personaData.id,
+                        id_persona: personaData.id_persona,
                         rol_id,
                         departamento_id,
                         organizacion_id
@@ -250,7 +250,7 @@ export default function Empleados() {
                 if (eError) throw eError;
 
                 //
-                const { error: pError } = await supabase.from('personas').delete().eq('id', empleado.persona_id);
+                const { error: pError } = await supabase.from('personas').delete().eq('id_persona', empleado.id_persona);
 
                 if (pError) {
                     Swal.fire('Aviso', 'Empleado eliminado, pero la persona tiene otros registros (no se borró la persona).', 'info');
