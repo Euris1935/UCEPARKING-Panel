@@ -8,6 +8,7 @@ import {
   FaTicketAlt, FaUserPlus, FaPrint, FaSignOutAlt,
   FaClipboardCheck, FaSyncAlt, FaBan
 } from 'react-icons/fa';
+import { useRbac } from '../contexts/RbacContext';
 
 function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
   const handlePrint = () => window.print();
@@ -75,8 +76,12 @@ const calcTiempo = (inicio, fin) => {
 };
 
 export default function Tickets() {
+  const { tienePermiso } = useRbac();
+  const canCreate = tienePermiso('Módulo Parqueo', 'crear');
+  const canEdit = tienePermiso('Módulo Parqueo', 'editar');
+
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('entrada');
+  const [activeTab, setActiveTab] = useState(canCreate ? 'entrada' : 'activos');
   const [tickets, setTickets] = useState([]);
   const [ticketsActivos, setTicketsActivos] = useState(0);
   const [visitantesRegistrados, setVisitantesRegistrados] = useState([]);
@@ -257,11 +262,11 @@ export default function Tickets() {
         <p className="text-gray-500 mt-1">Emisión y control de tickets de visitantes.</p>
       </header>
       <div className="flex gap-2 border-b border-gray-200 mb-8">
-        {tabBtn('entrada', 'Nueva Entrada', <FaTicketAlt />)}
+        {canCreate && tabBtn('entrada', 'Nueva Entrada', <FaTicketAlt />)}
         {tabBtn('activos', 'Tickets Activos', <FaClipboardCheck />)}
       </div>
 
-      {activeTab === 'entrada' && (
+      {canCreate && activeTab === 'entrada' && (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
           <section className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
             <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-gray-800"><FaUserPlus className="text-green-600" /> Emisión de Ticket</h3>
@@ -362,7 +367,7 @@ export default function Tickets() {
                           <td className="px-5 py-4 text-center">
                             <div className="flex gap-1 justify-center">
                               <button onClick={() => setTicketParaImprimir({ ...t, _esReimpresion: true })} title="Reimprimir" className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition"><FaPrint size={15} /></button>
-                              {estadoNombre === 'Activo' && (<>
+                              {estadoNombre === 'Activo' && canEdit && (<>
                                 <button onClick={() => handleCerrarTicket(t)} className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-bold text-xs transition shadow"><FaSignOutAlt size={12} /> Salida</button>
                                 <button onClick={() => handleAnularTicket(t)} className="flex items-center gap-1 bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1.5 rounded-lg font-bold text-xs transition"><FaBan size={12} /> Anular</button>
                               </>)}

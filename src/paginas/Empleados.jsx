@@ -6,8 +6,14 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaSearch, FaUserTie, FaTrash, FaPlus, FaArrowLeft, FaMapMarkerAlt, FaEnvelope, FaBuilding, FaPhone, FaEdit } from 'react-icons/fa';
+import { useRbac } from '../contexts/RbacContext';
 
 export default function Empleados() {
+    const { tienePermiso } = useRbac();
+    const canCreate = tienePermiso('Módulo Personal', 'crear');
+    const canEdit = tienePermiso('Módulo Personal', 'editar');
+    const canDelete = tienePermiso('Módulo Personal', 'eliminar');
+
     const navigate = useNavigate();
     const [empleados, setEmpleados] = useState([]);
 
@@ -280,9 +286,11 @@ export default function Empleados() {
                     <button onClick={() => navigate('/usuarios')} className="flex items-center gap-2 text-gray-600 bg-gray-100 hover:bg-gray-200 py-2 px-4 rounded-lg font-medium transition">
                         <FaArrowLeft /> Volver a Usuarios
                     </button>
-                    <button onClick={() => setShowModal(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg shadow transition">
-                        <FaPlus /> Nuevo Empleado
-                    </button>
+                    {canCreate && (
+                        <button onClick={() => setShowModal(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg shadow transition">
+                            <FaPlus /> Nuevo Empleado
+                        </button>
+                    )}
                 </div>
             </header>
 
@@ -444,8 +452,8 @@ export default function Empleados() {
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                        <button onClick={() => handleEdit(e)} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-2 rounded-full transition" title="Editar"><FaEdit /></button>
-                                        <button onClick={() => handleDelete(e)} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-full transition" title="Eliminar"><FaTrash /></button>
+                                        {canEdit && <button onClick={() => handleEdit(e)} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-2 rounded-full transition" title="Editar"><FaEdit /></button>}
+                                        {canDelete && <button onClick={() => handleDelete(e)} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-full transition" title="Eliminar"><FaTrash /></button>}
                                     </td>
                                 </tr>
                             )))}

@@ -5,8 +5,14 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaSearch, FaEdit, FaTrash, FaParking, FaMapMarkerAlt, FaPlus, FaSave, FaArrowsAltH, FaArrowsAltV } from 'react-icons/fa';
+import { useRbac } from '../contexts/RbacContext';
 
 export default function ZonasParqueo() {
+  const { tienePermiso } = useRbac();
+  const canCreate = tienePermiso('Zonas de Parqueo', 'crear');
+  const canEdit = tienePermiso('Zonas de Parqueo', 'editar');
+  const canDelete = tienePermiso('Zonas de Parqueo', 'eliminar');
+
   const [zonas, setZonas] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingZone, setEditingZone] = useState(null);
@@ -322,12 +328,14 @@ export default function ZonasParqueo() {
           <h2 className="text-3xl font-bold text-gray-900">Configuración de Parqueo</h2>
           <p className="text-gray-500">Gestión estructural de zonas y plazas.</p>
         </div>
+        {canCreate && (
         <button
           onClick={() => openPlazaModal(null)}
           className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-bold shadow-lg flex items-center gap-2 transition"
         >
           <FaPlus /> NUEVA PLAZA
         </button>
+        )}
       </header>
 
       <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
@@ -355,8 +363,8 @@ export default function ZonasParqueo() {
                     <td className="px-6 py-3 font-medium text-gray-900"><FaParking className='inline mr-2 text-primary' /> {z.Nombre_Zona}</td>
                     <td className="px-6 py-3 text-gray-500">{z.Capacidad_Total}</td>
                     <td className="px-6 py-3 flex gap-2 justify-center">
-                      <button onClick={() => handleEditZone(z)} className="text-blue-500 hover:bg-blue-50 p-2 rounded"><FaEdit /></button>
-                      <button onClick={() => handleDeleteZone(z.Id_Zona)} className="text-red-500 hover:bg-red-50 p-2 rounded"><FaTrash /></button>
+                      {canEdit && <button onClick={() => handleEditZone(z)} className="text-blue-500 hover:bg-blue-50 p-2 rounded"><FaEdit /></button>}
+                      {canDelete && <button onClick={() => handleDeleteZone(z.Id_Zona)} className="text-red-500 hover:bg-red-50 p-2 rounded"><FaTrash /></button>}
                     </td>
                   </tr>
                 ))}
@@ -365,6 +373,7 @@ export default function ZonasParqueo() {
           </div>
         </section>
 
+        {(canCreate || editingZone) && (
         <section className="bg-gray-50 p-6 rounded-lg border border-gray-200 h-fit">
           <h3 className="text-lg font-bold text-gray-900 mb-4">{editingZone ? "Editar Zona" : "Crear Zona"}</h3>
           <form className="space-y-4" onSubmit={handleSubmitZone}>
@@ -378,6 +387,7 @@ export default function ZonasParqueo() {
             </div>
           </form>
         </section>
+        )}
       </div>
 
       <div className="space-y-6">
@@ -401,8 +411,8 @@ export default function ZonasParqueo() {
                       <span className="text-[8px] text-gray-300 mt-0.5">{new Date(plaza.created_at).toLocaleDateString('es-DO')}</span>
                     )}
                     <div className="absolute inset-0 bg-white/90 hidden group-hover:flex items-center justify-center gap-2 rounded transition-all">
-                      <button onClick={() => openPlazaModal(plaza)} className="text-blue-600 bg-blue-100 p-2 rounded-full hover:bg-blue-200" title="Editar"><FaEdit /></button>
-                      <button onClick={() => handleDeletePlaza(plaza.Id_Plaza)} className="text-red-600 bg-red-100 p-2 rounded-full hover:bg-red-200" title="Borrar"><FaTrash /></button>
+                      {canEdit && <button onClick={() => openPlazaModal(plaza)} className="text-blue-600 bg-blue-100 p-2 rounded-full hover:bg-blue-200" title="Editar"><FaEdit /></button>}
+                      {canDelete && <button onClick={() => handleDeletePlaza(plaza.Id_Plaza)} className="text-red-600 bg-red-100 p-2 rounded-full hover:bg-red-200" title="Borrar"><FaTrash /></button>}
                     </div>
                   </div>
                 ))}

@@ -3,6 +3,7 @@
 import { Link, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useEffect, useState } from 'react';
+import { useRbac } from '../contexts/RbacContext';
 import {
   FaTachometerAlt, FaCar, FaClipboardList, FaUsers,
   FaMicrochip, FaChartBar, FaWrench, FaCog, FaSignOutAlt,
@@ -10,24 +11,25 @@ import {
 } from 'react-icons/fa';
 
 const navItems = [
-  { to: '/', icon: FaTachometerAlt, label: 'Dashboard' },
-  { to: '/tickets', icon: FaTicketAlt, label: 'Tickets de Acceso' },
-  { to: '/vehiculos', icon: FaCarSide, label: 'Flota de Vehículos' },
-  { to: '/acceso-manual', icon: FaHandPaper, label: 'Acceso Manual' },
-  { to: '/ocupacion', icon: FaCar, label: 'Ocupación' },
-  { to: '/zonas-parqueo', icon: FaParking, label: 'Zonas de Parqueo' },
-  { to: '/reservaciones', icon: FaClipboardList, label: 'Reservaciones' },
-  { to: '/asignaciones', icon: FaSuitcase, label: 'Asignaciones' },
-  { to: '/usuarios', icon: FaUsers, label: 'Usuarios' },
-  { to: '/sensores', icon: FaMicrochip, label: 'Dispositivos' },
-  { to: '/reportes', icon: FaChartBar, label: 'Reportes' },
-  { to: '/mantenimiento', icon: FaWrench, label: 'Mantenimiento' },
-  { to: '/logs', icon: FaHistory, label: 'Logs de Eventos' },
+  { to: '/', icon: FaTachometerAlt, label: 'Dashboard', moduloReq: null },
+  { to: '/tickets', icon: FaTicketAlt, label: 'Tickets de Acceso', moduloReq: 'Módulo Parqueo' },
+  { to: '/vehiculos', icon: FaCarSide, label: 'Flota de Vehículos', moduloReq: 'Módulo Vehículos' },
+  { to: '/acceso-manual', icon: FaHandPaper, label: 'Acceso Manual', moduloReq: 'Acceso Manual' },
+  { to: '/ocupacion', icon: FaCar, label: 'Ocupación', moduloReq: 'Ocupación' },
+  { to: '/zonas-parqueo', icon: FaParking, label: 'Zonas de Parqueo', moduloReq: 'Zonas de Parqueo' },
+  { to: '/reservaciones', icon: FaClipboardList, label: 'Reservaciones', moduloReq: 'Reservas' },
+  { to: '/asignaciones', icon: FaSuitcase, label: 'Asignaciones', moduloReq: 'Asignaciones' },
+  { to: '/usuarios', icon: FaUsers, label: 'Usuarios', moduloReq: 'Módulo Usuarios' },
+  { to: '/sensores', icon: FaMicrochip, label: 'Dispositivos', moduloReq: 'Dispositivos' },
+  { to: '/reportes', icon: FaChartBar, label: 'Reportes', moduloReq: 'Reportes' },
+  { to: '/mantenimiento', icon: FaWrench, label: 'Mantenimiento', moduloReq: 'Mantenimiento' },
+  { to: '/logs', icon: FaHistory, label: 'Logs de Eventos', moduloReq: 'Logs' },
 ];
 
 export default function BarraLateral() {
   const location = useLocation();
   const [noLeidas, setNoLeidas] = useState(0);
+  const { modulos, esAdmin } = useRbac();
 
   useEffect(() => {
     const fetchNoLeidas = async () => {
@@ -69,11 +71,19 @@ export default function BarraLateral() {
 
 
       <nav className="flex-grow space-y-1 overflow-y-auto custom-scrollbar">
-        {navItems.map((item) => (
-          <Link key={item.to} to={item.to} className={getLinkClasses(item.to)}>
-            <item.icon className="text-xl" />
-            <span>{item.label}</span>
-          </Link>
+        {navItems
+          .filter(item => {
+            if (!item.moduloReq || esAdmin) return true;
+            return modulos.some(m => {
+              const nombre = m.nombre;
+              return nombre && nombre.toLowerCase() === item.moduloReq.toLowerCase();
+            });
+          })
+          .map((item) => (
+            <Link key={item.to} to={item.to} className={getLinkClasses(item.to)}>
+              <item.icon className="text-xl" />
+              <span>{item.label}</span>
+            </Link>
         ))}
       </nav>
 

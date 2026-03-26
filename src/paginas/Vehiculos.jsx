@@ -4,8 +4,14 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaCar, FaSave, FaTrash, FaEdit, FaSyncAlt } from 'react-icons/fa';
+import { useRbac } from '../contexts/RbacContext';
 
 export default function Vehiculos() {
+  const { tienePermiso } = useRbac();
+  const canCreate = tienePermiso('Módulo Vehículos', 'crear');
+  const canEdit = tienePermiso('Módulo Vehículos', 'editar');
+  const canDelete = tienePermiso('Módulo Vehículos', 'eliminar');
+
   const [loading, setLoading] = useState(false);
   const [vehiculos, setVehiculos] = useState([]);
   const [personasSistema, setPersonasSistema] = useState([]);
@@ -123,6 +129,7 @@ export default function Vehiculos() {
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
         {/* Formulario */}
+        {canCreate && (
         <section className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
           <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-gray-800">
             <FaCar className="text-purple-600" /> Vincular Vehículo Personal
@@ -172,9 +179,10 @@ export default function Vehiculos() {
             </button>
           </form>
         </section>
+        )}
 
         {/* Tabla flota */}
-        <section className="lg:col-span-3 bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+        <section className={`${canCreate ? 'lg:col-span-3' : 'lg:col-span-5'} bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden`}>
           <div className="flex items-center justify-between p-5 border-b">
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
               <FaCar className="text-purple-600" /> Flota Registrada
@@ -204,8 +212,8 @@ export default function Vehiculos() {
                       <td className="px-5 py-4 text-xs text-gray-400">{new Date(v.Fecha_Registro).toLocaleDateString('es-DO')}</td>
                       <td className="px-5 py-4 text-center">
                         <div className="flex gap-1 justify-center">
-                          <button onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, id_marca: v.id_marca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); }} className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition" title="Editar"><FaEdit size={14} /></button>
-                          <button onClick={() => handleEliminarVehiculo(v)} className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition" title="Eliminar"><FaTrash size={14} /></button>
+                          {canEdit && <button onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, id_marca: v.id_marca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); }} className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition" title="Editar"><FaEdit size={14} /></button>}
+                          {canDelete && <button onClick={() => handleEliminarVehiculo(v)} className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition" title="Eliminar"><FaTrash size={14} /></button>}
                         </div>
                       </td>
                     </tr>

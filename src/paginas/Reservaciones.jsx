@@ -8,8 +8,14 @@ import {
   FaSearch, FaEdit, FaCheckCircle, FaTimesCircle, 
   FaPlus, FaCalendarAlt, FaTrash, FaLock 
 } from 'react-icons/fa';
+import { useRbac } from '../contexts/RbacContext';
 
 export default function Reservaciones() {
+  const { tienePermiso } = useRbac();
+  const canCreate = tienePermiso('Reservas', 'crear');
+  const canEdit = tienePermiso('Reservas', 'editar');
+  const canDelete = tienePermiso('Reservas', 'eliminar');
+
   const [reservas, setReservas] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -187,9 +193,11 @@ export default function Reservaciones() {
             <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Reservaciones</h2>
             <p className="text-gray-500 font-medium">Gestión de tiempos y plazas reservadas.</p>
         </div>
+        {canCreate && (
         <button onClick={() => { resetForm(); setShowModal(true); }} className="bg-primary hover:bg-blue-700 text-white py-2.5 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2">
             <FaPlus /> Nueva Reserva
         </button>
+        )}
       </header>
 
       {showModal && (
@@ -251,14 +259,14 @@ export default function Reservaciones() {
                     <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
                       {isActive ? (
                         <>
-                          <button onClick={() => handleMarkCompleted(r.Id_Reserva, r.Id_Plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>
-                          <button onClick={() => handleCancel(r.Id_Reserva, r.Id_Plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>
-                          <button onClick={() => handleEdit(r)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>
+                          {canEdit && <button onClick={() => handleMarkCompleted(r.Id_Reserva, r.Id_Plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>}
+                          {canEdit && <button onClick={() => handleCancel(r.Id_Reserva, r.Id_Plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>}
+                          {canEdit && <button onClick={() => handleEdit(r)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>}
                         </>
                       ) : (
                         <div className="text-gray-300 italic text-xs flex items-center gap-1"><FaLock size={12} /> Cerrada</div>
                       )}
-                      <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza, nombreEstado)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>
+                      {canDelete && <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza, nombreEstado)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>}
                     </td>
                   </tr>
                 );

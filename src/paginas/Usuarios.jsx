@@ -6,9 +6,17 @@ import { supabase } from '../supabaseClient';
 import Swal from 'sweetalert2';
 import Layout from '../componentes/Layout';
 import { FaSearch, FaEdit, FaTrash, FaUserTie } from 'react-icons/fa';
+import RolesPermisosManager from '../componentes/RolesPermisosManager';
+import { useRbac } from '../contexts/RbacContext';
 
 export default function Usuarios() {
+  const { tienePermiso } = useRbac();
+  const canCreate = tienePermiso('Módulo Usuarios', 'crear');
+  const canEdit = tienePermiso('Módulo Usuarios', 'editar');
+  const canDelete = tienePermiso('Módulo Usuarios', 'eliminar');
+
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState('usuarios'); // 'usuarios' | 'roles'
   const [usuarios, setUsuarios] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -70,8 +78,9 @@ export default function Usuarios() {
       });
 
 
+      // Filtramos visitantes, ya que esos se manejan en Vehículos/Tickets
       const usuariosFiltrados = listaCompleta.filter(u =>
-        u.nombre_rol.toLowerCase() === 'usuario regular'
+        u.nombre_rol.toLowerCase() !== 'visitante'
       );
 
       setUsuarios(usuariosFiltrados);
@@ -210,16 +219,35 @@ export default function Usuarios() {
 
   return (
     <Layout>
-      <header className="mb-8 flex justify-between items-center">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-900">Gestión de Usuarios</h2>
-          <p className="text-sm text-gray-500 mt-1">Usuarios del sistema (administradores, operadores, etc). Los visitantes se gestionan en Vehículos y Tickets.</p>
+      <header className="mb-4 flex flex-col items-start gap-4">
+        <div className="flex justify-between items-center w-full">
+          <div>
+            <h2 className="text-3xl font-bold text-gray-900">Gestión de Usuarios</h2>
+            <p className="text-sm text-gray-500 mt-1">Administra accesos, personas y define roles del sistema.</p>
+          </div>
+          <button onClick={() => navigate('/empleados')} className="flex items-center gap-2 bg-purple-100 text-purple-700 hover:bg-purple-200 py-3 px-6 rounded-lg font-semibold transition">
+            <FaUserTie /> Gestionar Empleados
+          </button>
         </div>
-        <button onClick={() => navigate('/empleados')} className="flex items-center gap-2 bg-purple-100 text-purple-700 hover:bg-purple-200 py-3 px-6 rounded-lg font-semibold transition">
-          <FaUserTie /> Gestionar Empleados
-        </button>
+        
+        {/* Pestañas Navigation */}
+        <div className="flex border-b w-full mt-4">
+          <button 
+            className={`px-6 py-3 font-semibold text-sm transition-colors border-b-2 ${activeTab === 'usuarios' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            onClick={() => setActiveTab('usuarios')}
+          >
+            Cuentas de Usuario
+          </button>
+          <button 
+            className={`px-6 py-3 font-semibold text-sm transition-colors border-b-2 ${activeTab === 'roles' ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            onClick={() => setActiveTab('roles')}
+          >
+            Roles y Permisos
+          </button>
+        </div>
       </header>
 
+      {activeTab === 'usuarios' && (
       <div className="bg-white p-8 rounded-xl shadow-lg border border-gray-100 grid grid-cols-1 lg:grid-cols-3 gap-8">
         <section className="lg:col-span-2">
           <div className="relative mb-6">
@@ -239,8 +267,8 @@ export default function Usuarios() {
                       <td className="px-6 py-4 text-sm text-gray-500">{u.telefono}</td>
                       <td className="px-6 py-4 text-sm"><RoleBadge roleName={u.nombre_rol} /></td>
                       <td className="px-6 py-4 text-sm flex gap-3">
-                        <button onClick={() => handleEdit(u)} className="text-blue-600"><FaEdit /></button>
-                        <button onClick={() => handleDelete(u)} className="text-red-600"><FaTrash /></button>
+                        {canEdit && <button onClick={() => handleEdit(u)} className="text-blue-600"><FaEdit /></button>}
+                        {canDelete && <button onClick={() => handleDelete(u)} className="text-red-600"><FaTrash /></button>}
                       </td>
                     </tr>
                   ))
@@ -250,6 +278,7 @@ export default function Usuarios() {
           </div>
         </section>
 
+        {(canCreate || isUpdating) && (
         <section className="lg:col-span-1 bg-gray-50 p-6 rounded-lg border border-gray-200 shadow-inner h-fit sticky top-6">
           <h3 className="text-xl font-bold text-gray-900 mb-6">{isUpdating ? "Editar Usuario" : "Nuevo Usuario"}</h3>
           <form className="space-y-4" onSubmit={handleSubmit}>
@@ -281,7 +310,7 @@ export default function Usuarios() {
             <select name="rol_id" value={formData.rol_id} onChange={handleChange} required className="w-full border p-2 rounded">
               <option value="">Seleccione Rol</option>
               {rolesList
-                .filter(r => r.Nombre_Rol.toLowerCase() === 'usuario regular')
+                .filter(r => r.Nombre_Rol.toLowerCase() !== 'visitante')
                 .map(r => <option key={r.Id_Rol} value={r.Id_Rol}>{r.Nombre_Rol}</option>)
               }
             </select>
@@ -292,7 +321,14 @@ export default function Usuarios() {
             </div>
           </form>
         </section>
+        )}
       </div>
+      )}
+
+      {activeTab === 'roles' && (
+        <RolesPermisosManager />
+      )}
+
     </Layout>
   );
 }
