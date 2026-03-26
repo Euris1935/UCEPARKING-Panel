@@ -177,7 +177,7 @@ export default function Empleados() {
                 const { error: pError } = await supabase
                     .from('personas')
                     .update({ nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion })
-                    .eq('id', editingPersonaId);
+                    .eq('id_persona', editingPersonaId);
 
                 if (pError) throw pError;
 
@@ -217,7 +217,7 @@ export default function Empleados() {
 
                 if (eError) {
                     // Si falla, borramos la persona para no dejar basura
-                    await supabase.from('personas').delete().eq('id', personaData.id);
+                    await supabase.from('personas').delete().eq('id_persona', personaData.id_persona);
                     throw eError;
                 }
 

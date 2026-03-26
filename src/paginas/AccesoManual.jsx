@@ -369,7 +369,7 @@ export default function AccesoManual() {
                 <option value="">— Seleccione una plaza libre —</option>
                 {plazasLibres.map(p => (
                   <option key={p.Id_Plaza} value={p.Id_Plaza}>
-                    Plaza {p.Numero_Plaza} — {p.Tipo_Plaza}
+                    Plaza {p.Numero_Plaza}
                   </option>
                 ))}
               </select>

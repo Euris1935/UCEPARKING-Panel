@@ -8,7 +8,8 @@ import Login from './paginas/Login';
 import Dashboard from './paginas/Dashboard';
 import Usuarios from './paginas/Usuarios';
 import Empleados from './paginas/Empleados';
-import VehiculosTickets from './paginas/VehiculosTickets';
+import Tickets from './paginas/Tickets';
+import Vehiculos from './paginas/Vehiculos';
 import ZonasParqueo from './paginas/ZonasParqueos';
 import Reservaciones from './paginas/Reservaciones';
 import Asignaciones from './paginas/Asignaciones';
@@ -56,7 +57,8 @@ export default function App() {
             <Route path="/usuarios" element={<Usuarios />} />
             <Route path="/empleados" element={<Empleados />} />
 
-            <Route path="/vehiculos-tickets" element={<VehiculosTickets />} />
+            <Route path="/tickets" element={<Tickets />} />
+            <Route path="/vehiculos" element={<Vehiculos />} />
             <Route path="/acceso-manual" element={<AccesoManual />} />
             <Route path="/ocupacion" element={<Ocupacion />} />
             <Route path="/zonas-parqueo" element={<ZonasParqueo />} />

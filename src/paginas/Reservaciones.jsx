@@ -96,7 +96,7 @@ export default function Reservaciones() {
 
   const handleMarkCompleted = async (id, idPlaza, isAuto = false) => {
     try {
-        await supabase.from('RESERVA').update({ id_estado: 2 }).eq('Id_Reserva', id);
+        await supabase.from('RESERVA').update({ id_estado: 3 }).eq('Id_Reserva', id);
         if (idPlaza) await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
         if (!isAuto) Swal.fire('Éxito', 'Reserva completada.', 'success');
         loadReservas();
@@ -107,7 +107,7 @@ export default function Reservaciones() {
   const handleCancel = async (idReserva, idPlaza) => {
     const result = await Swal.fire({ title: '¿Cancelar?', text: "La plaza se liberará.", icon: 'warning', showCancelButton: true, confirmButtonColor: '#f59e0b' });
     if (result.isConfirmed) {
-        await supabase.from('RESERVA').update({ id_estado: 3 }).eq('Id_Reserva', idReserva);
+        await supabase.from('RESERVA').update({ id_estado: 2 }).eq('Id_Reserva', idReserva);
         if (idPlaza) await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
         loadReservas();
         loadAuxData();

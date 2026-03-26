@@ -432,9 +432,9 @@ export default function Asignaciones() {
                                         <div>
                                             <p className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-0.5">Vehículo Vinculado</p>
                                             <p className="text-sm font-bold text-gray-800 font-mono">{vehiculoVinculado.placa}</p>
-                                            {(vehiculoVinculado.Marca || vehiculoVinculado.Color) && (
+                                            {(vehiculoVinculado.marcas_vehiculo?.nombre || vehiculoVinculado.colores_vehiculo?.nombre) && (
                                                 <p className="text-xs text-gray-500">
-                                                    {[vehiculoVinculado.Marca, vehiculoVinculado.Color].filter(Boolean).join(' · ')}
+                                                    {[vehiculoVinculado.marcas_vehiculo?.nombre, vehiculoVinculado.colores_vehiculo?.nombre].filter(Boolean).join(' · ')}
                                                 </p>
                                             )}
                                         </div>

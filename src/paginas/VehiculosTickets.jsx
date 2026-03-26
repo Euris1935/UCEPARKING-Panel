@@ -9,39 +9,8 @@ import {
   FaPrint, FaSignOutAlt, FaClipboardCheck, FaSyncAlt, FaBan
 } from 'react-icons/fa';
 
-/* ── Catálogos de vehículos (#7, #12, #13, #24) ── */
-const MARCAS_VEHICULO = [
-  'Toyota', 'Honda', 'Hyundai', 'Kia', 'Nissan', 'Ford', 'Chevrolet',
-  'BMW', 'Mercedes-Benz', 'Audi', 'Volkswagen', 'Mazda', 'Mitsubishi',
-  'Suzuki', 'Jeep', 'Dodge', 'Subaru', 'Lexus', 'Otra'
-];
-
-const MODELOS_POR_MARCA = {
-  'Toyota': ['Corolla', 'Camry', 'RAV4', 'Hilux', 'Yaris', 'Land Cruiser', 'Fortuner', 'Prado', 'Rush', 'Otro'],
-  'Honda': ['Civic', 'Accord', 'CR-V', 'HR-V', 'Fit', 'Pilot', 'City', 'Otro'],
-  'Hyundai': ['Tucson', 'Elantra', 'Santa Fe', 'Accent', 'Sonata', 'Creta', 'Kona', 'Venue', 'Otro'],
-  'Kia': ['Sportage', 'Seltos', 'Forte', 'Sorento', 'Rio', 'Soul', 'Carnival', 'K5', 'Otro'],
-  'Nissan': ['Sentra', 'Altima', 'Pathfinder', 'Rogue', 'Kicks', 'Versa', 'Frontier', 'X-Trail', 'Otro'],
-  'Ford': ['F-150', 'Explorer', 'Escape', 'Ranger', 'Edge', 'Bronco', 'Maverick', 'Otro'],
-  'Chevrolet': ['Silverado', 'Equinox', 'Spark', 'Cruze', 'Traverse', 'Tahoe', 'Trax', 'Otro'],
-  'BMW': ['Serie 3', 'Serie 5', 'X1', 'X3', 'X5', 'Serie 1', 'Otro'],
-  'Mercedes-Benz': ['Clase C', 'Clase E', 'GLC', 'GLE', 'Clase A', 'CLA', 'Otro'],
-  'Audi': ['A3', 'A4', 'Q3', 'Q5', 'Q7', 'A6', 'Otro'],
-  'Volkswagen': ['Jetta', 'Tiguan', 'Golf', 'Passat', 'T-Cross', 'Taos', 'Otro'],
-  'Mazda': ['CX-5', 'CX-30', 'Mazda3', 'CX-50', 'CX-9', 'Otro'],
-  'Mitsubishi': ['Outlander', 'L200', 'ASX', 'Eclipse Cross', 'Montero', 'Otro'],
-  'Suzuki': ['Vitara', 'Swift', 'Jimny', 'S-Cross', 'Baleno', 'Otro'],
-  'Jeep': ['Wrangler', 'Cherokee', 'Grand Cherokee', 'Compass', 'Renegade', 'Otro'],
-  'Dodge': ['Charger', 'Durango', 'Challenger', 'Journey', 'RAM 1500', 'Otro'],
-  'Subaru': ['Forester', 'Outback', 'Impreza', 'Crosstrek', 'WRX', 'Otro'],
-  'Lexus': ['RX', 'NX', 'IS', 'ES', 'UX', 'Otro'],
-  'Otra': ['Otro']
-};
-
-const COLORES_VEHICULO = [
-  'Blanco', 'Negro', 'Gris', 'Plata', 'Rojo', 'Azul', 'Verde',
-  'Amarillo', 'Naranja', 'Marrón', 'Beige', 'Dorado', 'Otro'
-];
+/* ── Catálogos de vehículos dinámicos (DB) ── */
+// Se cargarán desde Supabase
 
 /* ─────────────────────────────────────────────
    Sub-componente: Vista de Ticket para Impresión
@@ -51,7 +20,7 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
 
   // Calcular tiempo de estancia si el ticket ya fue cerrado (#20)
   const calcTiempoTicket = () => {
-    if (ticket.Estado === 'Usado' && ticket._horaSalida) {
+    if (ticket.Estado === 'Cerrado' && ticket._horaSalida) {
       const diff = Math.floor((new Date(ticket._horaSalida) - new Date(ticket.Fecha_Hora_Emision)) / 60000);
       if (diff < 60) return `${diff} min`;
       return `${Math.floor(diff / 60)}h ${diff % 60}min`;
@@ -93,7 +62,7 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
           <Row label="Plaza Asignada" value={ticket.plazas?.Numero_Plaza || `#${ticket.Id_Plaza_Asignada}`} bold />
           <Row label="Hora de Entrada" value={new Date(ticket.Fecha_Hora_Emision).toLocaleString('es-DO')} />
           {/* Hora de salida y duración (#20) */}
-          {(ticket.estado_ticket?.nombre_estado === 'Usado' || ticket.Estado === 'Usado') && ticket._horaSalida && (
+          {(ticket.estado_ticket?.nombre_estado === 'Cerrado' || ticket.Estado === 'Cerrado') && ticket._horaSalida && (
             <>
               <Row label="Hora de Salida" value={new Date(ticket._horaSalida).toLocaleString('es-DO')} />
               {tiempoEstancia && <Row label="Duración" value={tiempoEstancia} bold />}
@@ -160,20 +129,25 @@ export default function VehiculosTickets() {
   // Ticket para imprimir
   const [ticketParaImprimir, setTicketParaImprimir] = useState(null);
 
+  // Catálogos
+  const [listaMarcas, setListaMarcas] = useState([]);
+  const [listaModelos, setListaModelos] = useState([]);
+  const [listaColores, setListaColores] = useState([]);
+
   // Formulario Visitante
   const [visitanteForm, setVisitanteForm] = useState({
     id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M',
-    placa: '', marca: '', modelo: '', color: '', id_plaza: '', duracion: '60'
+    placa: '', id_marca: '', id_modelo: '', id_color: '', id_plaza: '', duracion: '60'
   });
 
   // Formulario Vehículo Personal
   const [vehiculoPersonalForm, setVehiculoPersonalForm] = useState({
-    persona_id: '', placa: '', marca: '', modelo: '', color: ''
+    persona_id: '', placa: '', id_marca: '', id_modelo: '', id_color: ''
   });
 
   // Edición de vehículo registrado
   const [editandoVehiculo, setEditandoVehiculo] = useState(null);
-  const [editVehiculoForm, setEditVehiculoForm] = useState({ placa: '', marca: '', modelo: '', color: '' });
+  const [editVehiculoForm, setEditVehiculoForm] = useState({ placa: '', id_marca: '', id_modelo: '', id_color: '' });
 
   useEffect(() => {
     const init = async () => {
@@ -210,6 +184,15 @@ export default function VehiculosTickets() {
         .select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(marcas_vehiculo(nombre), colores_vehiculo(nombre), modelos_vehiculo(nombre))')
         .gte('Fecha_Hora_Emision', hoy.toISOString())
         .order('Fecha_Hora_Emision', { ascending: false });
+
+      // Catálogos
+      const { data: catMarcas } = await supabase.from('marcas_vehiculo').select('id_marca, nombre').order('nombre');
+      const { data: catModelos } = await supabase.from('modelos_vehiculo').select('id_modelo, nombre, id_marca').order('nombre');
+      const { data: catColores } = await supabase.from('colores_vehiculo').select('id_color, nombre').order('nombre');
+
+      setListaMarcas(catMarcas || []);
+      setListaModelos(catModelos || []);
+      setListaColores(catColores || []);
 
       // Vehículos registrados
       const { data: vhs } = await supabase
@@ -368,10 +351,10 @@ export default function VehiculosTickets() {
         .single();
       if (tErr) throw tErr;
 
-      // Attach visitor vehicle info for immediate display (not stored in DB)
-      nuevoTicket._marca = visitanteForm.marca || null;
-      nuevoTicket._modelo = visitanteForm.modelo || null;
-      nuevoTicket._color = visitanteForm.color || null;
+      // Attach visitor vehicle info (by finding the text names in catalogs)
+      nuevoTicket._marca = listaMarcas.find(m => m.id_marca === parseInt(visitanteForm.id_marca))?.nombre || null;
+      nuevoTicket._modelo = listaModelos.find(m => m.id_modelo === parseInt(visitanteForm.id_modelo))?.nombre || null;
+      nuevoTicket._color = listaColores.find(c => c.id_color === parseInt(visitanteForm.id_color))?.nombre || null;
 
       // 4. Actualizar plaza a Ocupada
       await supabase.from('plazas').update({
@@ -388,7 +371,7 @@ export default function VehiculosTickets() {
       // 7. Mostrar ticket para imprimir (RF2)
       setTicketParaImprimir(nuevoTicket);
 
-      setVisitanteForm({ id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M', placa: '', marca: '', modelo: '', color: '', id_plaza: '', duracion: '60' });
+      setVisitanteForm({ id_visitante: null, nombre: '', apellido: '', telefono: '', sexo: 'M', placa: '', id_marca: '', id_modelo: '', id_color: '', id_plaza: '', duracion: '60' });
       setActiveTab('activos');
       loadData();
 
@@ -411,7 +394,12 @@ export default function VehiculosTickets() {
         } else {
           const { data: vNuevo, error: vErr } = await supabase
             .from('vehiculos')
-            .insert({ placa })
+            .insert({ 
+               placa,
+               id_marca: visitanteForm.id_marca ? parseInt(visitanteForm.id_marca) : null,
+               id_modelo: visitanteForm.id_modelo ? parseInt(visitanteForm.id_modelo) : null,
+               id_color: visitanteForm.id_color ? parseInt(visitanteForm.id_color) : null
+            })
             .select('id_vehiculo')
             .single();
           if (vErr) console.error('[RegistroAcceso] Error al crear vehículo:', vErr.message);
@@ -484,7 +472,7 @@ export default function VehiculosTickets() {
       // 1. Cambiar estado del ticket a Usado
       const { error: tkErr, count: tkCount } = await supabase
         .from('tickets')
-        .update({ id_estado: 4 }, { count: 'exact' })
+        .update({ id_estado: 2 }, { count: 'exact' })
         .eq('Id_Ticket', ticket.Id_Ticket);
       if (tkErr) throw tkErr;
       if (tkCount === 0) throw new Error('No se pudo actualizar el ticket (0 filas). Agrega la política UPDATE en tickets en Supabase.');
@@ -552,7 +540,7 @@ export default function VehiculosTickets() {
       // 6. Mostrar ticket con hora de salida y duración (#20)
       setTicketParaImprimir({
         ...ticket,
-        Estado: 'Usado',
+        Estado: 'Cerrado',
         _horaSalida: ahora,
         _esReimpresion: false
       });
@@ -580,7 +568,7 @@ export default function VehiculosTickets() {
     try {
       const { error: tkErr, count: tkCount } = await supabase
         .from('tickets')
-        .update({ Estado: 'Anulado' }, { count: 'exact' })
+        .update({ id_estado: 4 }, { count: 'exact' })
         .eq('Id_Ticket', ticket.Id_Ticket);
       if (tkErr) throw tkErr;
       if (tkCount === 0) throw new Error('No se pudo anular el ticket (0 filas). Agrega la política UPDATE en tickets en Supabase.');
@@ -683,7 +671,12 @@ export default function VehiculosTickets() {
       const { error, count } = await supabase
         .from('vehiculos')
         .update(
-          { placa: editVehiculoForm.placa.toUpperCase(), Marca: editVehiculoForm.marca || null, modelo: editVehiculoForm.modelo || null, Color: editVehiculoForm.color || null },
+          { 
+            placa: editVehiculoForm.placa.toUpperCase(), 
+            id_marca: editVehiculoForm.id_marca ? parseInt(editVehiculoForm.id_marca) : null, 
+            id_modelo: editVehiculoForm.id_modelo ? parseInt(editVehiculoForm.id_modelo) : null, 
+            id_color: editVehiculoForm.id_color ? parseInt(editVehiculoForm.id_color) : null 
+          },
           { count: 'exact' }
         )
         .eq('id_vehiculo', editandoVehiculo.id_vehiculo);
@@ -712,11 +705,14 @@ export default function VehiculosTickets() {
     try {
       const { error } = await supabase.from('vehiculos').insert([{
         id_persona: vehiculoPersonalForm.persona_id,
-        placa: vehiculoPersonalForm.placa.toUpperCase()
+        placa: vehiculoPersonalForm.placa.toUpperCase(),
+        id_marca: vehiculoPersonalForm.id_marca ? parseInt(vehiculoPersonalForm.id_marca) : null,
+        id_modelo: vehiculoPersonalForm.id_modelo ? parseInt(vehiculoPersonalForm.id_modelo) : null,
+        id_color: vehiculoPersonalForm.id_color ? parseInt(vehiculoPersonalForm.id_color) : null
       }]);
       if (error) throw error;
       Swal.fire('Registrado', 'Vehículo vinculado correctamente.', 'success');
-      setVehiculoPersonalForm({ persona_id: '', placa: '', marca: '', modelo: '', color: '' });
+      setVehiculoPersonalForm({ persona_id: '', placa: '', id_marca: '', id_modelo: '', id_color: '' });
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
@@ -901,24 +897,24 @@ export default function VehiculosTickets() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
-                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.marca} onChange={e => setVisitanteForm(f => ({ ...f, marca: e.target.value, modelo: '' }))}>
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.id_marca} onChange={e => setVisitanteForm(f => ({ ...f, id_marca: e.target.value, id_modelo: '' }))}>
                     <option value="">— Seleccionar —</option>
-                    {MARCAS_VEHICULO.map(m => <option key={m} value={m}>{m}</option>)}
+                    {listaMarcas.map(m => <option key={m.id_marca} value={m.id_marca}>{m.nombre}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
-                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.modelo} onChange={e => setVisitanteForm(f => ({ ...f, modelo: e.target.value }))} disabled={!visitanteForm.marca}>
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.id_modelo} onChange={e => setVisitanteForm(f => ({ ...f, id_modelo: e.target.value }))} disabled={!visitanteForm.id_marca}>
                     <option value="">— Seleccionar —</option>
-                    {(MODELOS_POR_MARCA[visitanteForm.marca] || []).map(m => <option key={m} value={m}>{m}</option>)}
+                    {listaModelos.filter(m => m.id_marca === parseInt(visitanteForm.id_marca)).map(m => <option key={m.id_modelo} value={m.id_modelo}>{m.nombre}</option>)}
                   </select>
                 </div>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-                <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.color} onChange={e => setVisitanteForm(f => ({ ...f, color: e.target.value }))}>
+                <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.id_color} onChange={e => setVisitanteForm(f => ({ ...f, id_color: e.target.value }))}>
                   <option value="">— Seleccionar —</option>
-                  {COLORES_VEHICULO.map(c => <option key={c} value={c}>{c}</option>)}
+                  {listaColores.map(c => <option key={c.id_color} value={c.id_color}>{c.nombre}</option>)}
                 </select>
               </div>
 
@@ -1173,24 +1169,24 @@ export default function VehiculosTickets() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
-                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.marca} onChange={e => setVehiculoPersonalForm(f => ({ ...f, marca: e.target.value, modelo: '' }))}>
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.id_marca} onChange={e => setVehiculoPersonalForm(f => ({ ...f, id_marca: e.target.value, id_modelo: '' }))}>
                     <option value="">— Seleccionar —</option>
-                    {MARCAS_VEHICULO.map(m => <option key={m} value={m}>{m}</option>)}
+                    {listaMarcas.map(m => <option key={m.id_marca} value={m.id_marca}>{m.nombre}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
-                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.modelo} onChange={e => setVehiculoPersonalForm(f => ({ ...f, modelo: e.target.value }))} disabled={!vehiculoPersonalForm.marca}>
+                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.id_modelo} onChange={e => setVehiculoPersonalForm(f => ({ ...f, id_modelo: e.target.value }))} disabled={!vehiculoPersonalForm.id_marca}>
                     <option value="">— Seleccionar —</option>
-                    {(MODELOS_POR_MARCA[vehiculoPersonalForm.marca] || []).map(m => <option key={m} value={m}>{m}</option>)}
+                    {listaModelos.filter(m => m.id_marca === parseInt(vehiculoPersonalForm.id_marca)).map(m => <option key={m.id_modelo} value={m.id_modelo}>{m.nombre}</option>)}
                   </select>
                 </div>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-                <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.color} onChange={e => setVehiculoPersonalForm(f => ({ ...f, color: e.target.value }))}>
+                <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.id_color} onChange={e => setVehiculoPersonalForm(f => ({ ...f, id_color: e.target.value }))}>
                   <option value="">— Seleccionar —</option>
-                  {COLORES_VEHICULO.map(c => <option key={c} value={c}>{c}</option>)}
+                  {listaColores.map(c => <option key={c.id_color} value={c.id_color}>{c.nombre}</option>)}
                 </select>
               </div>
               <button
@@ -1233,7 +1229,7 @@ export default function VehiculosTickets() {
                         <span className="font-mono font-bold bg-gray-900 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span>
                       </td>
                       <td className="px-5 py-4 text-gray-500 text-xs">
-                        {[v.Marca, v.modelo, v.Color].filter(Boolean).join(' · ') || '—'}
+                        {[v.marcas_vehiculo?.nombre, v.modelos_vehiculo?.nombre, v.colores_vehiculo?.nombre].filter(Boolean).join(' · ') || '—'}
                       </td>
                       <td className="px-5 py-4 text-xs text-gray-400">
                         {new Date(v.Fecha_Registro).toLocaleDateString('es-DO')}
@@ -1241,7 +1237,7 @@ export default function VehiculosTickets() {
                       <td className="px-5 py-4 text-center">
                         <div className="flex gap-1 justify-center">
                           <button
-                            onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, marca: v.Marca || '', modelo: v.modelo || '', color: v.Color || '' }); }}
+                            onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, id_marca: v.id_marca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); }}
                             className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition"
                             title="Editar vehículo"
                           >
@@ -1288,33 +1284,33 @@ export default function VehiculosTickets() {
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
                   <select className="w-full border rounded-lg p-2 text-sm mt-0.5"
-                    value={editVehiculoForm.marca}
-                    onChange={e => setEditVehiculoForm(f => ({ ...f, marca: e.target.value, modelo: '' }))}
+                    value={editVehiculoForm.id_marca}
+                    onChange={e => setEditVehiculoForm(f => ({ ...f, id_marca: e.target.value, id_modelo: '' }))}
                   >
                     <option value="">— Seleccionar —</option>
-                    {MARCAS_VEHICULO.map(m => <option key={m} value={m}>{m}</option>)}
+                    {listaMarcas.map(m => <option key={m.id_marca} value={m.id_marca}>{m.nombre}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
                   <select className="w-full border rounded-lg p-2 text-sm mt-0.5"
-                    value={editVehiculoForm.modelo}
-                    onChange={e => setEditVehiculoForm(f => ({ ...f, modelo: e.target.value }))}
-                    disabled={!editVehiculoForm.marca}
+                    value={editVehiculoForm.id_modelo}
+                    onChange={e => setEditVehiculoForm(f => ({ ...f, id_modelo: e.target.value }))}
+                    disabled={!editVehiculoForm.id_marca}
                   >
                     <option value="">— Seleccionar —</option>
-                    {(MODELOS_POR_MARCA[editVehiculoForm.marca] || []).map(m => <option key={m} value={m}>{m}</option>)}
+                    {listaModelos.filter(m => m.id_marca === parseInt(editVehiculoForm.id_marca)).map(m => <option key={m.id_modelo} value={m.id_modelo}>{m.nombre}</option>)}
                   </select>
                 </div>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
                 <select className="w-full border rounded-lg p-2 text-sm mt-0.5"
-                  value={editVehiculoForm.color}
-                  onChange={e => setEditVehiculoForm(f => ({ ...f, color: e.target.value }))}
+                  value={editVehiculoForm.id_color}
+                  onChange={e => setEditVehiculoForm(f => ({ ...f, id_color: e.target.value }))}
                 >
                   <option value="">— Seleccionar —</option>
-                  {COLORES_VEHICULO.map(c => <option key={c} value={c}>{c}</option>)}
+                  {listaColores.map(c => <option key={c.id_color} value={c.id_color}>{c.nombre}</option>)}
                 </select>
               </div>
               <div className="flex gap-2 pt-2">
