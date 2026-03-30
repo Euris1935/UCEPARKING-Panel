@@ -5,8 +5,10 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaCar, FaSave, FaTrash, FaEdit, FaSyncAlt } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function Vehiculos() {
+  const { orgId } = useOrg();
   const { tienePermiso } = useRbac();
   const canCreate = tienePermiso('Módulo Vehículos', 'crear');
   const canEdit = tienePermiso('Módulo Vehículos', 'editar');
@@ -77,7 +79,8 @@ export default function Vehiculos() {
         placa: vehiculoPersonalForm.placa.toUpperCase(),
         id_marca: vehiculoPersonalForm.id_marca ? parseInt(vehiculoPersonalForm.id_marca) : null,
         id_modelo: vehiculoPersonalForm.id_modelo ? parseInt(vehiculoPersonalForm.id_modelo) : null,
-        id_color: vehiculoPersonalForm.id_color ? parseInt(vehiculoPersonalForm.id_color) : null
+        id_color: vehiculoPersonalForm.id_color ? parseInt(vehiculoPersonalForm.id_color) : null,
+        organizacion_id: orgId
       }]);
       if (error) throw error;
       Swal.fire('Registrado', 'Vehículo vinculado correctamente.', 'success');

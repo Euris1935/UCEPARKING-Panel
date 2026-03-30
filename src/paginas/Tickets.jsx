@@ -9,6 +9,7 @@ import {
   FaClipboardCheck, FaSyncAlt, FaBan
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
 
 function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
   const handlePrint = () => window.print();
@@ -47,7 +48,7 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
           {(ticket.estado_ticket?.nombre_estado === 'Cerrado' || ticket.Estado === 'Cerrado') && ticket._horaSalida && (
             <><Row label="Hora de Salida" value={new Date(ticket._horaSalida).toLocaleString('es-DO')} />{tiempoEstancia && <Row label="Duración" value={tiempoEstancia} bold />}</>
           )}
-          <Row label="Estado" value={ticket.Estado} />
+          <Row label="Estado" value={ticket.Estado || ticket.estado_ticket?.nombre_estado || '—'} />
           <hr />
           <div className="flex justify-center py-2"><QRCodeSVG value={qrData} size={120} level="M" /></div>
           <p className="text-center text-[10px] text-gray-400 mt-1">Presente este código QR al salir del parqueo.</p>
@@ -76,6 +77,7 @@ const calcTiempo = (inicio, fin) => {
 };
 
 export default function Tickets() {
+  const { orgId } = useOrg();
   const { tienePermiso } = useRbac();
   const canCreate = tienePermiso('Módulo Parqueo', 'crear');
   const canEdit = tienePermiso('Módulo Parqueo', 'editar');
@@ -142,7 +144,15 @@ export default function Tickets() {
     try {
       const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Tickets').maybeSingle();
-      await supabase.from('eventos').insert([{ Fecha_Hora: new Date().toISOString(), Descripcion: descripcion, Id_Plaza: idPlaza, id_persona: currentPersonaId, id_tipo_evento: te?.id_tipo || null, id_origen_evento: oe?.id_origen || null }]);
+      await supabase.from('eventos').insert([{ 
+        Fecha_Hora: new Date().toISOString(), 
+        Descripcion: descripcion, 
+        Id_Plaza: idPlaza, 
+        id_persona: currentPersonaId, 
+        id_tipo_evento: te?.id_tipo || null, 
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
+      }]);
     } catch (e) { console.warn('Log error:', e.message); }
   };
 
@@ -165,6 +175,7 @@ export default function Tickets() {
     const placaLimpia = visitanteForm.placa.replace(/[^A-Z0-9]/gi, '');
     if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres.', 'warning');
     if (!visitanteForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
+    if (!orgId) return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Recarga la página.', 'error');
     setLoading(true);
     try {
       let visitanteId = visitanteForm.id_visitante;
@@ -172,19 +183,57 @@ export default function Tickets() {
         if (!visitanteForm.nombre.trim() || !visitanteForm.apellido.trim()) { setLoading(false); return Swal.fire('Atención', 'Nombre y Apellido son obligatorios.', 'warning'); }
         const { data: newPersona, error: pErr } = await supabase.from('personas').insert([{ nombre: visitanteForm.nombre.trim(), apellido: visitanteForm.apellido.trim(), cedula: visitanteForm.cedula || null, telefono: visitanteForm.telefono || null, sexo: visitanteForm.sexo || null }]).select('id_persona').single();
         if (pErr) throw pErr;
-        const { data: newV, error: vErr } = await supabase.from('visitantes').insert([{ id_persona: newPersona.id_persona }]).select('id_visitante').single();
+        const { data: newV, error: vErr } = await supabase
+          .from('visitantes')
+          .insert([{ 
+            id_persona: newPersona.id_persona,
+            organizacion_id: orgId 
+          }])
+          .select('id_visitante')
+          .single();
         if (vErr) throw vErr;
         visitanteId = newV.id_visitante;
       }
+
+      // NUEVO: Resolver vehículo ANTES de crear el ticket
+      const placa = visitanteForm.placa.toUpperCase();
+      const { data: vEx } = await supabase.from('vehiculos').select('id_vehiculo').eq('placa', placa).maybeSingle();
+      let vehiculoId = vEx?.id_vehiculo;
+      if (!vehiculoId) {
+        const { data: vNuevo, error: vNErr } = await supabase.from('vehiculos').insert({ 
+          placa, 
+          id_marca: visitanteForm.id_marca ? parseInt(visitanteForm.id_marca) : null, 
+          id_modelo: visitanteForm.id_modelo ? parseInt(visitanteForm.id_modelo) : null, 
+          id_color: visitanteForm.id_color ? parseInt(visitanteForm.id_color) : null,
+          organizacion_id: orgId
+        }).select('id_vehiculo').single();
+        if (vNErr) throw vNErr;
+        vehiculoId = vNuevo?.id_vehiculo;
+      }
+
       const ahora = new Date().toISOString();
       const minutos = parseInt(visitanteForm.duracion) || 0;
       const vencimiento = minutos > 0 ? new Date(Date.now() + minutos * 60000).toISOString() : null;
-      const { data: nuevoTicket, error: tErr } = await supabase.from('tickets').insert([{ id_vehiculo: null, Placa_Capturada: visitanteForm.placa.toUpperCase(), Id_Plaza_Asignada: parseInt(visitanteForm.id_plaza), id_visitante: visitanteId, id_estado: 1, Fecha_Hora_Emision: ahora, Fecha_Hora_Vencimiento: vencimiento }]).select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), plazas(Numero_Plaza)').single();
+      
+      const { data: nuevoTicket, error: tErr } = await supabase.from('tickets').insert([{ 
+        id_vehiculo: vehiculoId, 
+        Placa_Capturada: placa, 
+        Id_Plaza_Asignada: parseInt(visitanteForm.id_plaza), 
+        id_visitante: visitanteId, 
+        id_estado: 1, 
+        Fecha_Hora_Emision: ahora, 
+        Fecha_Hora_Vencimiento: vencimiento,
+        organizacion_id: orgId
+      }]).select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), plazas(Numero_Plaza)').single();
+      
       if (tErr) throw tErr;
+
+      // Mantener compatibilidad con print view inmediata
       nuevoTicket._marca = listaMarcas.find(m => m.id_marca === parseInt(visitanteForm.id_marca))?.nombre || null;
       nuevoTicket._modelo = listaModelos.find(m => m.id_modelo === parseInt(visitanteForm.id_modelo))?.nombre || null;
       nuevoTicket._color = listaColores.find(c => c.id_color === parseInt(visitanteForm.id_color))?.nombre || null;
       nuevoTicket._cedula = visitanteForm.cedula || null;
+
       await supabase.from('plazas').update({ id_estado: 2 }).eq('Id_Plaza', visitanteForm.id_plaza);
       await registrarLog('TICKET_EMITIDO', `Ticket emitido: ${visitanteForm.placa.toUpperCase()} — Plaza ${nuevoTicket?.plazas?.Numero_Plaza}.`, parseInt(visitanteForm.id_plaza));
       setTicketParaImprimir(nuevoTicket);
@@ -193,19 +242,20 @@ export default function Tickets() {
       loadData();
       // Registro acceso + barrera
       try {
-        const placa = visitanteForm.placa.toUpperCase();
         const plazaId = parseInt(visitanteForm.id_plaza);
-        const { data: vEx } = await supabase.from('vehiculos').select('id_vehiculo').eq('placa', placa).maybeSingle();
-        let vehiculoId = vEx?.id_vehiculo;
-        if (!vehiculoId) {
-          const { data: vNuevo } = await supabase.from('vehiculos').insert({ placa, id_marca: visitanteForm.id_marca ? parseInt(visitanteForm.id_marca) : null, id_modelo: visitanteForm.id_modelo ? parseInt(visitanteForm.id_modelo) : null, id_color: visitanteForm.id_color ? parseInt(visitanteForm.id_color) : null }).select('id_vehiculo').single();
-          vehiculoId = vNuevo?.id_vehiculo;
-        }
         if (vehiculoId) {
           const { data: raActivo } = await supabase.from('registros_acceso').select('id_registro').eq('id_vehiculo', vehiculoId).is('salida_at', null).maybeSingle();
           if (raActivo) await supabase.from('registros_acceso').update({ salida_at: new Date().toISOString() }).eq('id_registro', raActivo.id_registro);
-          await supabase.from('registros_acceso').insert({ entrada_at: new Date().toISOString(), id_vehiculo: vehiculoId, ticket_id: nuevoTicket.Id_Ticket, Id_Plaza: plazaId, id_dispositivo_entrada: null });
+          await supabase.from('registros_acceso').insert({ 
+            entrada_at: new Date().toISOString(), 
+            id_vehiculo: vehiculoId, 
+            ticket_id: nuevoTicket.Id_Ticket, 
+            Id_Plaza: plazaId, 
+            id_dispositivo_entrada: null,
+            organizacion_id: orgId
+          });
         }
+
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.access_token) fetch('http://localhost:4000/api/access/open-main', { method: 'POST', headers: { 'Authorization': `Bearer ${session.access_token}` } }).catch(() => {});
       } catch (e) { console.warn('Barrera/Acceso error no crítico:', e.message); }

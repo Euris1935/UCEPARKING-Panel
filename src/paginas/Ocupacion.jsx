@@ -50,7 +50,9 @@ export default function Ocupacion() {
     const idNuevoEstado = getEstadoId(nombreNuevoEstado);
     if (!idNuevoEstado) return;
 
-    
+    // 🔊 Beep si se ocupa una plaza
+    if (nombreNuevoEstado.toUpperCase() === 'OCUPADA') playBeep();
+
     setPlazas(prev => prev.map(p => p.Id_Plaza === idPlaza ? { ...p, Nombre_Estado_Rel: nombreNuevoEstado } : p));
 
     const { error } = await supabase.from('plazas').update({ id_estado: idNuevoEstado }).eq('Id_Plaza', idPlaza);
@@ -180,8 +182,11 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaSearch, FaClock, FaExclamationTriangle, FaMapMarkerAlt, FaSync } from 'react-icons/fa';
+import { useOrg } from '../contexts/OrgContext';
+import { playBeep } from '../utils/audio';
 
 export default function Ocupacion() {
+  const { orgId } = useOrg();
   const [plazas, setPlazas] = useState([]);
   const [zonas, setZonas] = useState([]);
   const [estadosCatalogo, setEstadosCatalogo] = useState([]);
@@ -232,22 +237,53 @@ export default function Ocupacion() {
       });
       setPlazas(plazasCompletas);
 
-      // #17: Obtener info de quién ocupa cada plaza (accesos activos)
+      // #17: Info de quién ocupa/reserva/tiene asignada cada plaza
+      const mapaOcupacion = {};
+
+      // 1. OCUPACIÓN (Accesos activos)
       const { data: accesosActivos } = await supabase
         .from('registros_acceso')
-        .select('Id_Plaza, vehiculos(placa, marcas_vehiculo(nombre), personas(nombre, apellido))')
+        .select('Id_Plaza, vehiculos(placa, personas(nombre, apellido))')
         .is('salida_at', null);
-
-      const mapaOcupacion = {};
+      
       (accesosActivos || []).forEach(acc => {
         if (acc.Id_Plaza && acc.vehiculos) {
           mapaOcupacion[acc.Id_Plaza] = {
             placa: acc.vehiculos.placa,
-            marca: acc.vehiculos.marcas_vehiculo?.nombre,
-            nombre: `${acc.vehiculos.personas?.nombre || ''} ${acc.vehiculos.personas?.apellido || ''}`.trim()
+            nombre: `${acc.vehiculos.personas?.nombre || 'Visitante'} ${acc.vehiculos.personas?.apellido || ''}`.trim()
           };
         }
       });
+
+      // 2. RESERVAS (Activas)
+      const { data: reservasActivas } = await supabase
+        .from('RESERVA')
+        .select('Id_Plaza, personas(nombre, apellido)')
+        .eq('id_estado', 1); // 1 = Activa
+      
+      (reservasActivas || []).forEach(res => {
+        if (res.Id_Plaza && res.personas) {
+          mapaOcupacion[res.Id_Plaza] = {
+            ...mapaOcupacion[res.Id_Plaza],
+            nombre: `${res.personas.nombre} ${res.personas.apellido}`.trim()
+          };
+        }
+      });
+
+      // 3. ASIGNACIONES (Fijas)
+      const { data: asignacionesActivas } = await supabase
+        .from('asignaciones_parqueo')
+        .select('Id_Plaza, vehiculos(placa), empleados(personas(nombre, apellido))');
+      
+      (asignacionesActivas || []).forEach(asig => {
+        if (asig.Id_Plaza) {
+          mapaOcupacion[asig.Id_Plaza] = {
+            placa: asig.vehiculos?.placa || mapaOcupacion[asig.Id_Plaza]?.placa,
+            nombre: `${asig.empleados?.personas?.nombre || ''} ${asig.empleados?.personas?.apellido || ''}`.trim()
+          };
+        }
+      });
+
       setOcupacionInfo(mapaOcupacion);
     } catch (error) { console.error("Error cargando datos:", error); } finally { setLoading(false); }
   };
@@ -268,12 +304,14 @@ export default function Ocupacion() {
         Id_Plaza: idPlaza,
         id_persona: currentPersonaId,
         id_tipo_evento: te?.id_tipo || null,
-        id_origen_evento: oe?.id_origen || null
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
       }]);
     } catch (err) {
       console.warn('Error registrando log:', err.message);
     }
   };
+
 
   const changeStatus = async (idPlaza, nombreNuevoEstado) => {
     const idNuevoEstado = getEstadoId(nombreNuevoEstado);
@@ -285,6 +323,9 @@ export default function Ocupacion() {
     // Estado anterior para el log
     const plazaActual = plazas.find(p => p.Id_Plaza === idPlaza);
     const estadoAnterior = plazaActual?.Nombre_Estado_Rel || 'DESCONOCIDO';
+
+    // Sonido si se ocupa una plaza
+    if (nombreNuevoEstado.toUpperCase() === 'OCUPADA') playBeep();
 
     // Actualización optimista en UI
     setPlazas(prev => prev.map(p => p.Id_Plaza === idPlaza ? { ...p, Nombre_Estado_Rel: nombreNuevoEstado.toUpperCase(), id_estado: idNuevoEstado } : p));
@@ -300,11 +341,21 @@ export default function Ocupacion() {
       Swal.fire('Error', error.message, 'error');
       loadData();
     } else {
+      // Si la plaza se cambia a LIBRE o Mantenimiento, cerramos cualquier acceso activo fantasma
+      // para evitar que sus datos (placa, persona) reaparezcan si la plaza se ocupa de nuevo manualmente.
+      if (['LIBRE', 'EN MANTENIMIENTO', 'FUERA_DE_SERVICIO'].includes(nombreNuevoEstado.toUpperCase())) {
+        await supabase
+          .from('registros_acceso')
+          .update({ salida_at: new Date().toISOString() })
+          .eq('Id_Plaza', idPlaza)
+          .is('salida_at', null);
+      }
+
       // Registrar en la tabla de eventos (RF10)
       const numPlaza = plazaActual?.Numero_Plaza || `ID-${idPlaza}`;
       await registrarLog(
-        'CAMBIO_ESTADO',
-        `Plaza ${numPlaza} cambió de ${estadoAnterior} a ${nombreNuevoEstado.toUpperCase()}.`,
+        'Alerta',
+        `Plaza ${numPlaza} cambió de ${estadoAnterior} a ${nombreNuevoEstado.toUpperCase()} manualmente.`,
         idPlaza
       );
       loadData();
@@ -314,19 +365,36 @@ export default function Ocupacion() {
   const toggleOccupancy = (plaza) => {
     const estadoActual = plaza.Nombre_Estado_Rel;
 
-    // Plazas ASIGNADAS solo se pueden liberar desde la página de Asignaciones
-    if (estadoActual === 'ASIGNADA') {
+    // Plazas ASIGNADAS o RESERVADAS solo se pueden liberar desde sus respectivas páginas
+    // EXCEPCIÓN: Si no hay info en ocupacionInfo, es un "estado fantasma" y permitimos liberar.
+    if (['ASIGNADA', 'RESERVADA'].includes(estadoActual)) {
+      const infoActual = ocupacionInfo[plaza.Id_Plaza];
+      
+      if (!infoActual) {
+        // Permitir liberar si es un estado huérfano (sin registro en tabla de reserva/asignación)
+        Swal.fire({
+          title: 'Inconsistencia Detectada',
+          text: `Esta plaza figura como ${estadoActual} pero no tiene un registro asociado. ¿Deseas restablecerla a LIBRE?`,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: 'Sí, restablecer',
+          cancelButtonText: 'Cancelar'
+        }).then((result) => { if (result.isConfirmed) changeStatus(plaza.Id_Plaza, 'LIBRE'); });
+        return;
+      }
+
+      const esAsig = estadoActual === 'ASIGNADA';
       Swal.fire({
-        title: 'Plaza Asignada',
-        html: 'Esta plaza está <b>asignada a un empleado</b>.<br>Para liberarla, vaya a la página de <b>Asignaciones</b> y libere la asignación correspondiente.',
+        title: `Plaza ${esAsig ? 'Asignada' : 'Reservada'}`,
+        html: `Esta plaza está <b>${esAsig ? 'asignada a un empleado' : 'reservada'}</b>.<br>Para liberarla, vaya a la página de <b>${esAsig ? 'Asignaciones' : 'Reservaciones'}</b> y gestione el cambio desde allí.`,
         icon: 'info',
-        confirmButtonColor: '#7c3aed',
+        confirmButtonColor: esAsig ? '#7c3aed' : '#f59e0b',
         confirmButtonText: 'Entendido'
       });
       return;
     }
 
-    if (['MANTENIMIENTO', 'FUERA_DE_SERVICIO', 'RESERVADA'].includes(estadoActual)) {
+    if (['MANTENIMIENTO', 'FUERA_DE_SERVICIO'].includes(estadoActual)) {
       Swal.fire({
         title: '¿Liberar plaza?',
         text: `Estado actual: ${estadoActual}. ¿Deseas liberarla?`,
@@ -342,13 +410,14 @@ export default function Ocupacion() {
 
   const handleSpecialState = (e, plaza, estadoDeseado) => {
     e.stopPropagation();
-    // Bloquear cambio de estado si la plaza está ASIGNADA
-    if (plaza.Nombre_Estado_Rel === 'ASIGNADA') {
+    // Bloquear cambio de estado manual si la plaza está ASIGNADA o RESERVADA
+    if (['ASIGNADA', 'RESERVADA'].includes(plaza.Nombre_Estado_Rel)) {
+      const esAsig = plaza.Nombre_Estado_Rel === 'ASIGNADA';
       Swal.fire({
-        title: 'Plaza Asignada',
-        html: 'Esta plaza está <b>asignada a un empleado</b>.<br>Solo puede liberarse desde la página de <b>Asignaciones</b>.',
+        title: `Plaza ${esAsig ? 'Asignada' : 'Reservada'}`,
+        html: `Esta plaza está <b>${esAsig ? 'asignada a un empleado' : 'reservada'}</b>.<br>Para cambiar su estado, use la página de <b>${esAsig ? 'Asignaciones' : 'Reservaciones'}</b>.`,
         icon: 'info',
-        confirmButtonColor: '#7c3aed',
+        confirmButtonColor: esAsig ? '#7c3aed' : '#f59e0b',
         confirmButtonText: 'Entendido'
       });
       return;
@@ -364,6 +433,7 @@ export default function Ocupacion() {
       case 'RESERVADA': return 'bg-yellow-50 border-yellow-200 hover:border-yellow-400 shadow-sm';
       case 'ASIGNADA': return 'bg-purple-50 border-purple-300 shadow-sm cursor-not-allowed';
       case 'MANTENIMIENTO':
+      case 'EN MANTENIMIENTO':
       case 'FUERA_DE_SERVICIO': return 'bg-orange-50 border-orange-200 hover:border-orange-400 shadow-sm';
       default: return 'bg-gray-50 border-gray-200';
     }
@@ -376,6 +446,7 @@ export default function Ocupacion() {
       case 'RESERVADA': return 'text-yellow-800 bg-yellow-200';
       case 'ASIGNADA': return 'text-purple-800 bg-purple-200';
       case 'MANTENIMIENTO':
+      case 'EN MANTENIMIENTO':
       case 'FUERA_DE_SERVICIO': return 'text-orange-800 bg-orange-200';
       default: return 'text-gray-700 bg-gray-200';
     }
@@ -386,7 +457,7 @@ export default function Ocupacion() {
     ocupadas: plazas.filter(p => p.Nombre_Estado_Rel === 'OCUPADA').length,
     reservadas: plazas.filter(p => p.Nombre_Estado_Rel === 'RESERVADA').length,
     asignadas: plazas.filter(p => p.Nombre_Estado_Rel === 'ASIGNADA').length,
-    mantenimiento: plazas.filter(p => ['MANTENIMIENTO', 'FUERA_DE_SERVICIO'].includes(p.Nombre_Estado_Rel)).length
+    mantenimiento: plazas.filter(p => ['MANTENIMIENTO', 'FUERA_DE_SERVICIO', 'EN MANTENIMIENTO'].includes(p.Nombre_Estado_Rel)).length
   };
 
   return (
@@ -436,17 +507,23 @@ export default function Ocupacion() {
                       <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel)}`}>
                         {plaza.Nombre_Estado_Rel}
                       </span>
-                      {/* #17: Info persona/vehículo en plazas ocupadas */}
-                      {plaza.Nombre_Estado_Rel === 'OCUPADA' && ocupacionInfo[plaza.Id_Plaza] && (
-                        <div className="mt-1 text-[9px] text-red-700 leading-tight">
-                          <div className="font-mono font-bold">{ocupacionInfo[plaza.Id_Plaza].placa}</div>
-                          <div className="text-[8px] text-gray-500 truncate max-w-[90px]">{ocupacionInfo[plaza.Id_Plaza].nombre}</div>
+                      {/* Info persona/vehículo en plazas ocupadas, reservadas o asignadas */}
+                      {['OCUPADA', 'RESERVADA', 'ASIGNADA'].includes(plaza.Nombre_Estado_Rel) && ocupacionInfo[plaza.Id_Plaza] && (
+                        <div className={`mt-1 text-[9px] leading-tight ${
+                          plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-red-700' : 
+                          plaza.Nombre_Estado_Rel === 'RESERVADA' ? 'text-yellow-800' : 'text-purple-800'
+                        }`}>
+                          {ocupacionInfo[plaza.Id_Plaza].placa && (
+                            <div className="font-mono font-bold">{ocupacionInfo[plaza.Id_Plaza].placa}</div>
+                          )}
+                          <div className="text-[8px] opacity-80 truncate max-w-[90px]">
+                            {ocupacionInfo[plaza.Id_Plaza].nombre}
+                          </div>
                         </div>
                       )}
 
                       <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => handleSpecialState(e, plaza, 'RESERVADA')} className="p-1.5 bg-white text-yellow-600 hover:bg-yellow-50 rounded-full shadow" title="Reservar"><FaClock size={12} /></button>
-                        <button onClick={(e) => handleSpecialState(e, plaza, 'FUERA_DE_SERVICIO')} className="p-1.5 bg-white text-orange-600 hover:bg-orange-50 rounded-full shadow" title="Mantenimiento"><FaExclamationTriangle size={12} /></button>
+                        <button onClick={(e) => handleSpecialState(e, plaza, 'En Mantenimiento')} className="p-1.5 bg-white text-orange-600 hover:bg-orange-50 rounded-full shadow" title="Mantenimiento"><FaExclamationTriangle size={12} /></button>
                       </div>
                     </div>
                   ))}

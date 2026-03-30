@@ -7,9 +7,11 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaSearch, FaUserTie, FaTrash, FaPlus, FaArrowLeft, FaMapMarkerAlt, FaEnvelope, FaBuilding, FaPhone, FaEdit } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function Empleados() {
     const { tienePermiso } = useRbac();
+    const { orgId } = useOrg();
     const canCreate = tienePermiso('Módulo Personal', 'crear');
     const canEdit = tienePermiso('Módulo Personal', 'editar');
     const canDelete = tienePermiso('Módulo Personal', 'eliminar');
@@ -58,10 +60,9 @@ export default function Empleados() {
         setDepartamentos(deptData || []);
         setOrganizaciones(orgData || []);
 
-        // (#22) UCE como organización por defecto
-        const uceOrg = (orgData || []).find(o => o.Nombre_Organizacion?.toUpperCase().includes('UCE'));
-        if (uceOrg && !editingEmpleadoId) {
-            setFormData(prev => ({ ...prev, organizacion_id: prev.organizacion_id || uceOrg.Id_Organizacion }));
+        // Asignar organización conectada por defecto
+        if (orgId && !editingEmpleadoId) {
+            setFormData(prev => ({ ...prev, organizacion_id: prev.organizacion_id || orgId }));
         }
 
         // Cargar empleados

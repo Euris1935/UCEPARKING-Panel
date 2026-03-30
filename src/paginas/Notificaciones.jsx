@@ -1,9 +1,9 @@
-
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaBell, FaCheckDouble, FaTrash, FaPlus, FaEnvelopeOpen } from 'react-icons/fa';
+import { useOrg } from '../contexts/OrgContext';
 
 /* Colores de badge según nombre del tipo */
 const getBadgeColor = (tipo) => {
@@ -18,6 +18,7 @@ const getBadgeColor = (tipo) => {
 };
 
 export default function Notificaciones() {
+  const { orgId } = useOrg();
   const [notifs, setNotifs]         = useState([]);
   const [tiposNotif, setTiposNotif] = useState([]);
   const [personasList, setPersonasList] = useState([]);
@@ -63,7 +64,6 @@ export default function Notificaciones() {
         .from('notificaciones')
         .select(`
           ID_Notificacion,
-          Tipo,
           Contenido,
           Leida,
           created_at,
@@ -87,7 +87,7 @@ export default function Notificaciones() {
       /* Personas disponibles como destinatarios */
       const { data: pData } = await supabase
         .from('personas')
-        .select('id, nombre, apellido')
+        .select('id_persona, nombre, apellido')
         .order('nombre');
       setPersonasList(pData || []);
 
@@ -115,11 +115,11 @@ export default function Notificaciones() {
 
     try {
       const payload = {
-        Tipo:       form.Tipo,
         Contenido:  form.Contenido.trim(),
         Leida:      false,
         id_persona: form.id_persona || null,
         id_tipo:    parseInt(form.id_tipo),
+        organizacion_id: orgId
       };
 
       const { error } = await supabase.from('notificaciones').insert([payload]);
@@ -253,7 +253,7 @@ export default function Notificaciones() {
                 >
                   <option value="">— General / Todos —</option>
                   {personasList.map(p => (
-                    <option key={p.id} value={p.id}>{p.nombre} {p.apellido}</option>
+                    <option key={p.id_persona} value={p.id_persona}>{p.nombre} {p.apellido}</option>
                   ))}
                 </select>
               </div>

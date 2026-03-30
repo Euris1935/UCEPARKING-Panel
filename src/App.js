@@ -5,6 +5,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { supabase } from './supabaseClient';
 
 import { RbacProvider } from './contexts/RbacContext';
+import { OrgProvider } from './contexts/OrgContext';
 import { ProtectedRoute } from './componentes/ProtectedRoute';
 
 import Login from './paginas/Login';
@@ -47,8 +48,9 @@ export default function App() {
 
   return (
     <RbacProvider session={session}>
-      <BrowserRouter>
-        <Routes>
+      <OrgProvider>
+        <BrowserRouter>
+          <Routes>
           {!session ? (
             <>
               <Route path="/login" element={<Login />} />
@@ -83,7 +85,8 @@ export default function App() {
             </>
           )}
         </Routes>
-      </BrowserRouter>
+        </BrowserRouter>
+      </OrgProvider>
     </RbacProvider>
   );
 }

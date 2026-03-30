@@ -9,9 +9,11 @@ import {
   FaPlus, FaCalendarAlt, FaTrash, FaLock 
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function Reservaciones() {
   const { tienePermiso } = useRbac();
+  const { orgId } = useOrg();
   const canCreate = tienePermiso('Reservas', 'crear');
   const canEdit = tienePermiso('Reservas', 'editar');
   const canDelete = tienePermiso('Reservas', 'eliminar');
@@ -137,12 +139,30 @@ export default function Reservaciones() {
     e.preventDefault();
     setLoading(true);
     try {
+        // Validar duración máxima de reserva según configuración
+        if (formData.Fecha_Hora_Inicio && formData.Fecha_Hora_Fin) {
+            const inicio = new Date(formData.Fecha_Hora_Inicio);
+            const fin = new Date(formData.Fecha_Hora_Fin);
+            const duracionHoras = (fin - inicio) / (1000 * 60 * 60);
+            const cfg = JSON.parse(localStorage.getItem('appSettings') || '{}');
+            const maxHoras = cfg.tiempoMaximoReserva || 4;
+            if (duracionHoras > maxHoras) {
+                setLoading(false);
+                return Swal.fire('Duración excedida', `La reserva no puede superar las ${maxHoras} hora(s). La duración seleccionada es de ${duracionHoras.toFixed(1)} hora(s).`, 'warning');
+            }
+            if (duracionHoras <= 0) {
+                setLoading(false);
+                return Swal.fire('Fecha inválida', 'La fecha de fin debe ser posterior a la fecha de inicio.', 'error');
+            }
+        }
+
         const payload = {
             id_persona: formData.id_persona,
             Id_Plaza: parseInt(formData.Id_Plaza),
             Fecha_Hora_Inicio: formData.Fecha_Hora_Inicio,
             Fecha_Hora_Fin: formData.Fecha_Hora_Fin,
-            id_estado: 1
+            id_estado: 1,
+            organizacion_id: orgId
         };
 
         if (isUpdating) {

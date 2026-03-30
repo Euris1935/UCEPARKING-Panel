@@ -3,9 +3,11 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaBell, FaUserTie } from 'react-icons/fa';
+import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaBell, FaUserTie, FaUsers } from 'react-icons/fa';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function Dashboard() {
+  const { orgId } = useOrg();
   const [stats, setStats] = useState({
     totalPlazas: 0,
     ocupadas: 0,
@@ -13,7 +15,8 @@ export default function Dashboard() {
     libres: 0,
     reservasActivas: 0,
     mantenimiento: 0,
-    asignadas: 0
+    asignadas: 0,
+    personasActivas: 0
   });
 
   const [loading, setLoading] = useState(true);
@@ -51,7 +54,7 @@ export default function Dashboard() {
       const idLibre = getId('LIBRE');
       const idOcupada = getId('OCUPADA');
       const idReservada = getId('RESERVADA');
-      const idMantenimiento = getId('FUERA_DE_SERVICIO');
+      const idMantenimiento = getId('EN MANTENIMIENTO') || getId('FUERA_DE_SERVICIO');
       const idAsignada = getId('ASIGNADA');
 
       // Cálculos
@@ -62,6 +65,9 @@ export default function Dashboard() {
       const asignadas = plazas?.filter(p => p.id_estado === idAsignada).length || 0;
       const libres = plazas?.filter(p => p.id_estado === idLibre || p.id_estado === null).length || 0;
 
+      const reservasActivas = reservasTablaCount > 0 ? reservasTablaCount : reservadasEnMapa;
+      const personasActivas = ocupadas + asignadas + reservasActivas;
+
       setStats({
         totalPlazas: total,
         ocupadas,
@@ -69,7 +75,8 @@ export default function Dashboard() {
         libres,
         mantenimiento,
         asignadas,
-        reservasActivas: reservasTablaCount > 0 ? reservasTablaCount : reservadasEnMapa
+        reservasActivas,
+        personasActivas
       });
 
     } catch (error) {
@@ -93,7 +100,8 @@ export default function Dashboard() {
         alertaYaEnviada.current = true;
         supabase.from('notificaciones').insert([{
           Contenido: `⚠️ Alerta de capacidad: el parqueo está al ${pct}% de ocupación (umbral configurado: ${umbral}%). Plazas libres: ${stats.libres}.`,
-          Leida: false
+          Leida: false,
+          organizacion_id: orgId
         }]).then(({ error }) => { if (error) console.warn('Error alerta RF3:', error.message); });
       }
     } else {
@@ -173,6 +181,16 @@ export default function Dashboard() {
           <div className="bg-purple-50 p-4 rounded-full text-purple-600"><FaUserTie size={24} /></div>
         </div>
 
+        {/* Personas en Parqueo */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-indigo-100 flex items-center justify-between">
+          <div>
+            <p className="text-gray-500 text-sm font-semibold uppercase">Personas Estacionadas</p>
+            <h3 className="text-3xl font-bold text-gray-800 mt-1">{stats.personasActivas}</h3>
+            <p className="text-xs text-indigo-600 mt-2 font-medium">Total en campus</p>
+          </div>
+          <div className="bg-indigo-50 p-4 rounded-full text-indigo-600"><FaUsers size={24} /></div>
+        </div>
+
         {/* Nivel de Uso */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
           <div>
@@ -199,6 +217,13 @@ export default function Dashboard() {
                 <span className="font-medium text-gray-700">Vehículos Estacionados</span>
               </div>
               <span className="font-bold text-red-600 text-xl">{stats.ocupadas}</span>
+            </div>
+            <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-lg border border-indigo-100">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-indigo-600"></div>
+                <span className="font-medium text-gray-700">Total Personas en Campus</span>
+              </div>
+              <span className="font-bold text-indigo-700 text-xl">{stats.personasActivas}</span>
             </div>
             <div className="flex justify-between items-center p-3 bg-yellow-50 rounded-lg border border-yellow-100">
               <div className="flex items-center gap-3">

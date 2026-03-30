@@ -8,8 +8,10 @@ import Layout from '../componentes/Layout';
 import { FaSearch, FaEdit, FaTrash, FaUserTie } from 'react-icons/fa';
 import RolesPermisosManager from '../componentes/RolesPermisosManager';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function Usuarios() {
+  const { orgId } = useOrg();
   const { tienePermiso } = useRbac();
   const canCreate = tienePermiso('Módulo Usuarios', 'crear');
   const canEdit = tienePermiso('Módulo Usuarios', 'editar');
@@ -165,13 +167,13 @@ export default function Usuarios() {
         }
 
         if (authData.user) {
-
           const { error: uError } = await supabase
             .from('usuarios')
             .insert([{
               id: authData.user.id,
               id_persona: personaData.id_persona,
-              rol_id
+              rol_id,
+              organizacion_id: orgId
             }]);
 
           if (uError) throw new Error("Error vinculando usuario: " + uError.message);

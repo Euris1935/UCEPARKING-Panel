@@ -3,8 +3,11 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch } from 'react-icons/fa';
+import { useOrg } from '../contexts/OrgContext';
+import { playBeep } from '../utils/audio';
 
 export default function AccesoManual() {
+  const { orgId } = useOrg();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos'
 
@@ -68,7 +71,6 @@ export default function AccesoManual() {
       if (vErr) console.error('Error cargando vehiculos:', vErr);
 
       // Accesos activos (entradas manuales sin salida)
-      // Eliminamos plazas(Numero_Plaza) del select porque no hay Foreign Key en la BD para eso
       const { data: activos, error: activosErr } = await supabase
         .from('registros_acceso')
         .select('*, vehiculos(placa, id_persona, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido, telefono))')
@@ -94,7 +96,8 @@ export default function AccesoManual() {
         Id_Plaza: idPlaza,
         id_persona: currentPersonaId,
         id_tipo_evento: te?.id_tipo || null,
-        id_origen_evento: oe?.id_origen || null
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
       }]);
     } catch (e) { console.warn('Log error:', e.message); }
   };
@@ -125,18 +128,20 @@ export default function AccesoManual() {
           id_vehiculo: vehiculoSelect.id_vehiculo,
           ticket_id: null,
           Id_Plaza: plazaSelect.Id_Plaza,
-          id_dispositivo_entrada: null
+          id_dispositivo_entrada: null,
+          organizacion_id: orgId
         });
       if (raErr) throw raErr;
 
       // 2. Actualizar Plaza
+      playBeep();
       await supabase.from('plazas').update({
         id_estado: 2
       }).eq('Id_Plaza', plazaSelect.Id_Plaza);
 
       // 3. Log
       await registrarLog(
-        'ACCESO_MANUAL_ENTRADA',
+        'Entrada',
         `Entrada manual: ${vehiculoSelect.placa} — ${vehiculoSelect.personas?.nombre} ${vehiculoSelect.personas?.apellido} — Plaza ${plazaSelect.Numero_Plaza}.`,
         plazaSelect.Id_Plaza
       );
@@ -153,7 +158,7 @@ export default function AccesoManual() {
       } catch (_) { }
 
       const nombrePuerta = entradaForm.puertaDestino === 'vip' ? 'VIP' : 'Principal';
-      Swal.fire('¡Éxito!', `Entrada registrada para ${vehiculoSelect.placa}. Barrera ${nombrePuerta} abriéndose.`, 'success');
+      Swal.fire('Registro Exitoso', `Entrada registrada para ${vehiculoSelect.placa}. Barrera ${nombrePuerta} abriéndose.`, 'success');
       setEntradaForm({ vehiculo_id: '', id_plaza: '', puertaDestino: 'main' });
       setBusquedaVehiculo('');
       setActiveTab('activos');
@@ -199,10 +204,17 @@ export default function AccesoManual() {
         }).eq('Id_Plaza', acceso.Id_Plaza);
       }
 
+      // 2b. Si hay un ticket asociado, marcarlo como usado (id_estado: 2)
+      if (acceso.ticket_id) {
+        await supabase.from('tickets')
+          .update({ id_estado: 2 })
+          .eq('Id_Ticket', acceso.ticket_id);
+      }
+
       // 3. Log — incluye nombre de persona (#16)
       const nombreSalida = `${acceso.vehiculos?.personas?.nombre || ''} ${acceso.vehiculos?.personas?.apellido || ''}`.trim() || 'Desconocido';
       await registrarLog(
-        'ACCESO_MANUAL_SALIDA',
+        'Salida',
         `Salida manual: ${nombreSalida} — ${acceso.vehiculos?.placa} — Plaza ${plazaEncontrada?.Numero_Plaza || 'N/A'}.`,
         acceso.Id_Plaza
       );
@@ -219,7 +231,7 @@ export default function AccesoManual() {
       } catch (_) { }
 
       const nombrePuertaSalida = barreraSalida === 'vip' ? 'VIP' : 'Principal';
-      Swal.fire('¡Salida Registrada!', `La plaza quedó libre y la barrera ${nombrePuertaSalida} se está abriendo.`, 'success');
+      Swal.fire('Salida Registrada', `La plaza quedó libre y la barrera ${nombrePuertaSalida} se está abriendo.`, 'success');
       loadData();
     } catch (err) {
       Swal.fire('Error', err.message, 'error');
@@ -245,7 +257,7 @@ export default function AccesoManual() {
         });
         if (respuesta.ok) {
           Swal.fire('Barrera Abierta', 'El comando se ha enviado exitosamente.', 'success');
-          registrarLog('APERTURA_MANUAL_BARRERA', `Apertura manual de ${tituloConfirmacion}`);
+          registrarLog('Entrada', `Apertura manual de ${tituloConfirmacion}`);
         } else {
           Swal.fire('Error', 'El servidor respondió con un error.', 'error');
         }

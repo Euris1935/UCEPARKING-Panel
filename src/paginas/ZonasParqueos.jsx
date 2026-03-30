@@ -6,9 +6,11 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaSearch, FaEdit, FaTrash, FaParking, FaMapMarkerAlt, FaPlus, FaSave, FaArrowsAltH, FaArrowsAltV } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function ZonasParqueo() {
   const { tienePermiso } = useRbac();
+  const { orgId } = useOrg();
   const canCreate = tienePermiso('Zonas de Parqueo', 'crear');
   const canEdit = tienePermiso('Zonas de Parqueo', 'editar');
   const canDelete = tienePermiso('Zonas de Parqueo', 'eliminar');
@@ -69,7 +71,8 @@ export default function ZonasParqueo() {
           Id_Zona: idZona,
           id_estado: idLibre,
           Amplitud: 2.50,
-          Longitud: 5.00
+          Longitud: 5.00,
+          organizacion_id: orgId
         });
         insertadas++;
       }
@@ -87,8 +90,13 @@ export default function ZonasParqueo() {
     e.preventDefault();
     if (!zoneForm.Nombre_Zona.trim()) return Swal.fire('Error', "Nombre obligatorio.", 'warning');
     if (parseInt(zoneForm.Capacidad_Total) <= 0) return Swal.fire('Error', "Capacidad debe ser > 0.", 'warning');
+    if (!orgId) return Swal.fire('Error', 'Contexto de organización no detectado.', 'error');
 
-    const payload = { Nombre_Zona: zoneForm.Nombre_Zona.trim(), Capacidad_Total: parseInt(zoneForm.Capacidad_Total) };
+    const payload = { 
+      Nombre_Zona: zoneForm.Nombre_Zona.trim(), 
+      Capacidad_Total: parseInt(zoneForm.Capacidad_Total),
+      organizacion_id: orgId
+    };
     const estaCreando = !editingZone;
 
     // Si es nueva zona, previsualizar el código y pedir confirmación
@@ -268,7 +276,8 @@ export default function ZonasParqueo() {
         Numero_Plaza: plazaForm.Numero_Plaza,
         Id_Zona: parseInt(plazaForm.Id_Zona),
         Amplitud: parseFloat(plazaForm.Amplitud),
-        Longitud: parseFloat(plazaForm.Longitud)
+        Longitud: parseFloat(plazaForm.Longitud),
+        organizacion_id: orgId
       };
 
       if (editingPlaza) {
