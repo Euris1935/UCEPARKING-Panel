@@ -20,6 +20,7 @@ export default function Sensores() {
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [currentPersonaId, setCurrentPersonaId] = useState(null);
 
   const initialForm = {
     id_tipo: '',
@@ -38,6 +39,14 @@ export default function Sensores() {
   const [formData, setFormData] = useState(initialForm);
 
   useEffect(() => {
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (data) setCurrentPersonaId(data.id_persona);
+      }
+    };
+    init();
     loadData();
   }, []);
 
@@ -76,6 +85,24 @@ export default function Sensores() {
     } catch (error) {
       console.error("Error cargando datos:", error.message);
     }
+  };
+
+  const registrarLog = async (tipo, descripcion, idPlaza = null, idDisp = null) => {
+    if (!currentPersonaId) return;
+    try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Hardware').maybeSingle();
+      await supabase.from('eventos').insert([{
+        Fecha_Hora: new Date().toISOString(),
+        Descripcion: descripcion,
+        Id_Plaza: idPlaza,
+        id_persona: currentPersonaId,
+        id_tipo_evento: te?.id_tipo || null,
+        id_origen_evento: oe?.id_origen || null,
+        id_dispositivo: idDisp,
+        organizacion_id: orgId
+      }]);
+    } catch (e) { console.warn('Log error:', e.message); }
   };
 
   const handleEdit = (disp) => {
@@ -148,10 +175,31 @@ export default function Sensores() {
           .eq('id_dispositivo', editingId);
           
         if (error) throw error;
+        
+        // Log de actualización
+        const nuevoEstado = estadosSensor.find(e => e.id_estado === parseInt(formData.id_estado))?.nombre_estado;
+        const tipoLog = parseInt(formData.id_estado) === 1 ? 'Dispositivo Online' : 
+                      parseInt(formData.id_estado) === 3 ? 'Mantenimiento En Progreso' : 'Dispositivo Offline';
+        
+        await registrarLog(
+          tipoLog,
+          `Estado actualizado de ${tipoObj?.nombre_tipo || 'Equipo'}: ${nuevoEstado}.`,
+          formData.id_plaza || null,
+          editingId
+        );
+
         Swal.fire('Éxito', 'Registro actualizado', 'success');
       } else {
-        const { error } = await supabase.from('dispositivos').insert([dispData]);
+        const { data: nDisp, error } = await supabase.from('dispositivos').insert([dispData]).select('id_dispositivo').single();
         if (error) throw error;
+        
+        await registrarLog(
+          'Dispositivo Online',
+          `Nuevo dispositivo registrado: ${tipoObj?.nombre_tipo || 'Equipo'}.`,
+          formData.id_plaza || null,
+          nDisp.id_dispositivo
+        );
+
         Swal.fire('Éxito', 'Registro creado', 'success');
       }
 
@@ -185,7 +233,15 @@ export default function Sensores() {
     if (result.isConfirmed) {
       const { error } = await supabase.from('dispositivos').delete().eq('id_dispositivo', disp.id_dispositivo);
       if (error) Swal.fire('Error', error.message, 'error');
-      else loadData();
+      else {
+        await registrarLog(
+          'Dispositivo Offline',
+          `Dispositivo eliminado: ${disp.tipos_dispositivos?.nombre_tipo || 'Equipo'}.`,
+          disp.id_plaza || null,
+          disp.id_dispositivo
+        );
+        loadData();
+      }
     }
   };
 
@@ -370,7 +426,7 @@ export default function Sensores() {
                     </div>
 
                     <div className="border-t border-purple-100 pt-3">
-                      <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-3">📡 Parámetros IoT Remotos</p>
+                      <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-3">Parámetros IoT Remotos</p>
                       <div className="grid grid-cols-3 gap-2">
                         <div>
                           <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Frecuencia (seg)</label>

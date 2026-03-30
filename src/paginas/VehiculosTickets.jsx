@@ -116,7 +116,7 @@ function Row({ label, value, bold, mono }) {
    Componente Principal
 ───────────────────────────────────────────── */
 export default function VehiculosTickets() {
-  const { orgId } = useOrg();
+  const { orgId, loadingOrg } = useOrg();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos' | 'flota'
 
@@ -300,6 +300,7 @@ export default function VehiculosTickets() {
     const placaLimpia = visitanteForm.placa.replace(/[^A-Z0-9]/gi, '');
     if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres (sin guiones).', 'warning');
     if (!visitanteForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
+    if (loadingOrg) return Swal.fire('Espere', 'Cargando contexto de organización...', 'info');
     if (!orgId) return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Recarga la página.', 'error');
 
     setLoading(true);
@@ -328,8 +329,7 @@ export default function VehiculosTickets() {
         const { data: newV, error: vErr } = await supabase
           .from('visitantes')
           .insert([{ 
-            id_persona: newPersona.id_persona,
-            organizacion_id: orgId
+            id_persona: newPersona.id_persona
           }])
           .select('id_visitante')
           .single();

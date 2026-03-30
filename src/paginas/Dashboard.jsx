@@ -99,7 +99,7 @@ export default function Dashboard() {
       if (!alertaYaEnviada.current) {
         alertaYaEnviada.current = true;
         supabase.from('notificaciones').insert([{
-          Contenido: `⚠️ Alerta de capacidad: el parqueo está al ${pct}% de ocupación (umbral configurado: ${umbral}%). Plazas libres: ${stats.libres}.`,
+          Contenido: `Alerta de capacidad: el parqueo está al ${pct}% de ocupación (umbral configurado: ${umbral}%). Plazas libres: ${stats.libres}.`,
           Leida: false,
           organizacion_id: orgId
         }]).then(({ error }) => { if (error) console.warn('Error alerta RF3:', error.message); });
@@ -121,7 +121,7 @@ export default function Dashboard() {
         <div className="mb-6 flex items-center gap-4 bg-red-600 text-white px-5 py-3 rounded-xl shadow-lg animate-pulse">
           <FaBell className="text-2xl shrink-0" />
           <div className="flex-1">
-            <p className="font-bold text-sm">⚠️ ALERTA DE CAPACIDAD — Parqueo al {alertaBanner.pct}%</p>
+            <p className="font-bold text-sm">ALERTA DE CAPACIDAD — Parqueo al {alertaBanner.pct}%</p>
             <p className="text-xs opacity-90">Se superó el umbral configurado del {alertaBanner.umbral}%.
               Solo quedan <strong>{stats.libres}</strong> plaza(s) libre(s).
               Notificación registrada automáticamente.

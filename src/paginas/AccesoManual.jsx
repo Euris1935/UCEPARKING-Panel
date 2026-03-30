@@ -7,7 +7,7 @@ import { useOrg } from '../contexts/OrgContext';
 import { playBeep } from '../utils/audio';
 
 export default function AccesoManual() {
-  const { orgId } = useOrg();
+  const { orgId, loadingOrg } = useOrg();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos'
 
@@ -106,6 +106,8 @@ export default function AccesoManual() {
     e.preventDefault();
     if (!entradaForm.vehiculo_id) return Swal.fire('Atención', 'Seleccione un vehículo/cliente.', 'warning');
     if (!entradaForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
+    if (loadingOrg) return Swal.fire('Espere', 'Cargando contexto de organización...', 'info');
+    if (!orgId) return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Verifique que su usuario esté vinculado a un empleado/organización.', 'error');
 
     setLoading(true);
     try {
@@ -204,12 +206,7 @@ export default function AccesoManual() {
         }).eq('Id_Plaza', acceso.Id_Plaza);
       }
 
-      // 2b. Si hay un ticket asociado, marcarlo como usado (id_estado: 2)
-      if (acceso.ticket_id) {
-        await supabase.from('tickets')
-          .update({ id_estado: 2 })
-          .eq('Id_Ticket', acceso.ticket_id);
-      }
+
 
       // 3. Log — incluye nombre de persona (#16)
       const nombreSalida = `${acceso.vehiculos?.personas?.nombre || ''} ${acceso.vehiculos?.personas?.apellido || ''}`.trim() || 'Desconocido';

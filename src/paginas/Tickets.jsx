@@ -77,7 +77,7 @@ const calcTiempo = (inicio, fin) => {
 };
 
 export default function Tickets() {
-  const { orgId } = useOrg();
+  const { orgId, loadingOrg } = useOrg();
   const { tienePermiso } = useRbac();
   const canCreate = tienePermiso('Módulo Parqueo', 'crear');
   const canEdit = tienePermiso('Módulo Parqueo', 'editar');
@@ -175,7 +175,8 @@ export default function Tickets() {
     const placaLimpia = visitanteForm.placa.replace(/[^A-Z0-9]/gi, '');
     if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres.', 'warning');
     if (!visitanteForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
-    if (!orgId) return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Recarga la página.', 'error');
+    if (loadingOrg) return Swal.fire('Espere', 'Cargando contexto de organización...', 'info');
+    if (!orgId) return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Verifique que su usuario esté vinculado a un empleado/organización.', 'error');
     setLoading(true);
     try {
       let visitanteId = visitanteForm.id_visitante;
@@ -186,8 +187,7 @@ export default function Tickets() {
         const { data: newV, error: vErr } = await supabase
           .from('visitantes')
           .insert([{ 
-            id_persona: newPersona.id_persona,
-            organizacion_id: orgId 
+            id_persona: newPersona.id_persona
           }])
           .select('id_visitante')
           .single();
