@@ -1,5 +1,3 @@
-
-
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
@@ -21,6 +19,7 @@ export default function Empleados() {
     const [roles, setRoles] = useState([]);
     const [departamentos, setDepartamentos] = useState([]);
     const [organizaciones, setOrganizaciones] = useState([]);
+    const [usuariosDisponibles, setUsuariosDisponibles] = useState([]);
 
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
@@ -30,13 +29,7 @@ export default function Empleados() {
     const [editingPersonaId, setEditingPersonaId] = useState(null);
 
     const initialForm = {
-        nombre: '',
-        apellido: '',
-        email: '',
-        telefono: '',
-        sexo: 'M',
-        fecha_nacimiento: '',
-        direccion: '',
+        id_persona: '',
         rol_id: '',
         departamento_id: '',
         organizacion_id: ''
@@ -49,6 +42,18 @@ export default function Empleados() {
     }, []);
 
     const loadData = async () => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        let currentAdminOrgId = null;
+
+        if (sessionData?.session?.user) {
+            const { data: adminUsuario } = await supabase.from('usuarios').select('id_persona').eq('id', sessionData.session.user.id).single();
+            if (adminUsuario?.id_persona) {
+                const { data: adminEmp } = await supabase.from('empleados').select('organizacion_id').eq('id_persona', adminUsuario.id_persona).maybeSingle();
+                if (adminEmp?.organizacion_id) {
+                    currentAdminOrgId = adminEmp.organizacion_id;
+                }
+            }
+        }
 
         const { data: rolesData } = await supabase.from('roles').select('*');
         const { data: deptData } = await supabase.from('departamentos').select('*');
@@ -58,10 +63,12 @@ export default function Empleados() {
         setDepartamentos(deptData || []);
         setOrganizaciones(orgData || []);
 
-        // (#22) UCE como organización por defecto
         const uceOrg = (orgData || []).find(o => o.Nombre_Organizacion?.toUpperCase().includes('UCE'));
-        if (uceOrg && !editingEmpleadoId) {
-            setFormData(prev => ({ ...prev, organizacion_id: prev.organizacion_id || uceOrg.Id_Organizacion }));
+        if (!editingEmpleadoId) {
+            setFormData(prev => ({ 
+                ...prev, 
+                organizacion_id: currentAdminOrgId || prev.organizacion_id || uceOrg?.Id_Organizacion 
+            }));
         }
 
         // Cargar empleados
@@ -73,9 +80,11 @@ export default function Empleados() {
 
             const { data: empData, error: empError } = await supabase.from('empleados').select('*').order('Id_Empleado', { ascending: true });
             const { data: persData, error: persError } = await supabase.from('personas').select('*');
+            const { data: usrsData, error: usrsError } = await supabase.from('usuarios').select('*');
 
             if (empError) throw empError;
             if (persError) throw persError;
+            if (usrsError) throw usrsError;
 
 
             const listaCompleta = empData.map(emp => {
@@ -114,6 +123,20 @@ export default function Empleados() {
 
             setEmpleados(listaCompleta);
 
+            // Obtener usuarios disponibles (que no son empleados)
+            const empPersonaIds = empData.map(e => e.id_persona);
+            const disponibles = usrsData
+                .filter(u => !empPersonaIds.includes(u.id_persona))
+                .map(u => {
+                    const p = persData.find(p => p.id_persona === u.id_persona);
+                    return { 
+                        ...u, 
+                        nombreCompleto: (p?.nombre || '') + ' ' + (p?.apellido || ''), 
+                        email: p?.email 
+                    };
+                });
+            setUsuariosDisponibles(disponibles);
+
         } catch (error) {
             console.error("Error cargando empleados:", error);
         }
@@ -121,16 +144,10 @@ export default function Empleados() {
 
     const handleEdit = (empleado) => {
         setEditingEmpleadoId(empleado.Id_Empleado);
-        setEditingPersonaId(empleado.id_persona);
+        setEditingPersonaId(empleado.persona_id);
 
         setFormData({
-            nombre: empleado.nombre,
-            apellido: empleado.apellido,
-            email: empleado.email,
-            telefono: empleado.telefono,
-            sexo: empleado.sexo,
-            fecha_nacimiento: empleado.fecha_nacimiento,
-            direccion: empleado.direccion,
+            id_persona: empleado.persona_id,
             rol_id: empleado.rol_id,
             departamento_id: empleado.departamento_id,
             organizacion_id: empleado.organizacion_id
@@ -148,30 +165,13 @@ export default function Empleados() {
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        // Validacion de edad
-        if (formData.fecha_nacimiento) {
-            const hoy = new Date();
-            const nacimiento = new Date(formData.fecha_nacimiento);
-            let edad = hoy.getFullYear() - nacimiento.getFullYear();
-            const mes = hoy.getMonth() - nacimiento.getMonth();
-            if (mes < 0 || (mes === 0 && hoy.getDate() < nacimiento.getDate())) {
-                edad--;
-            }
-            if (edad < 18) {
-                return Swal.fire('Error', 'El empleado debe ser mayor de 18 años.', 'error');
-            }
-        } else {
-            return Swal.fire('Atención', 'La fecha de nacimiento es obligatoria.', 'warning');
-        }
-
-        if (!formData.rol_id || !formData.departamento_id || !formData.organizacion_id) {
-            return Swal.fire('Atención', 'Rol, Departamento y Organización son obligatorios.', 'warning');
+        if (!formData.id_persona || !formData.rol_id || !formData.departamento_id || !formData.organizacion_id) {
+            return Swal.fire('Atención', 'Usuario, Rol, Departamento y Organización son obligatorios.', 'warning');
         }
 
         try {
             Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading() });
 
-            const { nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion } = formData;
             // Convertir a enteros para garantizar el tipo correcto en la BD
             const rol_id = parseInt(formData.rol_id);
             const departamento_id = parseInt(formData.departamento_id);
@@ -179,53 +179,30 @@ export default function Empleados() {
 
             if (isUpdating) {
 
-                // Actualizar Persona
-                const { error: pError } = await supabase
-                    .from('personas')
-                    .update({ nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion })
-                    .eq('id_persona', editingPersonaId);
-
-                if (pError) throw pError;
-
-                // Actualizar Empleado — usar count para detectar si realmente se actualizó
+                // Actualizar Empleado
                 const { error: eError, count } = await supabase
                     .from('empleados')
                     .update({ rol_id, departamento_id, organizacion_id }, { count: 'exact' })
                     .eq('Id_Empleado', editingEmpleadoId);
 
                 if (eError) throw eError;
-                if (count === 0) throw new Error('No se actualizó ninguna fila en empleados. Verifica los permisos (RLS) en Supabase.');
+                if (count === 0) throw new Error('No se actualizó ninguna fila en empleados.');
 
-                Swal.fire('Actualizado', 'Datos del empleado modificados.', 'success');
+                Swal.fire('Actualizado', 'Datos laborales del empleado modificados.', 'success');
 
             } else {
-
-                // Crear Persona
-                const { data: personaData, error: pError } = await supabase
-                    .from('personas')
-                    .insert([{
-                        nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion
-                    }])
-                    .select()
-                    .single();
-
-                if (pError) throw new Error("Error creando persona: " + pError.message);
 
                 //  Crear Empleado vinculado al id de la persona
                 const { error: eError } = await supabase
                     .from('empleados')
                     .insert([{
-                        id_persona: personaData.id_persona,
+                        id_persona: formData.id_persona,
                         rol_id,
                         departamento_id,
                         organizacion_id
                     }]);
 
-                if (eError) {
-                    // Si falla, borramos la persona para no dejar basura
-                    await supabase.from('personas').delete().eq('id_persona', personaData.id_persona);
-                    throw eError;
-                }
+                if (eError) throw eError;
 
                 Swal.fire('Registrado', 'Nuevo empleado añadido al sistema.', 'success');
             }
@@ -242,11 +219,11 @@ export default function Empleados() {
     const handleDelete = async (empleado) => {
         const result = await Swal.fire({
             title: '¿Eliminar empleado?',
-            text: "Se eliminará el registro laboral y los datos personales.",
+            text: "Se eliminará el registro laboral del empleado. Los datos de usuario se mantendrán.",
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#d33',
-            confirmButtonText: 'Sí, eliminar todo'
+            confirmButtonText: 'Sí, eliminar como empleado'
         });
 
         if (result.isConfirmed) {
@@ -255,14 +232,7 @@ export default function Empleados() {
                 const { error: eError } = await supabase.from('empleados').delete().eq('Id_Empleado', empleado.Id_Empleado);
                 if (eError) throw eError;
 
-                //
-                const { error: pError } = await supabase.from('personas').delete().eq('id_persona', empleado.id_persona);
-
-                if (pError) {
-                    Swal.fire('Aviso', 'Empleado eliminado, pero la persona tiene otros registros (no se borró la persona).', 'info');
-                } else {
-                    Swal.fire('Eliminado', 'Empleado eliminado correctamente.', 'success');
-                }
+                Swal.fire('Eliminado', 'Empleado eliminado correctamente. El usuario sigue registrado.', 'success');
                 loadData();
 
             } catch (error) {
@@ -302,37 +272,34 @@ export default function Empleados() {
                         </h3>
                         <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
 
-                            <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Información Personal </div>
+                            <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Selección de Usuario</div>
 
-                            <div>
-                                <label className="block text-xs mb-1">Nombre</label>
-                                <input className="w-full border p-2 rounded" value={formData.nombre} onChange={e => setFormData({ ...formData, nombre: e.target.value })} required />
+                            <div className="col-span-2">
+                                <label className="block text-xs mb-1">Usuario Existente</label>
+                                {isUpdating ? (
+                                    <input 
+                                        className="w-full border p-2 rounded bg-gray-100 text-gray-600" 
+                                        value={empleados.find(e => e.Id_Empleado === editingEmpleadoId)?.nombre + ' ' + empleados.find(e => e.Id_Empleado === editingEmpleadoId)?.apellido} 
+                                        disabled 
+                                    />
+                                ) : (
+                                    <select 
+                                        className="w-full border p-2 rounded bg-gray-50"
+                                        value={formData.id_persona}
+                                        onChange={e => setFormData({ ...formData, id_persona: e.target.value })}
+                                        required
+                                    >
+                                        <option value="">-- Seleccionar Usuario Disponible --</option>
+                                        {usuariosDisponibles.map(ud => (
+                                            <option key={ud.id} value={ud.id_persona}>
+                                                {ud.nombreCompleto} ({ud.email || 'Sin Email'})
+                                            </option>
+                                        ))}
+                                    </select>
+                                )}
                             </div>
-                            <div>
-                                <label className="block text-xs mb-1">Apellido</label>
-                                <input className="w-full border p-2 rounded" value={formData.apellido} onChange={e => setFormData({ ...formData, apellido: e.target.value })} required />
-                            </div>
-
-                            <div>
-                                <label className="block text-xs mb-1">Sexo</label>
-                                <select className="w-full border p-2 rounded" value={formData.sexo} onChange={e => setFormData({ ...formData, sexo: e.target.value })}>
-                                    <option value="M">Masculino</option>
-                                    <option value="F">Femenino</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs mb-1">Fecha Nacimiento</label>
-                                <input className="w-full border p-2 rounded" type="date" value={formData.fecha_nacimiento} onChange={e => setFormData({ ...formData, fecha_nacimiento: e.target.value })} required />
-                            </div>
-
-                            <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Contacto</div>
-
-                            <input className="col-span-2 w-full border p-2 rounded" type="email" placeholder="Correo Electrónico (Email)" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} required />
-                            <input className="w-full border p-2 rounded" placeholder="Teléfono" value={formData.telefono} onChange={e => setFormData({ ...formData, telefono: e.target.value })} />
-                            <input className="w-full border p-2 rounded" placeholder="Dirección" value={formData.direccion} onChange={e => setFormData({ ...formData, direccion: e.target.value })} />
 
                             <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Datos Laborales</div>
-
 
                             <div>
                                 <label className="block text-xs mb-1 font-bold text-purple-700">Rol</label>

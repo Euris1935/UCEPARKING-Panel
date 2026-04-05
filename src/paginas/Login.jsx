@@ -140,18 +140,8 @@ export default function Login() {
         if (error) throw error;
 
         
-        if (data.user) {
-            const { data: usuarioValido } = await supabase
-                .from('usuarios')
-                .select('id')
-                .eq('id', data.user.id)
-                .maybeSingle();
-
-            if (!usuarioValido) {
-                await supabase.auth.signOut(); 
-                throw new Error("Acceso denegado: Este usuario no tiene un perfil activo.");
-            }
-        }
+        // La sesión fue exitosa — el RbacContext cargará los módulos/permisos.
+        // Si el usuario no tiene perfil en 'usuarios', el contexto lo detecta sin bloquear.
       }
     } catch (error) {
       Swal.fire({
