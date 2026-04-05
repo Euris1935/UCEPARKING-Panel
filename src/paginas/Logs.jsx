@@ -2,14 +2,29 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import { FaSearch, FaFilter, FaSync, FaExclamationTriangle, FaCheckCircle, FaBolt, FaMicrochip, FaHistory } from 'react-icons/fa';
+import { FaSearch, FaFilter, FaSync, FaExclamationTriangle, FaCheckCircle, FaBolt, FaHistory, FaCar, FaCarSide, FaBan, FaTicketAlt, FaTools, FaWifi, FaWrench } from 'react-icons/fa';
 
 const TIPO_COLORES = {
-    'CAMBIO_ESTADO': { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: FaBolt },
-    'ERROR_SENSOR': { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', icon: FaExclamationTriangle },
-    'DESCONEXION': { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', icon: FaMicrochip },
-    'MANTENIMIENTO': { bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', icon: FaCheckCircle },
-    'SISTEMA': { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', icon: FaHistory },
+    'Entrada': { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', icon: FaCar },
+    'Salida': { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: FaCarSide },
+    'Alerta': { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', icon: FaExclamationTriangle },
+    'Reserva Creada': { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200', icon: FaCheckCircle },
+    'Reserva Cancelada': { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200', icon: FaBan },
+    'Ticket Emitido': { bg: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200', icon: FaTicketAlt },
+    'Ticket Cerrado': { bg: 'bg-gray-50', text: 'text-gray-600', border: 'border-gray-200', icon: FaCheckCircle },
+    'Ticket Vencido': { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', icon: FaExclamationTriangle },
+    'Mantenimiento Iniciado': { bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', icon: FaTools },
+    'Mantenimiento Completado': { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', icon: FaCheckCircle },
+    'Mantenimiento En Progreso': { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: FaWrench },
+    'Mantenimiento Cancelado': { bg: 'bg-gray-50', text: 'text-gray-600', border: 'border-gray-200', icon: FaBan },
+    'Mantenimiento En Espera': { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', icon: FaExclamationTriangle },
+    'Acceso Denegado': { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', icon: FaBan },
+    'Dispositivo Offline': { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', icon: FaWifi },
+    'Dispositivo Online': { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: FaWifi },
+    'Entrada LPR Autorizada': { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', icon: FaCar },
+    'Entrada LPR Denegada': { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', icon: FaBan },
+    'Salida LPR': { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: FaCarSide },
+    'Placa No Reconocida': { bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', icon: FaExclamationTriangle },
 };
 const TIPO_DEFAULT = { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200', icon: FaHistory };
 
@@ -56,7 +71,7 @@ export default function Logs() {
         }
     };
 
-    const tiposUnicos = ['TODOS', ...new Set(eventos.map(e => e.tipo_evento?.nombre_tipo).filter(Boolean))];
+    const tiposUnicos = ['TODOS', ...Object.keys(TIPO_COLORES)];
 
     const filtered = eventos.filter(e => {
         const matchTipo = filtroTipo === 'TODOS' || e.tipo_evento?.nombre_tipo === filtroTipo;

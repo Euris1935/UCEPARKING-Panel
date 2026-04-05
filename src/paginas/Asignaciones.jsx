@@ -7,8 +7,10 @@ import Swal from 'sweetalert2';
 import {
     FaSearch, FaPlus, FaUserTie, FaTrash, FaSuitcase, FaCalendarAlt, FaCar, FaEdit
 } from 'react-icons/fa';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function Asignaciones() {
+    const { orgId } = useOrg();
     const [asignaciones, setAsignaciones] = useState([]);
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -173,9 +175,12 @@ export default function Asignaciones() {
 
     // CREAR asignación
     const handleCreate = async () => {
-        const { data: estadoData } = await supabase
-            .from('estado_plaza').select('id_estado').ilike('nombre_estado', 'Asignada').single();
-        const idAsignada = estadoData?.id_estado || 2;
+        const { data: estadosCat } = await supabase.from('estado_plaza').select('id_estado, nombre_estado');
+        const estadoAsig = (estadosCat || []).find(e => 
+            e.nombre_estado.toUpperCase().includes('ASIGN') || 
+            e.nombre_estado.toUpperCase().includes('FIJA')
+        );
+        const idAsignada = estadoAsig?.id_estado || 2;
 
         const { error: insertError } = await supabase.from('asignaciones_parqueo').insert([{
             Id_Empleado_Asignado: parseInt(formData.Id_Empleado),
@@ -183,7 +188,8 @@ export default function Asignaciones() {
             Fecha_Inicio: formData.Fecha_Inicio,
             Fecha_Fin: isPermanent ? null : (formData.Fecha_Fin || null),
             Notas: formData.Notas,
-            id_estado: 1
+            id_estado: 1,
+            organizacion_id: orgId
         }]);
         if (insertError) throw insertError;
 
@@ -200,9 +206,12 @@ export default function Asignaciones() {
         const plazaNueva = parseInt(formData.Id_Plaza);
         const plazaCambia = plazaAnterior !== plazaNueva;
 
-        const { data: estadoData } = await supabase
-            .from('estado_plaza').select('id_estado').ilike('nombre_estado', 'Asignada').single();
-        const idAsignada = estadoData?.id_estado || 2;
+        const { data: estadosCat } = await supabase.from('estado_plaza').select('id_estado, nombre_estado');
+        const estadoAsig = (estadosCat || []).find(e => 
+            e.nombre_estado.toUpperCase().includes('ASIGN') || 
+            e.nombre_estado.toUpperCase().includes('FIJA')
+        );
+        const idAsignada = estadoAsig?.id_estado || 2;
 
         // Actualizar la asignación
         const { error: updateError } = await supabase

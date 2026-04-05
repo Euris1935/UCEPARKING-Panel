@@ -2,6 +2,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
+import { useOrg } from '../contexts/OrgContext';
+import { playBeep } from '../utils/audio';
 import Swal from 'sweetalert2';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -114,6 +116,7 @@ function Row({ label, value, bold, mono }) {
    Componente Principal
 ───────────────────────────────────────────── */
 export default function VehiculosTickets() {
+  const { orgId, loadingOrg } = useOrg();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos' | 'flota'
 
@@ -253,7 +256,8 @@ export default function VehiculosTickets() {
         id_persona: currentPersonaId,
         id_dispositivo: idDispositivo,
         id_tipo_evento: te?.id_tipo || null,
-        id_origen_evento: oe?.id_origen || null
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
       }]);
     } catch (e) { console.warn('Log error:', e.message); }
   };
@@ -296,6 +300,8 @@ export default function VehiculosTickets() {
     const placaLimpia = visitanteForm.placa.replace(/[^A-Z0-9]/gi, '');
     if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres (sin guiones).', 'warning');
     if (!visitanteForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
+    if (loadingOrg) return Swal.fire('Espere', 'Cargando contexto de organización...', 'info');
+    if (!orgId) return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Recarga la página.', 'error');
 
     setLoading(true);
     try {
@@ -322,7 +328,9 @@ export default function VehiculosTickets() {
         // 1b. Insertar en visitantes con la persona recién creada
         const { data: newV, error: vErr } = await supabase
           .from('visitantes')
-          .insert([{ id_persona: newPersona.id_persona }])
+          .insert([{ 
+            id_persona: newPersona.id_persona
+          }])
           .select('id_visitante')
           .single();
         if (vErr) throw vErr;
@@ -335,17 +343,57 @@ export default function VehiculosTickets() {
         ? new Date(Date.now() + minutos * 60000).toISOString()
         : null;
 
-      // 3. Crear Ticket (RF8) — el vehículo de visitante no se guarda en la tabla vehiculos
+      const placa = visitanteForm.placa.toUpperCase();
+      let vehiculoId = null;
+
+      // 2. Buscar o crear el vehículo en la tabla vehiculos
+      const { data: vExistente } = await supabase
+        .from('vehiculos')
+        .select('id_vehiculo')
+        .eq('placa', placa)
+        .maybeSingle();
+
+      const marcaId = visitanteForm.id_marca ? parseInt(visitanteForm.id_marca) : null;
+      const modeloId = visitanteForm.id_modelo ? parseInt(visitanteForm.id_modelo) : null;
+      const colorId = visitanteForm.id_color ? parseInt(visitanteForm.id_color) : null;
+
+      if (vExistente) {
+        vehiculoId = vExistente.id_vehiculo;
+        if (marcaId || modeloId || colorId) {
+          await supabase.from('vehiculos').update({
+            id_marca: marcaId,
+            id_modelo: modeloId,
+            id_color: colorId
+          }).eq('id_vehiculo', vehiculoId);
+        }
+      } else {
+        const { data: vNuevo, error: vErr } = await supabase
+          .from('vehiculos')
+          .insert({ 
+             placa,
+             id_marca: marcaId,
+             id_modelo: modeloId,
+             id_color: colorId,
+             organizacion_id: orgId
+          })
+          .select('id_vehiculo')
+          .single();
+        if (vErr) throw new Error('[Vehículo] Error al crear vehículo: ' + vErr.message);
+        vehiculoId = vNuevo.id_vehiculo;
+      }
+
+      // 3. Crear Ticket (RF8) — se guarda la referencia del vehículo para reimpresiones
       const { data: nuevoTicket, error: tErr } = await supabase
         .from('tickets')
         .insert([{
-          id_vehiculo: null,
-          Placa_Capturada: visitanteForm.placa.toUpperCase(),
+          id_vehiculo: vehiculoId,
+          Placa_Capturada: placa,
           Id_Plaza_Asignada: parseInt(visitanteForm.id_plaza),
           id_visitante: visitanteId,
           id_estado: 1,
           Fecha_Hora_Emision: ahora,
-          Fecha_Hora_Vencimiento: vencimiento
+          Fecha_Hora_Vencimiento: vencimiento,
+          organizacion_id: orgId
         }])
         .select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), plazas(Numero_Plaza)')
         .single();
@@ -357,13 +405,14 @@ export default function VehiculosTickets() {
       nuevoTicket._color = listaColores.find(c => c.id_color === parseInt(visitanteForm.id_color))?.nombre || null;
 
       // 4. Actualizar plaza a Ocupada
+      playBeep();
       await supabase.from('plazas').update({
         id_estado: 2
       }).eq('Id_Plaza', visitanteForm.id_plaza);
 
       // 6. Log automático (RF10)
       await registrarLog(
-        'TICKET_EMITIDO',
+        'Ticket Emitido',
         `Ticket emitido: ${visitanteForm.placa.toUpperCase()} — ${visitanteForm.nombre} ${visitanteForm.apellido} — Plaza ${nuevoTicket?.plazas?.Numero_Plaza || visitanteForm.id_plaza}.`,
         parseInt(visitanteForm.id_plaza)
       );
@@ -377,34 +426,8 @@ export default function VehiculosTickets() {
 
       // 8. Registrar acceso en Supabase + Abrir barrera
       try {
-        const placa = visitanteForm.placa.toUpperCase();
         const plazaId = parseInt(visitanteForm.id_plaza);
         const ticketId = nuevoTicket.Id_Ticket;
-
-        // 8a. Buscar o crear el vehículo en la tabla vehiculos (vehiculo_id es NOT NULL)
-        let vehiculoId = null;
-        const { data: vExistente } = await supabase
-          .from('vehiculos')
-          .select('id_vehiculo')
-          .eq('placa', placa)
-          .maybeSingle();
-
-        if (vExistente) {
-          vehiculoId = vExistente.id_vehiculo;
-        } else {
-          const { data: vNuevo, error: vErr } = await supabase
-            .from('vehiculos')
-            .insert({ 
-               placa,
-               id_marca: visitanteForm.id_marca ? parseInt(visitanteForm.id_marca) : null,
-               id_modelo: visitanteForm.id_modelo ? parseInt(visitanteForm.id_modelo) : null,
-               id_color: visitanteForm.id_color ? parseInt(visitanteForm.id_color) : null
-            })
-            .select('id_vehiculo')
-            .single();
-          if (vErr) console.error('[RegistroAcceso] Error al crear vehículo:', vErr.message);
-          else vehiculoId = vNuevo.id_vehiculo;
-        }
 
         if (vehiculoId) {
           // 8b. Si ya hay registro activo para ese vehículo, cerrarlo primero
@@ -430,7 +453,8 @@ export default function VehiculosTickets() {
               id_vehiculo: vehiculoId,
               ticket_id: ticketId,
               Id_Plaza: plazaId,
-              id_dispositivo_entrada: null
+              id_dispositivo_entrada: null,
+              organizacion_id: orgId
             })
             .select('id_registro')
             .single();
@@ -513,7 +537,7 @@ export default function VehiculosTickets() {
       const nombreSalida = `${ticket.visitantes?.personas?.nombre ?? ticket.personas?.nombre ?? ''} ${ticket.visitantes?.personas?.apellido ?? ticket.personas?.apellido ?? ''}`.trim() || 'Desconocido';
       parallelOps.push(
         registrarLog(
-          'SALIDA_VEHICULO',
+          'Salida',
           `Salida registrada: ${nombreSalida} — ${ticket.Placa_Capturada} — Plaza ${ticket.plazas?.Numero_Plaza}. Tiempo: ${calcTiempo(ticket.Fecha_Hora_Emision, ahora)}.`,
           ticket.Id_Plaza_Asignada
         )
@@ -596,7 +620,7 @@ export default function VehiculosTickets() {
       }
 
       await registrarLog(
-        'TICKET_ANULADO',
+        'Ticket Cerrado',
         `Ticket anulado: ${ticket.Placa_Capturada} — Plaza ${ticket.plazas?.Numero_Plaza}.`,
         ticket.Id_Plaza_Asignada
       );
@@ -708,7 +732,8 @@ export default function VehiculosTickets() {
         placa: vehiculoPersonalForm.placa.toUpperCase(),
         id_marca: vehiculoPersonalForm.id_marca ? parseInt(vehiculoPersonalForm.id_marca) : null,
         id_modelo: vehiculoPersonalForm.id_modelo ? parseInt(vehiculoPersonalForm.id_modelo) : null,
-        id_color: vehiculoPersonalForm.id_color ? parseInt(vehiculoPersonalForm.id_color) : null
+        id_color: vehiculoPersonalForm.id_color ? parseInt(vehiculoPersonalForm.id_color) : null,
+        organizacion_id: orgId
       }]);
       if (error) throw error;
       Swal.fire('Registrado', 'Vehículo vinculado correctamente.', 'success');
@@ -740,7 +765,7 @@ export default function VehiculosTickets() {
         });
         if (respuesta.ok) {
           Swal.fire('Barrera Abierta', 'El comando se ha enviado exitosamente.', 'success');
-          registrarLog('APERTURA_MANUAL', `Apertura manual de ${tituloConfirmacion}`);
+          registrarLog('Entrada', `Apertura manual de ${tituloConfirmacion}`);
         } else {
           Swal.fire('Error', 'El servidor respondió con un error.', 'error');
         }
@@ -935,7 +960,7 @@ export default function VehiculosTickets() {
                   ))}
                 </select>
                 {plazasLibres.length === 0 && (
-                  <p className="text-red-500 text-xs mt-1">⚠️ No hay plazas libres disponibles.</p>
+                  <p className="text-red-500 text-xs mt-1">Atencion: No hay plazas libres disponibles.</p>
                 )}
               </div>
 
@@ -971,7 +996,7 @@ export default function VehiculosTickets() {
               </div>
               {visitanteForm.duracion !== '0' && visitanteForm.duracion && (
                 <p className="text-xs text-amber-600 font-medium -mt-1">
-                  ⏰ Vence a las {new Date(Date.now() + parseInt(visitanteForm.duracion) * 60000).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}
+                  Vence a las {new Date(Date.now() + parseInt(visitanteForm.duracion) * 60000).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}
                 </p>
               )}
 

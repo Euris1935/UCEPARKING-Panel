@@ -6,9 +6,11 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaSearch, FaEdit, FaTrash, FaParking, FaMapMarkerAlt, FaPlus, FaSave, FaArrowsAltH, FaArrowsAltV } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function ZonasParqueo() {
   const { tienePermiso } = useRbac();
+  const { orgId } = useOrg();
   const canCreate = tienePermiso('Zonas de Parqueo', 'crear');
   const canEdit = tienePermiso('Zonas de Parqueo', 'editar');
   const canDelete = tienePermiso('Zonas de Parqueo', 'eliminar');
@@ -69,7 +71,8 @@ export default function ZonasParqueo() {
           Id_Zona: idZona,
           id_estado: idLibre,
           Amplitud: 2.50,
-          Longitud: 5.00
+          Longitud: 5.00,
+          organizacion_id: orgId
         });
         insertadas++;
       }
@@ -87,8 +90,13 @@ export default function ZonasParqueo() {
     e.preventDefault();
     if (!zoneForm.Nombre_Zona.trim()) return Swal.fire('Error', "Nombre obligatorio.", 'warning');
     if (parseInt(zoneForm.Capacidad_Total) <= 0) return Swal.fire('Error', "Capacidad debe ser > 0.", 'warning');
+    if (!orgId) return Swal.fire('Error', 'Contexto de organización no detectado.', 'error');
 
-    const payload = { Nombre_Zona: zoneForm.Nombre_Zona.trim(), Capacidad_Total: parseInt(zoneForm.Capacidad_Total) };
+    const payload = { 
+      Nombre_Zona: zoneForm.Nombre_Zona.trim(), 
+      Capacidad_Total: parseInt(zoneForm.Capacidad_Total),
+      organizacion_id: orgId
+    };
     const estaCreando = !editingZone;
 
     // Si es nueva zona, previsualizar el código y pedir confirmación
@@ -105,7 +113,7 @@ export default function ZonasParqueo() {
         icon: 'question',
         showCancelButton: true,
         confirmButtonColor: '#2563eb',
-        confirmButtonText: '⚡ Crear zona y plazas',
+        confirmButtonText: 'Crear zona y plazas',
         cancelButtonText: 'Solo crear la zona'
       });
 
@@ -122,9 +130,9 @@ export default function ZonasParqueo() {
           const idLibre = est?.id_estado || 1;
           // 3. Generar plazas en lote
           const { total } = await generarPlazasEnLote(zonaCreada.Id_Zona, zonaCreada.Nombre_Zona, cap, idLibre);
-          Swal.fire('✅ Éxito', `Zona creada con ${total} plazas generadas automáticamente.`, 'success');
+          Swal.fire('Éxito', `Zona creada con ${total} plazas generadas automáticamente.`, 'success');
         } else {
-          Swal.fire('✅ Zona creada', 'Puedes agregar plazas manualmente cuando quieras.', 'success');
+          Swal.fire('Zona creada', 'Puedes agregar plazas manualmente cuando quieras.', 'success');
         }
 
         setZoneForm(initialZoneState);
@@ -268,7 +276,8 @@ export default function ZonasParqueo() {
         Numero_Plaza: plazaForm.Numero_Plaza,
         Id_Zona: parseInt(plazaForm.Id_Zona),
         Amplitud: parseFloat(plazaForm.Amplitud),
-        Longitud: parseFloat(plazaForm.Longitud)
+        Longitud: parseFloat(plazaForm.Longitud),
+        organizacion_id: orgId
       };
 
       if (editingPlaza) {
@@ -354,6 +363,7 @@ export default function ZonasParqueo() {
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nombre</th>
                   <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Capacidad</th>
+                  <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Registro</th>
                   <th className="px-6 py-3 text-center text-xs font-bold text-gray-500 uppercase">Acciones</th>
                 </tr>
               </thead>
@@ -361,7 +371,10 @@ export default function ZonasParqueo() {
                 {filteredZonas.map(z => (
                   <tr key={z.Id_Zona} className="hover:bg-gray-50">
                     <td className="px-6 py-3 font-medium text-gray-900"><FaParking className='inline mr-2 text-primary' /> {z.Nombre_Zona}</td>
-                    <td className="px-6 py-3 text-gray-500">{z.Capacidad_Total}</td>
+                    <td className="px-6 py-3 text-gray-500 font-bold">{z.Capacidad_Total}</td>
+                    <td className="px-6 py-3 text-[10px] text-gray-400 font-medium italic">
+                      {z.created_at ? new Date(z.created_at).toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: '2-digit' }) : '-'}
+                    </td>
                     <td className="px-6 py-3 flex gap-2 justify-center">
                       {canEdit && <button onClick={() => handleEditZone(z)} className="text-blue-500 hover:bg-blue-50 p-2 rounded"><FaEdit /></button>}
                       {canDelete && <button onClick={() => handleDeleteZone(z.Id_Zona)} className="text-red-500 hover:bg-red-50 p-2 rounded"><FaTrash /></button>}
@@ -406,9 +419,13 @@ export default function ZonasParqueo() {
                   <div key={plaza.Id_Plaza} className="group relative p-3 rounded border bg-gray-50 hover:border-blue-400 transition-all cursor-pointer h-24 flex flex-col items-center justify-center">
                     <span className="font-bold text-lg text-gray-800">{plaza.Numero_Plaza}</span>
                     <span className="text-[10px] text-gray-400">{plaza.Amplitud}m x {plaza.Longitud}m</span>
-                    {/* #30: Fecha de creación de la plaza */}
+                    {/* Fecha de creación de la plaza */}
                     {plaza.created_at && (
-                      <span className="text-[8px] text-gray-300 mt-0.5">{new Date(plaza.created_at).toLocaleDateString('es-DO')}</span>
+                      <div className="mt-auto pt-1 border-t border-gray-100 w-full text-center">
+                        <span className="text-[9px] text-gray-400 font-medium tracking-tighter">
+                          {new Date(plaza.created_at).toLocaleDateString('es-DO', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                        </span>
+                      </div>
                     )}
                     <div className="absolute inset-0 bg-white/90 hidden group-hover:flex items-center justify-center gap-2 rounded transition-all">
                       {canEdit && <button onClick={() => openPlazaModal(plaza)} className="text-blue-600 bg-blue-100 p-2 rounded-full hover:bg-blue-200" title="Editar"><FaEdit /></button>}
