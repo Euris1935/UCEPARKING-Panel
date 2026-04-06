@@ -67,10 +67,11 @@ export default function Usuarios() {
 
       if (orgErr) {
         console.error('Error get_usuarios_org:', orgErr);
-        // Fallback: carga directa si el RPC falla (p.ej. función aún no publicada)
+        // Fallback: carga directa si el RPC falla
+        // usamos get_all_usuarios que no tiene restriccion de empleado
         await loadUsuariosFallback(rolesData || []);
       } else {
-        // El RPC devuelve: id_usuario, nombre, apellido, email, nombre_rol, id_rol, tipo_usuario
+        // El RPC devuelve: id_usuario, nombre, apellido, email, nombre_rol, id_rol
         const filtrados = (orgUsers || []).filter(u => {
           const rol = u.nombre_rol?.toLowerCase();
           return rol !== 'visitante';
@@ -88,25 +89,28 @@ export default function Usuarios() {
 
   const loadUsuariosFallback = async (rolesDisponibles) => {
     try {
-      const { data: usrs } = await supabase.from('usuarios').select('*');
-      const { data: pers } = await supabase.from('personas').select('*');
-      if (!usrs || !pers) return;
-
+      // Con RLS, la query directa retorna solo el usuario propio.
+      // Intentar a traves de personas + usuarios en paralelo.
+      const [{ data: usrs }, { data: pers }] = await Promise.all([
+        supabase.from('usuarios').select('id, id_persona, rol_id'),
+        supabase.from('personas').select('id_persona, nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion')
+      ]);
+      if (!usrs || usrs.length === 0) return; // RLS bloquea — necesita SQL fix
       const lista = usrs.map(u => {
-        const persona = pers.find(p => p.id_persona === u.id_persona);
+        const persona = (pers || []).find(p => p.id_persona === u.id_persona);
         const rol = rolesDisponibles.find(r => r.Id_Rol === u.rol_id);
         return {
           id_usuario: u.id,
           id_persona: u.id_persona,
-          id_rol: u.rol_id,
-          nombre: persona?.nombre || 'Sin Nombre',
-          apellido: persona?.apellido || '',
-          email: persona?.email || '',
-          telefono: persona?.telefono || '',
-          sexo: persona?.sexo || 'M',
+          id_rol:     u.rol_id,
+          nombre:     persona?.nombre          || 'Sin Nombre',
+          apellido:   persona?.apellido        || '',
+          email:      persona?.email           || '',
+          telefono:   persona?.telefono        || '',
+          sexo:       persona?.sexo            || 'M',
           fecha_nacimiento: persona?.fecha_nacimiento || '',
-          direccion: persona?.direccion || '',
-          nombre_rol: rol?.Nombre_Rol || 'Sin Rol'
+          direccion:  persona?.direccion       || '',
+          nombre_rol: rol?.Nombre_Rol          || 'Sin Rol'
         };
       }).filter(u => u.nombre_rol.toLowerCase() !== 'visitante');
 
@@ -145,71 +149,76 @@ export default function Usuarios() {
     e.preventDefault();
     const { nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion, rol_id, contrasena } = formData;
 
-    if (!rol_id || !nombre || !apellido) {
-      return Swal.fire('Faltan datos', 'Nombre, Apellido y Rol son obligatorios', 'warning');
-    }
-
-    try {
-      Swal.fire({ title: 'Procesando...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
-
-      if (isUpdating) {
-        // Actualizar persona
-        if (editingUser.id_persona) {
-          await supabase.from('personas')
-            .update({ nombre, apellido, telefono, email, sexo, fecha_nacimiento, direccion })
-            .eq('id_persona', editingUser.id_persona);
-        }
-
-        // Cambiar rol usando el nuevo RPC seguro
-        if (parseInt(rol_id) !== editingUser.id_rol) {
-          const { error: rolErr } = await supabase.rpc('cambiar_rol_usuario', {
-            p_usuario_id: editingUser.id_usuario,
-            p_nuevo_rol: parseInt(rol_id)
-          });
-          if (rolErr) throw new Error('Error cambiando rol: ' + rolErr.message);
-        }
-
-        Swal.fire('Éxito', 'Usuario actualizado correctamente.', 'success');
-        handleCancel();
-      } else {
-        // CREAR nuevo usuario
-        if (!email || !contrasena) return Swal.fire('Error', 'Email y contraseña son requeridos para crear un usuario.', 'error');
-
-        // 1. Crear persona
-        const { data: personaData, error: pError } = await supabase
-          .from('personas')
-          .insert([{ nombre, apellido, email, telefono, sexo, fecha_nacimiento: fecha_nacimiento || null, direccion }])
-          .select()
-          .single();
-
-        if (pError) throw new Error('Error creando perfil: ' + pError.message);
-
-        // 2. Crear auth user
-        const { data: authData, error: authError } = await supabase.auth.signUp({ email, password: contrasena });
-
-        if (authError) {
-          await supabase.from('personas').delete().eq('id_persona', personaData.id_persona);
-          throw authError;
-        }
-
-        if (authData.user) {
-          const { error: uError } = await supabase.from('usuarios').insert([{
-            id: authData.user.id,
-            id_persona: personaData.id_persona,
-            rol_id
-          }]);
-          if (uError) throw new Error('Error vinculando usuario: ' + uError.message);
-        }
-
-        Swal.fire('¡Creado!', 'El usuario fue registrado exitosamente.', 'success');
-        handleCancel();
+      if (!rol_id || !nombre || !apellido) {
+        return Swal.fire('Faltan datos', 'Nombre, Apellido y Rol son obligatorios', 'warning');
       }
 
-      loadData();
-    } catch (error) {
-      console.error(error);
-      Swal.fire('Error', error.message, 'error');
-    }
+      try {
+        Swal.fire({ title: 'Procesando...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
+
+        if (isUpdating) {
+          // Actualizar persona
+          if (editingUser.id_persona) {
+            const { error: pErr } = await supabase.from('personas')
+              .update({ nombre, apellido, telefono, email, sexo, fecha_nacimiento: fecha_nacimiento || null, direccion })
+              .eq('id_persona', editingUser.id_persona);
+            if (pErr) console.warn('personas update:', pErr.message);
+          }
+
+          // Cambiar rol usando el nuevo RPC seguro
+          if (parseInt(rol_id) !== editingUser.id_rol) {
+            const { error: rolErr } = await supabase.rpc('cambiar_rol_usuario', {
+              p_usuario_id: editingUser.id_usuario,
+              p_nuevo_rol: parseInt(rol_id)
+            });
+            if (rolErr) throw new Error('Error cambiando rol: ' + rolErr.message);
+          }
+
+          Swal.fire('Éxito', 'Usuario actualizado correctamente.', 'success');
+          handleCancel();
+        } else {
+          // ── CREAR NUEVO USUARIO ──────────────────────────────────────────
+          // supabase.auth.signUp() NO funciona para crear usuarios desde admin:
+          //   - Crea la sesión del admin actual (no crea otro usuario)
+          //   - Requiere confirmación de email (el usuario queda pendiente)
+          // Solucion: usar RPC crear_usuario_admin (SECURITY DEFINER)
+          if (!email || !contrasena)
+            return Swal.fire('Error', 'Email y contraseña son requeridos.', 'error');
+
+          const { data: resultado, error: rpcError } = await supabase.rpc('crear_usuario_admin', {
+            p_email:    email,
+            p_password: contrasena,
+            p_nombre:   nombre,
+            p_apellido: apellido,
+            p_telefono: telefono   || null,
+            p_sexo:     sexo       || 'M',
+            p_fecha_nacimiento: fecha_nacimiento || null,
+            p_direccion: direccion || null,
+            p_rol_id:   parseInt(rol_id)
+          });
+
+          if (rpcError) {
+            // Si la RPC no existe aun, mostrar instrucciones de SQL
+            if (rpcError.code === 'PGRST202' || rpcError.message.includes('function') || rpcError.message.includes('exist')) {
+              return Swal.fire({
+                title: 'SQL requerido',
+                html: `La función <code>crear_usuario_admin</code> no existe en la BD. <br><br>
+                       Ejecuta el script SQL provisto en el editor de Supabase y vuelve a intentarlo.`,
+                icon: 'warning'
+              });
+            }
+            throw new Error(rpcError.message);
+          }
+
+          Swal.fire('¡Creado!', `Usuario <b>${email}</b> registrado exitosamente. Ya puede iniciar sesión.`, 'success');
+          handleCancel();
+        }
+
+        loadData();
+      } catch (error) {
+        console.error(error);
+        Swal.fire('Error', error.message, 'error');
+      }
   };
 
   // ── Cambio rápido de rol (inline) ─────────────────────────────────────────

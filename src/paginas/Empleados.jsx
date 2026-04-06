@@ -3,430 +3,478 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaSearch, FaUserTie, FaTrash, FaPlus, FaArrowLeft, FaMapMarkerAlt, FaEnvelope, FaBuilding, FaPhone, FaEdit } from 'react-icons/fa';
+import {
+  FaSearch, FaUserTie, FaTrash, FaPlus, FaArrowLeft,
+  FaBuilding, FaEdit, FaTimes, FaCheck, FaUserCheck,
+  FaSitemap, FaUsers
+} from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 
 export default function Empleados() {
-    const { tienePermiso } = useRbac();
-    const canCreate = tienePermiso('Módulo Personal', 'crear');
-    const canEdit = tienePermiso('Módulo Personal', 'editar');
-    const canDelete = tienePermiso('Módulo Personal', 'eliminar');
+  const { tienePermiso } = useRbac();
+  const canCreate = tienePermiso('Módulo Personal', 'crear');
+  const canEdit   = tienePermiso('Módulo Personal', 'editar');
+  const canDelete = tienePermiso('Módulo Personal', 'eliminar');
 
-    const navigate = useNavigate();
-    const [empleados, setEmpleados] = useState([]);
+  const navigate = useNavigate();
 
-    // Estados 
-    const [roles, setRoles] = useState([]);
-    const [departamentos, setDepartamentos] = useState([]);
-    const [organizaciones, setOrganizaciones] = useState([]);
-    const [usuariosDisponibles, setUsuariosDisponibles] = useState([]);
+  // ── Datos generales ─────────────────────────────────────────────────────────
+  const [empleados,           setEmpleados]           = useState([]);
+  const [departamentos,       setDepartamentos]       = useState([]);
+  const [usuariosSinEmpleo,   setUsuariosSinEmpleo]   = useState([]); // usuarios no empleados aún
+  const [adminOrgId,          setAdminOrgId]          = useState(null);
+  const [adminOrgNombre,      setAdminOrgNombre]      = useState('');
+  const [searchTerm,          setSearchTerm]          = useState('');
+  const [loading,             setLoading]             = useState(false);
 
-    const [searchTerm, setSearchTerm] = useState('');
-    const [showModal, setShowModal] = useState(false);
+  // ── Panel lateral ───────────────────────────────────────────────────────────
+  const [panelOpen,     setPanelOpen]     = useState(false);
+  const [editingEmp,    setEditingEmp]    = useState(null);
+  const [formData,      setFormData]      = useState({ id_persona: '', departamento_id: '' });
 
-    // editar
-    const [editingEmpleadoId, setEditingEmpleadoId] = useState(null);
-    const [editingPersonaId, setEditingPersonaId] = useState(null);
+  const isUpdating = !!editingEmp;
 
-    const initialForm = {
-        id_persona: '',
-        rol_id: '',
-        departamento_id: '',
-        organizacion_id: ''
-    };
-    const [formData, setFormData] = useState(initialForm);
-    const isUpdating = !!editingEmpleadoId;
+  // ────────────────────────────────────────────────────────────────────────────
+  useEffect(() => { init(); }, []);
 
-    useEffect(() => {
-        loadData();
-    }, []);
+  const init = async () => {
+    setLoading(true);
+    try {
+      // 1. Obtener org del admin activo
+      const { data: { user } } = await supabase.auth.getUser();
+      let orgId   = null;
+      let orgNom  = '';
 
-    const loadData = async () => {
-        const { data: sessionData } = await supabase.auth.getSession();
-        let currentAdminOrgId = null;
+      if (user) {
+        const { data: uRow } = await supabase
+          .from('usuarios').select('id_persona').eq('id', user.id).single();
 
-        if (sessionData?.session?.user) {
-            const { data: adminUsuario } = await supabase.from('usuarios').select('id_persona').eq('id', sessionData.session.user.id).single();
-            if (adminUsuario?.id_persona) {
-                const { data: adminEmp } = await supabase.from('empleados').select('organizacion_id').eq('id_persona', adminUsuario.id_persona).maybeSingle();
-                if (adminEmp?.organizacion_id) {
-                    currentAdminOrgId = adminEmp.organizacion_id;
-                }
-            }
+        if (uRow?.id_persona) {
+          const { data: empRow } = await supabase
+            .from('empleados')
+            .select('organizacion_id, organizaciones(Nombre_Organizacion)')
+            .eq('id_persona', uRow.id_persona)
+            .maybeSingle();
+
+          orgId  = empRow?.organizacion_id   || null;
+          orgNom = empRow?.organizaciones?.Nombre_Organizacion || '';
         }
+      }
 
-        const { data: rolesData } = await supabase.from('roles').select('*');
-        const { data: deptData } = await supabase.from('departamentos').select('*');
-        const { data: orgData } = await supabase.from('organizaciones').select('*');
+      setAdminOrgId(orgId);
+      setAdminOrgNombre(orgNom);
 
-        setRoles(rolesData || []);
-        setDepartamentos(deptData || []);
-        setOrganizaciones(orgData || []);
+      // 2. Catálogos
+      const { data: deptData } = await supabase.from('departamentos').select('*');
+      setDepartamentos(deptData || []);
 
-        const uceOrg = (orgData || []).find(o => o.Nombre_Organizacion?.toUpperCase().includes('UCE'));
-        if (!editingEmpleadoId) {
-            setFormData(prev => ({ 
-                ...prev, 
-                organizacion_id: currentAdminOrgId || prev.organizacion_id || uceOrg?.Id_Organizacion 
-            }));
-        }
+      // 3. Empleados + datos de persona
+      await cargarEmpleados(deptData || []);
 
-        // Cargar empleados
-        await loadEmpleados(rolesData, deptData, orgData);
-    };
+    } catch (err) {
+      console.error('init error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const loadEmpleados = async (rolesList, deptList, orgList) => {
-        try {
+  const cargarEmpleados = async (deptList) => {
+    const { data: emps } = await supabase.from('empleados').select('*').order('Id_Empleado');
 
-            const { data: empData, error: empError } = await supabase.from('empleados').select('*').order('Id_Empleado', { ascending: true });
-            const { data: persData, error: persError } = await supabase.from('personas').select('*');
-            const { data: usrsData, error: usrsError } = await supabase.from('usuarios').select('*');
+    const { data: orgUsers, error: rpcErr } = await supabase.rpc('get_usuarios_org');
+    if (rpcErr) console.warn('get_usuarios_org error:', rpcErr.message);
+    const todosLosUsuarios = orgUsers || [];
 
-            if (empError) throw empError;
-            if (persError) throw persError;
-            if (usrsError) throw usrsError;
+    const lista = (emps || []).map(emp => {
+      const uRow  = todosLosUsuarios.find(u => u.id_persona === emp.id_persona);
+      const depto = deptList.find(d => d.Id_Departamento === emp.departamento_id);
+      return {
+        Id_Empleado:     emp.Id_Empleado,
+        persona_id:      emp.id_persona,
+        departamento_id: emp.departamento_id,
+        organizacion_id: emp.organizacion_id,
+        nombre:          uRow?.nombre   || 'Sin Nombre',
+        apellido:        uRow?.apellido || '',
+        email:           uRow?.email    || '',
+        nombre_depto:    depto?.Nombre_Departamento || 'Sin Depto',
+      };
+    });
+    setEmpleados(lista);
 
+    const empPersonaIds = new Set((emps || []).map(e => e.id_persona));
+    const disponibles = todosLosUsuarios
+      .filter(u => u.id_persona && !empPersonaIds.has(u.id_persona))
+      .map(u => ({
+        id_persona:     u.id_persona,
+        nombreCompleto: `${u.nombre || ''} ${u.apellido || ''}`.trim(),
+        email:          u.email || '',
+      }))
+      .filter(u => u.nombreCompleto);
+    setUsuariosSinEmpleo(disponibles);
+  };
 
-            const listaCompleta = empData.map(emp => {
-                const persona = persData.find(p => p.id_persona === emp.id_persona);
+  // ── Abrir panel para crear ──
+  const abrirCrear = () => {
+    setEditingEmp(null);
+    setFormData({ id_persona: '', departamento_id: '' });
+    setPanelOpen(true);
+  };
 
+  // ── Abrir panel para editar ──
+  const abrirEditar = (emp) => {
+    setEditingEmp(emp);
+    setFormData({
+      id_persona:      emp.persona_id,
+      departamento_id: emp.departamento_id || '',
+    });
+    setPanelOpen(true);
+  };
 
-                const rol = rolesList?.find(r => r.Id_Rol === emp.rol_id);
-                const depto = deptList?.find(d => d.Id_Departamento === emp.departamento_id);
-                const org = orgList?.find(o => o.Id_Organizacion === emp.organizacion_id);
+  const cerrarPanel = () => {
+    setPanelOpen(false);
+    setEditingEmp(null);
+    setFormData({ id_persona: '', departamento_id: '' });
+  };
 
-                return {
+  // ── Guardar ─────────────────────────────────────────────────────────────────
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const { id_persona, departamento_id } = formData;
 
-                    Id_Empleado: emp.Id_Empleado,
-                    persona_id: emp.id_persona,
+    if (!departamento_id) {
+      return Swal.fire('Atención', 'Selecciona un departamento.', 'warning');
+    }
+    if (!isUpdating && !id_persona) {
+      return Swal.fire('Atención', 'Selecciona un usuario del sistema.', 'warning');
+    }
 
-                    // Datos Persona
-                    nombre: persona?.nombre || 'Sin Nombre',
-                    apellido: persona?.apellido || '',
-                    email: persona?.email || '',
-                    telefono: persona?.telefono || '',
-                    sexo: persona?.sexo || 'M',
-                    fecha_nacimiento: persona?.fecha_nacimiento || '',
-                    direccion: persona?.direccion || '',
+    try {
+      Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
 
-                    // Datos Laborales (IDs)
-                    rol_id: emp.rol_id,
-                    departamento_id: emp.departamento_id,
-                    organizacion_id: emp.organizacion_id,
+      const payload = {
+        departamento_id: parseInt(departamento_id),
+        ...(adminOrgId ? { organizacion_id: adminOrgId } : {}),
+      };
 
-                    // Datos Visuales (Nombres)
-                    nombre_rol: rol?.Nombre_Rol || 'Sin Asignar',
-                    nombre_depto: depto?.Nombre_Departamento || 'Sin Depto',
-                    nombre_org: org?.Nombre_Organizacion || 'Sin Org'
-                };
-            });
+      if (isUpdating) {
+        const { error } = await supabase
+          .from('empleados')
+          .update(payload)
+          .eq('Id_Empleado', editingEmp.Id_Empleado);
+        if (error) throw error;
+        Swal.fire('Actualizado', 'Datos laborales actualizados.', 'success');
+      } else {
+        const { error } = await supabase
+          .from('empleados')
+          .insert([{ id_persona, ...payload }]);
+        if (error) throw error;
+        Swal.fire('¡Asignado!', 'El usuario fue registrado como empleado.', 'success');
+      }
 
-            setEmpleados(listaCompleta);
+      cerrarPanel();
+      await cargarEmpleados(departamentos);
+    } catch (err) {
+      console.error(err);
+      Swal.fire('Error', err.message, 'error');
+    }
+  };
 
-            // Obtener usuarios disponibles (que no son empleados)
-            const empPersonaIds = empData.map(e => e.id_persona);
-            const disponibles = usrsData
-                .filter(u => !empPersonaIds.includes(u.id_persona))
-                .map(u => {
-                    const p = persData.find(p => p.id_persona === u.id_persona);
-                    return { 
-                        ...u, 
-                        nombreCompleto: (p?.nombre || '') + ' ' + (p?.apellido || ''), 
-                        email: p?.email 
-                    };
-                });
-            setUsuariosDisponibles(disponibles);
+  // ── Eliminar ────────────────────────────────────────────────────────────────
+  const handleDelete = async (emp) => {
+    const r = await Swal.fire({
+      title: '¿Quitar como empleado?',
+      html: `<b>${emp.nombre} ${emp.apellido}</b><br><small class="text-gray-500">Se eliminará la ficha laboral. El usuario del sistema no se borra.</small>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      confirmButtonText: 'Sí, quitar',
+      cancelButtonText: 'Cancelar',
+    });
+    if (!r.isConfirmed) return;
+    const { error } = await supabase.from('empleados').delete().eq('Id_Empleado', emp.Id_Empleado);
+    if (error) return Swal.fire('Error', error.message, 'error');
+    Swal.fire('Eliminado', 'Ficha de empleado eliminada. El usuario del sistema sigue activo.', 'success');
+    await cargarEmpleados(departamentos);
+  };
 
-        } catch (error) {
-            console.error("Error cargando empleados:", error);
-        }
-    };
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+  const filtrados = empleados.filter(e =>
+    `${e.nombre} ${e.apellido} ${e.email}`.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
-    const handleEdit = (empleado) => {
-        setEditingEmpleadoId(empleado.Id_Empleado);
-        setEditingPersonaId(empleado.persona_id);
+  // ════════════════════════════════════════════════════════════════════════════
+  return (
+    <Layout>
+      {/* ── Header ── */}
+      <header className="mb-6 flex justify-between items-center">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
+            <FaUsers className="text-purple-600" /> Gestión de Empleados
+          </h2>
+          <p className="text-gray-500 text-sm mt-1">
+            Convierte usuarios del sistema en empleados y asígnales rol y departamento.
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => navigate('/usuarios')}
+            className="flex items-center gap-2 text-gray-600 bg-gray-100 hover:bg-gray-200 py-2 px-4 rounded-lg font-medium transition"
+          >
+            <FaArrowLeft /> Usuarios
+          </button>
+          {canCreate && (
+            <button
+              onClick={abrirCrear}
+              className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg shadow transition font-semibold"
+            >
+              <FaPlus /> Agregar Empleado
+            </button>
+          )}
+        </div>
+      </header>
 
-        setFormData({
-            id_persona: empleado.persona_id,
-            rol_id: empleado.rol_id,
-            departamento_id: empleado.departamento_id,
-            organizacion_id: empleado.organizacion_id
-        });
-        setShowModal(true);
-    };
+      {/* ── Barra organización del admin ── */}
+      {adminOrgNombre && (
+        <div className="mb-5 flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-xl px-4 py-2.5 w-fit">
+          <FaBuilding className="text-purple-500" />
+          <span className="text-sm font-semibold text-purple-700">Organización activa:</span>
+          <span className="text-sm text-purple-900 font-bold">{adminOrgNombre}</span>
+          <span className="text-xs text-purple-400 ml-1">(los empleados se asignanaqui por defecto)</span>
+        </div>
+      )}
 
-    const closeModal = () => {
-        setShowModal(false);
-        setEditingEmpleadoId(null);
-        setEditingPersonaId(null);
-        setFormData(initialForm);
-    };
+      {/* Contenedor principal con panel lateral */}
+      <div className="flex gap-6">
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-
-        if (!formData.id_persona || !formData.rol_id || !formData.departamento_id || !formData.organizacion_id) {
-            return Swal.fire('Atención', 'Usuario, Rol, Departamento y Organización son obligatorios.', 'warning');
-        }
-
-        try {
-            Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading() });
-
-            // Convertir a enteros para garantizar el tipo correcto en la BD
-            const rol_id = parseInt(formData.rol_id);
-            const departamento_id = parseInt(formData.departamento_id);
-            const organizacion_id = parseInt(formData.organizacion_id);
-
-            if (isUpdating) {
-
-                // Actualizar Empleado
-                const { error: eError, count } = await supabase
-                    .from('empleados')
-                    .update({ rol_id, departamento_id, organizacion_id }, { count: 'exact' })
-                    .eq('Id_Empleado', editingEmpleadoId);
-
-                if (eError) throw eError;
-                if (count === 0) throw new Error('No se actualizó ninguna fila en empleados.');
-
-                Swal.fire('Actualizado', 'Datos laborales del empleado modificados.', 'success');
-
-            } else {
-
-                //  Crear Empleado vinculado al id de la persona
-                const { error: eError } = await supabase
-                    .from('empleados')
-                    .insert([{
-                        id_persona: formData.id_persona,
-                        rol_id,
-                        departamento_id,
-                        organizacion_id
-                    }]);
-
-                if (eError) throw eError;
-
-                Swal.fire('Registrado', 'Nuevo empleado añadido al sistema.', 'success');
-            }
-
-            closeModal();
-            loadData();
-
-        } catch (error) {
-            console.error("Error:", error);
-            Swal.fire('Error', error.message, 'error');
-        }
-    };
-
-    const handleDelete = async (empleado) => {
-        const result = await Swal.fire({
-            title: '¿Eliminar empleado?',
-            text: "Se eliminará el registro laboral del empleado. Los datos de usuario se mantendrán.",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonColor: '#d33',
-            confirmButtonText: 'Sí, eliminar como empleado'
-        });
-
-        if (result.isConfirmed) {
-            try {
-                //  Borrar Empleado
-                const { error: eError } = await supabase.from('empleados').delete().eq('Id_Empleado', empleado.Id_Empleado);
-                if (eError) throw eError;
-
-                Swal.fire('Eliminado', 'Empleado eliminado correctamente. El usuario sigue registrado.', 'success');
-                loadData();
-
-            } catch (error) {
-                Swal.fire('Error', error.message, 'error');
-            }
-        }
-    };
-
-    const filteredEmpleados = empleados.filter(e =>
-        (e.nombre + ' ' + e.apellido).toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    return (
-        <Layout>
-            <header className="mb-6 flex justify-between items-center">
-                <div>
-                    <h2 className="text-3xl font-bold text-gray-900">Gestión de Empleados</h2>
-                    <p className="text-gray-500">Personal administrativo y operativo.</p>
-                </div>
-                <div className="flex gap-3">
-                    <button onClick={() => navigate('/usuarios')} className="flex items-center gap-2 text-gray-600 bg-gray-100 hover:bg-gray-200 py-2 px-4 rounded-lg font-medium transition">
-                        <FaArrowLeft /> Volver a Usuarios
-                    </button>
-                    {canCreate && (
-                        <button onClick={() => setShowModal(true)} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg shadow transition">
-                            <FaPlus /> Nuevo Empleado
-                        </button>
-                    )}
-                </div>
-            </header>
-
-            {showModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white p-6 rounded-lg w-[700px] shadow-xl max-h-[90vh] overflow-y-auto">
-                        <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-purple-700 border-b pb-2">
-                            <FaUserTie /> {isUpdating ? 'Editar Empleado' : 'Registrar Empleado'}
-                        </h3>
-                        <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
-
-                            <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Selección de Usuario</div>
-
-                            <div className="col-span-2">
-                                <label className="block text-xs mb-1">Usuario Existente</label>
-                                {isUpdating ? (
-                                    <input 
-                                        className="w-full border p-2 rounded bg-gray-100 text-gray-600" 
-                                        value={empleados.find(e => e.Id_Empleado === editingEmpleadoId)?.nombre + ' ' + empleados.find(e => e.Id_Empleado === editingEmpleadoId)?.apellido} 
-                                        disabled 
-                                    />
-                                ) : (
-                                    <select 
-                                        className="w-full border p-2 rounded bg-gray-50"
-                                        value={formData.id_persona}
-                                        onChange={e => setFormData({ ...formData, id_persona: e.target.value })}
-                                        required
-                                    >
-                                        <option value="">-- Seleccionar Usuario Disponible --</option>
-                                        {usuariosDisponibles.map(ud => (
-                                            <option key={ud.id} value={ud.id_persona}>
-                                                {ud.nombreCompleto} ({ud.email || 'Sin Email'})
-                                            </option>
-                                        ))}
-                                    </select>
-                                )}
-                            </div>
-
-                            <div className="col-span-2 text-xs font-bold text-gray-500 uppercase mt-2">Datos Laborales</div>
-
-                            <div>
-                                <label className="block text-xs mb-1 font-bold text-purple-700">Rol</label>
-                                <select
-                                    className="w-full border p-2 rounded bg-gray-50"
-                                    value={formData.rol_id}
-                                    onChange={e => setFormData({ ...formData, rol_id: e.target.value })}
-                                    required
-                                >
-                                    <option value="">-- Seleccionar --</option>
-
-                                    {roles
-                                        .filter(r => !['visitante', 'usuario regular'].includes(r.Nombre_Rol.toLowerCase()))
-                                        .map(rol => (
-                                            <option key={rol.Id_Rol} value={rol.Id_Rol}>{rol.Nombre_Rol}</option>
-                                        ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-xs mb-1 font-bold text-purple-700">Departamento</label>
-                                <select
-                                    className="w-full border p-2 rounded bg-gray-50"
-                                    value={formData.departamento_id}
-                                    onChange={e => setFormData({ ...formData, departamento_id: e.target.value })}
-                                    required
-                                >
-                                    <option value="">-- Seleccionar Depto --</option>
-                                    {departamentos.map(dep => (
-                                        <option key={dep.Id_Departamento} value={dep.Id_Departamento}>{dep.Nombre_Departamento}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="col-span-2">
-                                <label className="block text-xs mb-1 font-bold text-purple-700">Organización</label>
-                                <select
-                                    className="w-full border p-2 rounded bg-gray-50"
-                                    value={formData.organizacion_id}
-                                    onChange={e => setFormData({ ...formData, organizacion_id: e.target.value })}
-                                    required
-                                >
-                                    <option value="">-- Seleccionar Organización --</option>
-                                    {organizaciones.map(org => (
-                                        <option key={org.Id_Organizacion} value={org.Id_Organizacion}>{org.Nombre_Organizacion}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div className="col-span-2 flex justify-end gap-2 mt-6 pt-4 border-t">
-                                <button type="button" onClick={closeModal} className="px-4 py-2 bg-gray-100 rounded text-gray-600 hover:bg-gray-200">Cancelar</button>
-                                <button type="submit" className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 shadow">{isUpdating ? 'Actualizar' : 'Guardar Empleado'}</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-
-            <div className="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
-                <div className="p-4 border-b bg-gray-50">
-                    <div className="relative w-64">
-                        <input type="text" placeholder="Buscar empleado..." className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-purple-500" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                        <FaSearch className="absolute left-3 top-3 text-gray-400" />
-                    </div>
-                </div>
-                <table className="min-w-full divide-y divide-gray-200 text-sm">
-                    <thead className="bg-gray-50">
-                        <tr>
-                            <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase">Empleado</th>
-                            <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase">Contacto</th>
-                            <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase">Detalles</th>
-                            <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase">Asignación</th>
-                            <th className="px-6 py-3 text-right font-bold text-gray-500 uppercase">Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {filteredEmpleados.length === 0 ? (
-                            <tr><td colSpan="5" className="text-center py-8 text-gray-500">No hay empleados registrados.</td></tr>
-                        ) : (
-                            filteredEmpleados.map(e => (
-                                <tr key={e.Id_Empleado} className="hover:bg-gray-50 transition">
-                                    <td className="px-6 py-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="bg-purple-100 p-2 rounded-full text-purple-600"><FaUserTie /></div>
-                                            <div>
-                                                <p className="font-bold text-gray-900">{e.nombre} {e.apellido}</p>
-
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-gray-600">
-                                        <div className="flex flex-col gap-1">
-                                            <span className="flex items-center gap-2"><FaEnvelope size={10} /> {e.email}</span>
-                                            <span className="flex items-center gap-2"><FaPhone size={10} /> {e.telefono}</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-gray-600">
-                                        <div className="flex flex-col gap-1 text-xs">
-                                            <span>Sexo: {e.sexo === 'M' ? 'M' : 'F'}</span>
-                                            {e.direccion && <span className="flex items-center gap-1"><FaMapMarkerAlt size={10} /> {e.direccion}</span>}
-                                            {e.fecha_nacimiento && <span>Nac: {e.fecha_nacimiento}</span>}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-xs text-gray-500">
-                                        <div className="flex flex-col gap-1">
-                                            <span className="bg-purple-50 text-purple-700 px-2 py-1 rounded border border-purple-200 font-semibold w-fit">
-                                                {e.nombre_rol}
-                                            </span>
-                                            <span className="flex items-center gap-1">
-                                                <FaBuilding size={10} />
-                                                {e.nombre_depto}
-                                            </span>
-                                            <span className="text-[10px] text-gray-400">
-                                                {e.nombre_org}
-                                            </span>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                        {canEdit && <button onClick={() => handleEdit(e)} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-2 rounded-full transition" title="Editar"><FaEdit /></button>}
-                                        {canDelete && <button onClick={() => handleDelete(e)} className="text-red-500 hover:text-red-700 bg-red-50 p-2 rounded-full transition" title="Eliminar"><FaTrash /></button>}
-                                    </td>
-                                </tr>
-                            )))}
-                    </tbody>
-                </table>
+        {/* ── Tabla de empleados ── */}
+        <div className="flex-1 min-w-0">
+          <div className="bg-white rounded-2xl shadow border border-gray-100 overflow-hidden">
+            {/* Barra de búsqueda */}
+            <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
+              <div className="relative w-72">
+                <FaSearch className="absolute left-3 top-3 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar empleado..."
+                  className="w-full pl-10 pr-4 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <span className="text-xs text-gray-400 font-medium">
+                {filtrados.length} empleado{filtrados.length !== 1 ? 's' : ''}
+              </span>
             </div>
-        </Layout>
-    );
+
+            {loading ? (
+              <div className="text-center py-16 text-gray-400">
+                <div className="animate-spin inline-block w-6 h-6 border-4 border-purple-400 border-t-transparent rounded-full mb-3" />
+                <p className="text-sm">Cargando empleados...</p>
+              </div>
+            ) : filtrados.length === 0 ? (
+              <div className="text-center py-16 text-gray-400">
+                <FaUserTie className="mx-auto text-4xl mb-3 opacity-20" />
+                <p className="text-sm">No hay empleados registrados.</p>
+                {canCreate && (
+                  <button onClick={abrirCrear} className="mt-4 text-purple-600 text-sm font-semibold hover:underline">
+                    + Agregar el primer empleado
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-100 text-sm">
+                  <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase">
+                    <tr>
+                      <th className="px-5 py-3 text-left">Empleado</th>
+                      <th className="px-5 py-3 text-left">Contacto</th>
+                        <th className="px-5 py-3 text-left">Departamento</th>
+                      <th className="px-5 py-3 text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-50">
+                    {filtrados.map(emp => (
+                      <tr
+                        key={emp.Id_Empleado}
+                        className={`hover:bg-purple-50 transition-all cursor-pointer ${editingEmp?.Id_Empleado === emp.Id_Empleado ? 'bg-purple-50 ring-1 ring-inset ring-purple-300' : ''}`}
+                        onClick={() => canEdit && abrirEditar(emp)}
+                      >
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="bg-gradient-to-br from-purple-500 to-purple-700 text-white w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shadow-sm">
+                              {emp.nombre.charAt(0)}{emp.apellido.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="font-bold text-gray-900">{emp.nombre} {emp.apellido}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-gray-500 text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            <span>{emp.email || '—'}</span>
+                            <span>{emp.telefono || ''}</span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-gray-600 text-xs">
+                          <span className="flex items-center gap-1">
+                            <FaSitemap size={10} className="text-gray-400" />
+                            {emp.nombre_depto}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-center" onClick={ev => ev.stopPropagation()}>
+                          <div className="flex gap-1.5 justify-center">
+                            {canEdit && (
+                              <button
+                                onClick={() => abrirEditar(emp)}
+                                className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition"
+                                title="Editar asignación"
+                              >
+                                <FaEdit size={13} />
+                              </button>
+                            )}
+                            {canDelete && (
+                              <button
+                                onClick={() => handleDelete(emp)}
+                                className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition"
+                                title="Quitar como empleado"
+                              >
+                                <FaTrash size={13} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Panel lateral ── */}
+        {panelOpen && (
+          <aside className="w-[340px] flex-shrink-0">
+            <div className="bg-white rounded-2xl shadow-xl border border-purple-100 overflow-hidden">
+              {/* Cabecera del panel */}
+              <div className="bg-gradient-to-r from-purple-600 to-purple-800 px-5 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-white">
+                  <FaUserCheck size={16} />
+                  <h3 className="font-bold text-base">
+                    {isUpdating ? 'Editar Asignación' : 'Nuevo Empleado'}
+                  </h3>
+                </div>
+                <button onClick={cerrarPanel} className="text-purple-200 hover:text-white transition">
+                  <FaTimes />
+                </button>
+              </div>
+
+              <form onSubmit={handleSubmit} className="p-5 space-y-5">
+
+                {/* ── Selección de usuario (solo en modo crear) ── */}
+                {!isUpdating ? (
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">
+                      👤 Usuario del sistema *
+                    </label>
+                    {usuariosSinEmpleo.length === 0 ? (
+                      <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        Todos los usuarios ya tienen ficha de empleado, o los datos no cargaron. Verifica las políticas RLS en Supabase.
+                      </p>
+                    ) : (
+                      <select
+                        className="w-full border-2 border-purple-200 focus:border-purple-500 rounded-xl p-2.5 text-sm bg-white transition"
+                        value={formData.id_persona}
+                        onChange={e => setFormData(f => ({ ...f, id_persona: e.target.value }))}
+                        required
+                      >
+                        <option value="">— Seleccionar usuario —</option>
+                        {usuariosSinEmpleo.map(u => (
+                          <option key={u.id_persona} value={u.id_persona}>
+                            {u.nombreCompleto}{u.email ? ` (${u.email})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      Solo se muestran usuarios que aún no están registrados como empleados.
+                    </p>
+                  </div>
+                ) : (
+                  /* Modo edición: mostrar nombre como badge */
+                  <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 flex items-center gap-3">
+                    <div className="bg-purple-600 text-white w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm">
+                      {editingEmp.nombre.charAt(0)}{editingEmp.apellido.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="font-bold text-purple-900 text-sm">{editingEmp.nombre} {editingEmp.apellido}</p>
+                      <p className="text-xs text-purple-500">{editingEmp.email}</p>
+                    </div>
+                  </div>
+                )}
+
+                <hr className="border-dashed border-purple-100" />
+
+                {/* ── Departamento ── */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">
+                    🏢 Departamento *
+                  </label>
+                  <select
+                    className="w-full border-2 border-gray-200 focus:border-purple-400 rounded-xl p-2.5 text-sm bg-white transition"
+                    value={formData.departamento_id}
+                    onChange={e => setFormData(f => ({ ...f, departamento_id: e.target.value }))}
+                    required
+                  >
+                    <option value="">— Seleccionar departamento —</option>
+                    {departamentos.map(d => (
+                      <option key={d.Id_Departamento} value={d.Id_Departamento}>
+                        {d.Nombre_Departamento}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* ── Organización (solo lectura / auto) ── */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">
+                    🌐 Organización
+                  </label>
+                  {adminOrgNombre ? (
+                    <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
+                      <FaCheck className="text-green-500 flex-shrink-0" size={12} />
+                      <span className="text-sm font-semibold text-green-800">{adminOrgNombre}</span>
+                      <span className="text-[10px] text-green-500 ml-auto">Automático</span>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                      ⚠️ No se detectó organización del administrador. Verifica tu ficha de empleado.
+                    </p>
+                  )}
+                </div>
+
+                {/* ── Botones ── */}
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={cerrarPanel}
+                    className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl text-sm font-semibold transition"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow transition flex items-center justify-center gap-2"
+                  >
+                    <FaCheck size={12} />
+                    {isUpdating ? 'Actualizar' : 'Asignar como Empleado'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </aside>
+        )}
+      </div>
+    </Layout>
+  );
 }

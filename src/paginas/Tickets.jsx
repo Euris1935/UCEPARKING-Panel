@@ -9,7 +9,6 @@ import {
   FaClipboardCheck, FaSyncAlt, FaBan
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
-import { useOrg } from '../contexts/OrgContext';
 
 function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
   const handlePrint = () => window.print();
@@ -77,22 +76,22 @@ const calcTiempo = (inicio, fin) => {
 };
 
 export default function Tickets() {
-  const { orgId, loadingOrg } = useOrg();
   const { tienePermiso } = useRbac();
   const canCreate = tienePermiso('Módulo Parqueo', 'crear');
-  const canEdit = tienePermiso('Módulo Parqueo', 'editar');
+  const canEdit   = tienePermiso('Módulo Parqueo', 'editar');
 
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState(canCreate ? 'entrada' : 'activos');
-  const [tickets, setTickets] = useState([]);
-  const [ticketsActivos, setTicketsActivos] = useState(0);
-  const [visitantesRegistrados, setVisitantesRegistrados] = useState([]);
-  const [plazasLibres, setPlazasLibres] = useState([]);
-  const [currentPersonaId, setCurrentPersonaId] = useState(null);
-  const [listaMarcas, setListaMarcas] = useState([]);
-  const [listaModelos, setListaModelos] = useState([]);
-  const [listaColores, setListaColores] = useState([]);
-  const [ticketParaImprimir, setTicketParaImprimir] = useState(null);
+  const [loading,                 setLoading]                 = useState(false);
+  const [orgId,                   setOrgId]                   = useState(null); // organizacion_id del usuario activo
+  const [activeTab,               setActiveTab]               = useState(canCreate ? 'entrada' : 'activos');
+  const [tickets,                 setTickets]                 = useState([]);
+  const [ticketsActivos,          setTicketsActivos]          = useState(0);
+  const [visitantesRegistrados,   setVisitantesRegistrados]   = useState([]);
+  const [plazasLibres,            setPlazasLibres]            = useState([]);
+  const [currentPersonaId,        setCurrentPersonaId]        = useState(null);
+  const [listaMarcas,             setListaMarcas]             = useState([]);
+  const [listaModelos,            setListaModelos]            = useState([]);
+  const [listaColores,            setListaColores]            = useState([]);
+  const [ticketParaImprimir,      setTicketParaImprimir]      = useState(null);
   const [visitanteForm, setVisitanteForm] = useState({
     id_visitante: null, nombre: '', apellido: '', cedula: '', telefono: '', sexo: 'M',
     placa: '', id_marca: '', id_modelo: '', id_color: '', id_plaza: '', duracion: '60'
@@ -102,8 +101,15 @@ export default function Tickets() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
-        if (data) setCurrentPersonaId(data.id_persona);
+        const { data: uData } = await supabase
+          .from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (uData?.id_persona) {
+          setCurrentPersonaId(uData.id_persona);
+          const { data: empData } = await supabase
+            .from('empleados').select('organizacion_id')
+            .eq('id_persona', uData.id_persona).maybeSingle();
+          if (empData?.organizacion_id) setOrgId(empData.organizacion_id);
+        }
       }
     };
     init();
@@ -122,7 +128,7 @@ export default function Tickets() {
       const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
       const { data: tks } = await supabase
         .from('tickets')
-        .select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(marcas_vehiculo(nombre), colores_vehiculo(nombre), modelos_vehiculo(nombre))')
+        .select('*, visitantes(id_visitante, personas(nombre, apellido)), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(marcas_vehiculo(nombre), colores_vehiculo(nombre), modelos_vehiculo(nombre))')
         .gte('Fecha_Hora_Emision', hoy.toISOString())
         .order('Fecha_Hora_Emision', { ascending: false });
       const { data: visitantesData } = await supabase.from('visitantes').select('id_visitante, created_at, personas(id_persona, nombre, apellido, cedula, telefono, sexo)').order('created_at', { ascending: false });
@@ -159,10 +165,15 @@ export default function Tickets() {
   const checkExpiredTickets = async () => {
     try {
       const ahora = new Date().toISOString();
-      const { data: vencidos } = await supabase.from('tickets').select('Id_Ticket, Id_Plaza_Asignada').eq('id_estado', 1).not('Fecha_Hora_Vencimiento', 'is', null).lt('Fecha_Hora_Vencimiento', ahora);
+      // Usar campo texto Estado (no id_estado numérico)
+      const { data: vencidos } = await supabase
+        .from('tickets').select('Id_Ticket, Id_Plaza_Asignada')
+        .eq('Estado', 'Activo')
+        .not('Fecha_Hora_Vencimiento', 'is', null)
+        .lt('Fecha_Hora_Vencimiento', ahora);
       if (!vencidos || vencidos.length === 0) return;
       for (const t of vencidos) {
-        await supabase.from('tickets').update({ id_estado: 3 }).eq('Id_Ticket', t.Id_Ticket);
+        await supabase.from('tickets').update({ Estado: 'Vencido' }).eq('Id_Ticket', t.Id_Ticket);
         await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', t.Id_Plaza_Asignada);
       }
       if (vencidos.length > 0) loadData();
@@ -175,25 +186,39 @@ export default function Tickets() {
     const placaLimpia = visitanteForm.placa.replace(/[^A-Z0-9]/gi, '');
     if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres.', 'warning');
     if (!visitanteForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
-    if (loadingOrg) return Swal.fire('Espere', 'Cargando contexto de organización...', 'info');
-    if (!orgId) return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Verifique que su usuario esté vinculado a un empleado/organización.', 'error');
     setLoading(true);
     try {
       let visitanteId = visitanteForm.id_visitante;
       if (!visitanteId) {
-        if (!visitanteForm.nombre.trim() || !visitanteForm.apellido.trim()) { setLoading(false); return Swal.fire('Atención', 'Nombre y Apellido son obligatorios.', 'warning'); }
-        const { data: newPersona, error: pErr } = await supabase.from('personas').insert([{ nombre: visitanteForm.nombre.trim(), apellido: visitanteForm.apellido.trim(), cedula: visitanteForm.cedula || null, telefono: visitanteForm.telefono || null, sexo: visitanteForm.sexo || null }]).select('id_persona').single();
-        if (pErr) throw pErr;
-        const { data: newV, error: vErr } = await supabase
-          .from('visitantes')
-          .insert([{ 
-            id_persona: newPersona.id_persona
-          }])
-          .select('id_visitante')
-          .single();
-        if (vErr) throw vErr;
-        visitanteId = newV.id_visitante;
+        if (!visitanteForm.nombre.trim() || !visitanteForm.apellido.trim()) {
+          setLoading(false);
+          return Swal.fire('Atención', 'Nombre y Apellido son obligatorios.', 'warning');
+        }
+        // RPC SECURITY DEFINER — bypasea la política WITH CHECK en 'personas'
+        // La política RLS impide INSERT directo desde el cliente
+        const { data: rpcResult, error: rpcErr } = await supabase.rpc('crear_visitante', {
+          p_nombre:   visitanteForm.nombre.trim(),
+          p_apellido: visitanteForm.apellido.trim(),
+          p_cedula:   visitanteForm.cedula   || null,
+          p_telefono: visitanteForm.telefono || null,
+          p_sexo:     visitanteForm.sexo     || 'M',
+        });
+        if (rpcErr) {
+          // Si la RPC aún no existe en la BD, mostrar el SQL a ejecutar
+          if (rpcErr.code === 'PGRST202' || rpcErr.message?.includes('function')) {
+            setLoading(false);
+            return Swal.fire({
+              title: 'SQL requerido en Supabase',
+              html: `La función <code>crear_visitante</code> no existe.<br><br>
+                     Ejecuta el script <b>Bloque 4</b> del artifact SQL en el editor de Supabase.`,
+              icon: 'warning'
+            });
+          }
+          throw rpcErr;
+        }
+        visitanteId = rpcResult; // la RPC retorna el id_visitante directamente
       }
+
 
       // NUEVO: Resolver vehículo ANTES de crear el ticket
       const placa = visitanteForm.placa.toUpperCase();
@@ -220,10 +245,10 @@ export default function Tickets() {
         Placa_Capturada: placa, 
         Id_Plaza_Asignada: parseInt(visitanteForm.id_plaza), 
         id_visitante: visitanteId, 
-        id_estado: 1, 
+        Estado: 'Activo',
         Fecha_Hora_Emision: ahora, 
         Fecha_Hora_Vencimiento: vencimiento,
-        organizacion_id: orgId
+        ...(orgId ? { organizacion_id: orgId } : {})
       }]).select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), plazas(Numero_Plaza)').single();
       
       if (tErr) throw tErr;
@@ -268,9 +293,10 @@ export default function Tickets() {
     if (!result.isConfirmed) return;
     const ahora = new Date().toISOString();
     try {
-      const { error: tkErr, count: tkCount } = await supabase.from('tickets').update({ id_estado: 2 }, { count: 'exact' }).eq('Id_Ticket', ticket.Id_Ticket);
+      const { error: tkErr } = await supabase.from('tickets')
+        .update({ Estado: 'Cerrado' })
+        .eq('Id_Ticket', ticket.Id_Ticket);
       if (tkErr) throw tkErr;
-      if (tkCount === 0) throw new Error('No se pudo actualizar el ticket (0 filas).');
       await Promise.all([
         supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', ticket.Id_Plaza_Asignada),
         (async () => { const { data: ra } = await supabase.from('registros_acceso').select('id_registro').eq('ticket_id', ticket.Id_Ticket).is('salida_at', null).maybeSingle(); if (ra) await supabase.from('registros_acceso').update({ salida_at: ahora }).eq('id_registro', ra.id_registro); })(),
@@ -287,9 +313,10 @@ export default function Tickets() {
     const result = await Swal.fire({ title: '¿Anular ticket?', html: `Ticket <b>#${String(ticket.Id_Ticket).padStart(5, '0')}</b>`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Sí, anular' });
     if (!result.isConfirmed) return;
     try {
-      const { error: tkErr, count: tkCount } = await supabase.from('tickets').update({ id_estado: 4 }, { count: 'exact' }).eq('Id_Ticket', ticket.Id_Ticket);
+      const { error: tkErr } = await supabase.from('tickets')
+        .update({ Estado: 'Anulado' })
+        .eq('Id_Ticket', ticket.Id_Ticket);
       if (tkErr) throw tkErr;
-      if (tkCount === 0) throw new Error('No se pudo anular el ticket (0 filas).');
       await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', ticket.Id_Plaza_Asignada);
       await registrarLog('TICKET_ANULADO', `Ticket anulado: ${ticket.Placa_Capturada} — Plaza ${ticket.plazas?.Numero_Plaza}.`, ticket.Id_Plaza_Asignada);
       Swal.fire('Anulado', 'El ticket fue anulado y la plaza quedó libre.', 'success');
