@@ -34,9 +34,9 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
           <Row label="N° Ticket" value={`#${String(ticket.Id_Ticket).padStart(6, '0')}`} bold />
           {esReimpresion && <p className="text-center text-[10px] font-bold text-yellow-600 bg-yellow-50 border border-yellow-200 rounded px-2 py-1">⚠ COPIA — TICKET REIMPRESO</p>}
           <hr />
-          <Row label="Visitante" value={`${ticket.visitantes?.personas?.nombre ?? ticket.personas?.nombre ?? '—'} ${ticket.visitantes?.personas?.apellido ?? ticket.personas?.apellido ?? ''}`} />
-          {(ticket.visitantes?.personas?.cedula || ticket.personas?.cedula || ticket._cedula) && (
-            <Row label="Cédula" value={ticket.visitantes?.personas?.cedula || ticket.personas?.cedula || ticket._cedula} />
+          <Row label="Visitante" value={`${ticket._visitanteNombre ?? ticket.visitantes?.personas?.nombre ?? ticket.personas?.nombre ?? '—'} ${ticket._visitanteApellido ?? ticket.visitantes?.personas?.apellido ?? ticket.personas?.apellido ?? ''}`} />
+          {(ticket._visitanteCedula || ticket.visitantes?.personas?.cedula || ticket.personas?.cedula || ticket._cedula) && (
+            <Row label="Cédula" value={ticket._visitanteCedula || ticket.visitantes?.personas?.cedula || ticket.personas?.cedula || ticket._cedula} />
           )}
           <Row label="Placa" value={ticket.Placa_Capturada} bold mono />
           <Row label="Marca" value={ticket._marca || ticket.vehiculos?.marcas_vehiculo?.nombre || '—'} />
@@ -120,18 +120,29 @@ export default function Tickets() {
     try {
       const { data: plazas } = await supabase.from('plazas').select('*').eq('id_estado', 1).order('Numero_Plaza');
       const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-      const { data: tks } = await supabase
+      // Quitamos el embed de visitantes para evitar PGRST201 (FK duplicada visitante_id/id_visitante)
+      // Los nombres se resuelven client-side desde visitantesRegistrados
+      const { data: tks, error: tksErr } = await supabase
         .from('tickets')
-        .select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(marcas_vehiculo(nombre), colores_vehiculo(nombre), modelos_vehiculo(nombre))')
+        .select('*, estado_ticket(nombre_estado), personas(nombre, apellido), plazas(Numero_Plaza), vehiculos(marcas_vehiculo(nombre), colores_vehiculo(nombre), modelos_vehiculo(nombre))')
         .gte('Fecha_Hora_Emision', hoy.toISOString())
         .order('Fecha_Hora_Emision', { ascending: false });
-      const { data: visitantesData } = await supabase.from('visitantes').select('id_visitante, created_at, personas(id_persona, nombre, apellido, cedula, telefono, sexo)').order('created_at', { ascending: false });
+      if (tksErr) console.error('[Tickets] Error cargando tickets:', tksErr.message, tksErr.code);
+
+      const { data: visitantesData, error: visErr } = await supabase
+        .from('visitantes')
+        .select('id_visitante, created_at, personas(id_persona, nombre, apellido, cedula, telefono, sexo)')
+        .order('created_at', { ascending: false });
+      if (visErr) console.error('[Tickets] Error cargando visitantes:', visErr.message, visErr.code);
+      console.log('[Tickets] Visitantes cargados:', visitantesData?.length ?? 0, visitantesData);
+
       const { data: catMarcas } = await supabase.from('marcas_vehiculo').select('id_marca, nombre').order('nombre');
       const { data: catModelos } = await supabase.from('modelos_vehiculo').select('id_modelo, nombre, id_marca').order('nombre');
       const { data: catColores } = await supabase.from('colores_vehiculo').select('id_color, nombre').order('nombre');
       setPlazasLibres(plazas || []);
       setTickets(tks || []);
-      setTicketsActivos((tks || []).filter(t => t.Estado === 'Activo').length);
+      // Usar id_estado === 1 (Activo) como fuente confiable de verdad
+      setTicketsActivos((tks || []).filter(t => t.id_estado === 1).length);
       setVisitantesRegistrados(visitantesData || []);
       setListaMarcas(catMarcas || []);
       setListaModelos(catModelos || []);
@@ -162,7 +173,8 @@ export default function Tickets() {
       const { data: vencidos } = await supabase.from('tickets').select('Id_Ticket, Id_Plaza_Asignada').eq('id_estado', 1).not('Fecha_Hora_Vencimiento', 'is', null).lt('Fecha_Hora_Vencimiento', ahora);
       if (!vencidos || vencidos.length === 0) return;
       for (const t of vencidos) {
-        await supabase.from('tickets').update({ id_estado: 3 }).eq('Id_Ticket', t.Id_Ticket);
+        // Sincronizar ambas columnas de estado al vencer
+        await supabase.from('tickets').update({ id_estado: 3, Estado: 'Vencido' }).eq('Id_Ticket', t.Id_Ticket);
         await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', t.Id_Plaza_Asignada);
       }
       if (vencidos.length > 0) loadData();
@@ -224,11 +236,16 @@ export default function Tickets() {
         Fecha_Hora_Emision: ahora, 
         Fecha_Hora_Vencimiento: vencimiento,
         organizacion_id: orgId
-      }]).select('*, estado_ticket(nombre_estado), visitantes(id_visitante, personas(nombre, apellido)), plazas(Numero_Plaza)').single();
+      }]).select('*, estado_ticket(nombre_estado), plazas(Numero_Plaza)').single();
       
       if (tErr) throw tErr;
 
-      // Mantener compatibilidad con print view inmediata
+      // Enriquecer manualmente el ticket con datos del visitante para el print view
+      // (no usamos embed de visitantes por el PGRST201 de la FK duplicada)
+      const visitanteSeleccionado = visitantesRegistrados.find(v => v.id_visitante === visitanteId);
+      nuevoTicket._visitanteNombre = visitanteForm.nombre || visitanteSeleccionado?.personas?.nombre || '';
+      nuevoTicket._visitanteApellido = visitanteForm.apellido || visitanteSeleccionado?.personas?.apellido || '';
+      nuevoTicket._visitanteCedula = visitanteForm.cedula || visitanteSeleccionado?.personas?.cedula || null;
       nuevoTicket._marca = listaMarcas.find(m => m.id_marca === parseInt(visitanteForm.id_marca))?.nombre || null;
       nuevoTicket._modelo = listaModelos.find(m => m.id_modelo === parseInt(visitanteForm.id_modelo))?.nombre || null;
       nuevoTicket._color = listaColores.find(c => c.id_color === parseInt(visitanteForm.id_color))?.nombre || null;
@@ -268,7 +285,8 @@ export default function Tickets() {
     if (!result.isConfirmed) return;
     const ahora = new Date().toISOString();
     try {
-      const { error: tkErr, count: tkCount } = await supabase.from('tickets').update({ id_estado: 2 }, { count: 'exact' }).eq('Id_Ticket', ticket.Id_Ticket);
+      // Sincronizar ambas columnas de estado al cerrar
+      const { error: tkErr, count: tkCount } = await supabase.from('tickets').update({ id_estado: 2, Estado: 'Cerrado' }, { count: 'exact' }).eq('Id_Ticket', ticket.Id_Ticket);
       if (tkErr) throw tkErr;
       if (tkCount === 0) throw new Error('No se pudo actualizar el ticket (0 filas).');
       await Promise.all([
@@ -287,7 +305,8 @@ export default function Tickets() {
     const result = await Swal.fire({ title: '¿Anular ticket?', html: `Ticket <b>#${String(ticket.Id_Ticket).padStart(5, '0')}</b>`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Sí, anular' });
     if (!result.isConfirmed) return;
     try {
-      const { error: tkErr, count: tkCount } = await supabase.from('tickets').update({ id_estado: 4 }, { count: 'exact' }).eq('Id_Ticket', ticket.Id_Ticket);
+      // Sincronizar ambas columnas de estado al anular
+      const { error: tkErr, count: tkCount } = await supabase.from('tickets').update({ id_estado: 4, Estado: 'Anulado' }, { count: 'exact' }).eq('Id_Ticket', ticket.Id_Ticket);
       if (tkErr) throw tkErr;
       if (tkCount === 0) throw new Error('No se pudo anular el ticket (0 filas).');
       await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', ticket.Id_Plaza_Asignada);
@@ -403,10 +422,14 @@ export default function Tickets() {
                     {tickets.map(t => {
                       const estadoNombre = t.estado_ticket?.nombre_estado || t.Estado || '—';
                       const estadoStyles = { Activo: "bg-green-100 text-green-700 border border-green-200", Vencido: "bg-amber-100 text-amber-700 border border-amber-200", Anulado: "bg-red-100 text-red-700 border border-red-200", Cerrado: "bg-gray-100 text-gray-600 border border-gray-200" };
+                      // Lookup client-side del visitante (evita PGRST201 de FK duplicada)
+                      const visitanteT = visitantesRegistrados.find(v => v.id_visitante === t.id_visitante);
+                      const nombreVisitante = visitanteT?.personas?.nombre ?? t._visitanteNombre ?? t.personas?.nombre ?? '—';
+                      const apellidoVisitante = visitanteT?.personas?.apellido ?? t._visitanteApellido ?? t.personas?.apellido ?? '';
                       return (
                         <tr key={t.Id_Ticket} className="hover:bg-gray-50 transition-all">
                           <td className="px-5 py-4 text-xs text-gray-400 font-mono">#{String(t.Id_Ticket).padStart(5, '0')}</td>
-                          <td className="px-5 py-4 font-medium text-gray-800">{t.visitantes?.personas?.nombre ?? t.personas?.nombre} {t.visitantes?.personas?.apellido ?? t.personas?.apellido}</td>
+                          <td className="px-5 py-4 font-medium text-gray-800">{nombreVisitante} {apellidoVisitante}</td>
                           <td className="px-5 py-4"><span className="bg-gray-900 text-white font-mono text-xs px-2 py-1 rounded">{t.Placa_Capturada}</span></td>
                           <td className="px-5 py-4"><span className={`font-bold text-xs px-2 py-1 rounded-full ${estadoStyles[estadoNombre] || 'bg-gray-100 text-gray-500'}`}>{estadoNombre}</span></td>
                           <td className="px-5 py-4 text-gray-500 text-xs">{[t._marca || t.vehiculos?.marcas_vehiculo?.nombre, t._modelo || t.vehiculos?.modelos_vehiculo?.nombre, t._color || t.vehiculos?.colores_vehiculo?.nombre].filter(Boolean).join(' · ') || '—'}</td>
@@ -416,7 +439,16 @@ export default function Tickets() {
                           <td className="px-5 py-4 text-xs">{t.Fecha_Hora_Vencimiento ? <span className={`font-bold ${estadoNombre === 'Activo' && (new Date(t.Fecha_Hora_Vencimiento) - Date.now()) < 600000 ? 'text-red-600 animate-pulse' : 'text-gray-500'}`}>{new Date(t.Fecha_Hora_Vencimiento).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span> : <span className="text-gray-300">—</span>}</td>
                           <td className="px-5 py-4 text-center">
                             <div className="flex gap-1 justify-center">
-                              <button onClick={() => setTicketParaImprimir({ ...t, _esReimpresion: true })} title="Reimprimir" className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition"><FaPrint size={15} /></button>
+                              <button onClick={() => {
+                                const vt = visitantesRegistrados.find(v => v.id_visitante === t.id_visitante);
+                                setTicketParaImprimir({
+                                  ...t,
+                                  _esReimpresion: true,
+                                  _visitanteNombre: vt?.personas?.nombre || t.personas?.nombre || '',
+                                  _visitanteApellido: vt?.personas?.apellido || t.personas?.apellido || '',
+                                  _visitanteCedula: vt?.personas?.cedula || t.personas?.cedula || null,
+                                });
+                              }} title="Reimprimir" className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition"><FaPrint size={15} /></button>
                               {estadoNombre === 'Activo' && canEdit && (<>
                                 <button onClick={() => handleCerrarTicket(t)} className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-bold text-xs transition shadow"><FaSignOutAlt size={12} /> Salida</button>
                                 <button onClick={() => handleAnularTicket(t)} className="flex items-center gap-1 bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1.5 rounded-lg font-bold text-xs transition"><FaBan size={12} /> Anular</button>

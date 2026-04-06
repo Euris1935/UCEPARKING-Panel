@@ -23,6 +23,7 @@ export default function Mantenimiento() {
     const [showModal, setShowModal] = useState(false);
     const [editingId, setEditingId] = useState(null);
     const [resueltosIds, setResueltosIds] = useState(new Set()); // track locally
+    const [dispositivosOcupados, setDispositivosOcupados] = useState(new Set()); // dispositivos con mantenimiento activo
     const [formData, setFormData] = useState({
         descripcion: '',
         id_dispositivo: '',
@@ -79,6 +80,14 @@ export default function Mantenimiento() {
 
             if (error) throw error;
             setMantenimientos(mantData || []);
+
+            // Calcular qué dispositivos tienen un mantenimiento activo (sin Fecha_Fin)
+            const ocupados = new Set(
+                (mantData || [])
+                    .filter(m => !m.Fecha_Fin)
+                    .map(m => m.id_dispositivo)
+            );
+            setDispositivosOcupados(ocupados);
 
 
             const { data: dispData, error: dispError } = await supabase
@@ -443,11 +452,22 @@ export default function Mantenimiento() {
                                         {dispositivos.length === 0 && (
                                             <option disabled>— No hay dispositivos registrados —</option>
                                         )}
-                                        {dispositivos.map(d => (
-                                            <option key={d.id_dispositivo} value={d.id_dispositivo}>
-                                                [{d.id_dispositivo}] {d.tipos_dispositivos?.nombre_tipo || 'Dispositivo'}{d.modelos_equipo_cat ? ` — ${d.modelos_equipo_cat.marcas_equipo?.nombre || ''} ${d.modelos_equipo_cat.nombre}` : ''}{d.ubicacion ? ` (${d.ubicacion})` : ''}
-                                            </option>
-                                        ))}
+                                        {dispositivos.map(d => {
+                                            // Un dispositivo está ocupado si tiene mantenimiento activo
+                                            // EXCEPTO si es el mismo dispositivo del registro que se está editando
+                                            const esMismoDispositivo = editingId && parseInt(formData.id_dispositivo) === d.id_dispositivo;
+                                            const ocupado = dispositivosOcupados.has(d.id_dispositivo) && !esMismoDispositivo;
+                                            return (
+                                                <option
+                                                    key={d.id_dispositivo}
+                                                    value={d.id_dispositivo}
+                                                    disabled={ocupado}
+                                                    style={ocupado ? { color: '#9ca3af', backgroundColor: '#f9fafb' } : {}}
+                                                >
+                                                    [{d.id_dispositivo}] {d.tipos_dispositivos?.nombre_tipo || 'Dispositivo'}{d.modelos_equipo_cat ? ` — ${d.modelos_equipo_cat.marcas_equipo?.nombre || ''} ${d.modelos_equipo_cat.nombre}` : ''}{d.ubicacion ? ` (${d.ubicacion})` : ''}{ocupado ? ' — EN MANTENIMIENTO' : ''}
+                                                </option>
+                                            );
+                                        })}
                                     </select>
                                 </div>
                                 <div>
