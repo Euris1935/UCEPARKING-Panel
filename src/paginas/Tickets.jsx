@@ -48,6 +48,12 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
             <><Row label="Hora de Salida" value={new Date(ticket._horaSalida).toLocaleString('es-DO')} />{tiempoEstancia && <Row label="Duración" value={tiempoEstancia} bold />}</>
           )}
           <Row label="Estado" value={ticket.Estado || ticket.estado_ticket?.nombre_estado || '—'} />
+          {ticket.Descripcion && ticket.Descripcion.trim() && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              <p className="text-[10px] text-gray-400 font-bold uppercase mb-0.5">Observaciones</p>
+              <p className="text-xs text-gray-700">{ticket.Descripcion}</p>
+            </div>
+          )}
           <hr />
           <div className="flex justify-center py-2"><QRCodeSVG value={qrData} size={120} level="M" /></div>
           <p className="text-center text-[10px] text-gray-400 mt-1">Presente este código QR al salir del parqueo.</p>
@@ -94,7 +100,7 @@ export default function Tickets() {
   const [ticketParaImprimir,      setTicketParaImprimir]      = useState(null);
   const [visitanteForm, setVisitanteForm] = useState({
     id_visitante: null, nombre: '', apellido: '', cedula: '', telefono: '', sexo: 'M',
-    placa: '', id_marca: '', id_modelo: '', id_color: '', id_plaza: '', duracion: '60'
+    placa: '', id_marca: '', id_modelo: '', id_color: '', id_plaza: '', duracion: '60', descripcion: ''
   });
 
   useEffect(() => {
@@ -266,6 +272,7 @@ export default function Tickets() {
         id_estado: 1,
         Fecha_Hora_Emision: ahora, 
         Fecha_Hora_Vencimiento: vencimiento,
+        Descripcion: visitanteForm.descripcion.trim() || '',
         ...(orgId ? { organizacion_id: orgId } : {})
       }]).select('*, estado_ticket(nombre_estado), plazas(Numero_Plaza)').single();
       
@@ -283,9 +290,10 @@ export default function Tickets() {
       nuevoTicket._cedula = visitanteForm.cedula || null;
 
       await supabase.from('plazas').update({ id_estado: 2 }).eq('Id_Plaza', visitanteForm.id_plaza);
-      await registrarLog('TICKET_EMITIDO', `Ticket emitido: ${visitanteForm.placa.toUpperCase()} — Plaza ${nuevoTicket?.plazas?.Numero_Plaza}.`, parseInt(visitanteForm.id_plaza));
+      const nombreVisitanteLog = `${nuevoTicket._visitanteNombre} ${nuevoTicket._visitanteApellido}`.trim() || 'Visitante';
+      await registrarLog('TICKET_EMITIDO', `Ticket emitido: ${nombreVisitanteLog} — Vehículo: ${visitanteForm.placa.toUpperCase()} — Plaza ${nuevoTicket?.plazas?.Numero_Plaza}.`, parseInt(visitanteForm.id_plaza));
       setTicketParaImprimir(nuevoTicket);
-      setVisitanteForm({ id_visitante: null, nombre: '', apellido: '', cedula: '', telefono: '', sexo: 'M', placa: '', id_marca: '', id_modelo: '', id_color: '', id_plaza: '', duracion: '60' });
+      setVisitanteForm({ id_visitante: null, nombre: '', apellido: '', cedula: '', telefono: '', sexo: 'M', placa: '', id_marca: '', id_modelo: '', id_color: '', id_plaza: '', duracion: '60', descripcion: '' });
       setActiveTab('activos');
       loadData();
       // Registro acceso + barrera
@@ -415,6 +423,20 @@ export default function Tickets() {
               <hr className="border-dashed" />
               <div><label className="text-[10px] font-bold text-gray-400 uppercase">Duración *</label><select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.duracion} onChange={e => setVisitanteForm(f => ({ ...f, duracion: e.target.value }))}><option value="0">Sin límite</option><option value="30">30 minutos</option><option value="60">1 hora</option><option value="120">2 horas</option><option value="240">4 horas</option><option value="480">8 horas</option><option value="1440">24 horas</option></select></div>
               {visitanteForm.duracion !== '0' && visitanteForm.duracion && <p className="text-xs text-amber-600 font-medium">⏰ Vence a las {new Date(Date.now() + parseInt(visitanteForm.duracion) * 60000).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</p>}
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Descripción / Observaciones</label>
+                <textarea
+                  className="w-full border rounded-lg p-2 text-sm mt-0.5 resize-none focus:ring-1 focus:ring-green-400 outline-none"
+                  rows={3}
+                  placeholder="Ej: Visita al depto. de RRHH, vehículo particular..."
+                  value={visitanteForm.descripcion}
+                  onChange={e => setVisitanteForm(f => ({ ...f, descripcion: e.target.value }))}
+                  maxLength={300}
+                />
+                {visitanteForm.descripcion.length > 0 && (
+                  <p className="text-[10px] text-gray-400 text-right mt-0.5">{visitanteForm.descripcion.length}/300</p>
+                )}
+              </div>
               <button type="submit" disabled={loading || plazasLibres.length === 0} className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white py-3 rounded-xl font-bold text-base transition flex items-center justify-center gap-2 shadow">
                 <FaTicketAlt /> {loading ? 'Procesando...' : 'EMITIR TICKET'}
               </button>
