@@ -4,7 +4,8 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { 
     FaClock, FaSave, FaShieldAlt, FaLock, FaBell, FaUser,
-    FaEnvelope, FaIdBadge, FaKey, FaCheckCircle, FaCog
+    FaEnvelope, FaIdBadge, FaKey, FaCheckCircle, FaCog,
+    FaEye, FaEyeSlash
 } from 'react-icons/fa';
 
 export default function Configuracion() {
@@ -32,6 +33,10 @@ export default function Configuracion() {
     const [loadingProfile, setLoadingProfile] = useState(false);
     const [passData, setPassData] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
     const [loadingPass, setLoadingPass] = useState(false);
+
+    const [showCurrent, setShowCurrent] = useState(false);
+    const [showNew, setShowNew] = useState(false);
+    const [showConfirm, setShowConfirm] = useState(false);
 
     useEffect(() => {
         if (activeTab === 'cuenta') loadProfile();
@@ -291,37 +296,58 @@ export default function Configuracion() {
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña Actual</label>
                                 <div className="relative">
-                                    <FaKey className="absolute left-3 top-3 text-gray-400" size={13} />
+                                    <FaKey className="absolute left-3 top-3.5 text-gray-400" size={13} />
                                     <input
-                                        type="password" required placeholder="••••••••"
-                                        className="w-full pl-9 pr-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-300 focus:border-blue-500 outline-none"
+                                        type={showCurrent ? "text" : "password"} required placeholder="••••••••"
+                                        className="w-full pl-9 pr-10 py-2 border rounded-lg focus:ring-2 focus:ring-blue-300 focus:border-blue-500 outline-none [&::-ms-reveal]:hidden"
                                         value={passData.currentPassword}
                                         onChange={e => setPassData({ ...passData, currentPassword: e.target.value })}
                                     />
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setShowCurrent(!showCurrent)}
+                                        className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 transition"
+                                    >
+                                        {showCurrent ? <FaEyeSlash size={16} /> : <FaEye size={16} />}
+                                    </button>
                                 </div>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Nueva Contraseña</label>
                                 <div className="relative">
-                                    <FaLock className="absolute left-3 top-3 text-gray-400" size={13} />
+                                    <FaLock className="absolute left-3 top-3.5 text-gray-400" size={13} />
                                     <input
-                                        type="password" required placeholder="Mínimo 6 caracteres"
-                                        className="w-full pl-9 pr-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-300 focus:border-blue-500 outline-none"
+                                        type={showNew ? "text" : "password"} required placeholder="Mínimo 6 caracteres"
+                                        className="w-full pl-9 pr-10 py-2 border rounded-lg focus:ring-2 focus:ring-blue-300 focus:border-blue-500 outline-none [&::-ms-reveal]:hidden"
                                         value={passData.newPassword}
                                         onChange={e => setPassData({ ...passData, newPassword: e.target.value })}
                                     />
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setShowNew(!showNew)}
+                                        className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 transition"
+                                    >
+                                        {showNew ? <FaEyeSlash size={16} /> : <FaEye size={16} />}
+                                    </button>
                                 </div>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar Nueva Contraseña</label>
                                 <div className="relative">
-                                    <FaCheckCircle className={`absolute left-3 top-3 ${passData.newPassword && passData.confirmPassword && passData.newPassword === passData.confirmPassword ? 'text-green-500' : 'text-gray-400'}`} size={13} />
+                                    <FaCheckCircle className={`absolute left-3 top-3.5 ${passData.newPassword && passData.confirmPassword && passData.newPassword === passData.confirmPassword ? 'text-green-500' : 'text-gray-400'}`} size={13} />
                                     <input
-                                        type="password" required placeholder="Repite la nueva contraseña"
-                                        className="w-full pl-9 pr-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-300 focus:border-blue-500 outline-none"
+                                        type={showConfirm ? "text" : "password"} required placeholder="Repite la nueva contraseña"
+                                        className="w-full pl-9 pr-10 py-2 border rounded-lg focus:ring-2 focus:ring-blue-300 focus:border-blue-500 outline-none [&::-ms-reveal]:hidden"
                                         value={passData.confirmPassword}
                                         onChange={e => setPassData({ ...passData, confirmPassword: e.target.value })}
                                     />
+                                    <button 
+                                        type="button" 
+                                        onClick={() => setShowConfirm(!showConfirm)}
+                                        className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 transition"
+                                    >
+                                        {showConfirm ? <FaEyeSlash size={16} /> : <FaEye size={16} />}
+                                    </button>
                                 </div>
                             </div>
                             <button

@@ -22,6 +22,7 @@ export default function Asignaciones() {
 
     // Catálogos
     const [empleadosList, setEmpleadosList] = useState([]);
+    const [empleadosConPlaza, setEmpleadosConPlaza] = useState(new Set()); // Empleados con plaza asignada
     const [plazasList, setPlazasList] = useState([]);
     // Map: persona_id → vehiculo
     const [vehiculosMap, setVehiculosMap] = useState({});
@@ -80,6 +81,10 @@ export default function Asignaciones() {
             });
 
             setAsignaciones(asignacionesConDatos || []);
+
+            // 4.1. Calcular conjunto de empleados que ya tienen plaza
+            const ocupados = new Set((asigData || []).map(a => a.Id_Empleado_Asignado));
+            setEmpleadosConPlaza(ocupados);
 
             // 5. Empleados con persona_id para el selector
             const { data: empData } = await supabase
@@ -423,11 +428,21 @@ export default function Asignaciones() {
                                     required
                                 >
                                     <option value="">-- Seleccionar Empleado --</option>
-                                    {empleadosList.map(emp => (
-                                        <option key={emp.Id_Empleado} value={emp.Id_Empleado}>
-                                            {emp.personas ? `${emp.personas.nombre} ${emp.personas.apellido}` : `ID: ${emp.Id_Empleado}`}
-                                        </option>
-                                    ))}
+                                    {empleadosList.map(emp => {
+                                        const esMismoEmpleado = editingAsignacion && parseInt(formData.Id_Empleado) === emp.Id_Empleado;
+                                        const tienePlaza = empleadosConPlaza.has(emp.Id_Empleado) && !esMismoEmpleado;
+                                        return (
+                                            <option 
+                                                key={emp.Id_Empleado} 
+                                                value={emp.Id_Empleado}
+                                                disabled={tienePlaza}
+                                                style={tienePlaza ? { color: '#9ca3af', backgroundColor: '#f9fafb' } : {}}
+                                            >
+                                                {emp.personas ? `${emp.personas.nombre} ${emp.personas.apellido}` : `ID: ${emp.Id_Empleado}`}
+                                                {tienePlaza ? ' — [YA TIENE PLAZA]' : ''}
+                                            </option>
+                                        );
+                                    })}
                                 </select>
                             </div>
 

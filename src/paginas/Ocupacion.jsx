@@ -369,27 +369,19 @@ export default function Ocupacion() {
     // EXCEPCIÓN: Si no hay info en ocupacionInfo, es un "estado fantasma" y permitimos liberar.
     if (['ASIGNADA', 'RESERVADA'].includes(estadoActual)) {
       const infoActual = ocupacionInfo[plaza.Id_Plaza];
-      
-      if (!infoActual) {
-        // Permitir liberar si es un estado huérfano (sin registro en tabla de reserva/asignación)
-        Swal.fire({
-          title: 'Inconsistencia Detectada',
-          text: `Esta plaza figura como ${estadoActual} pero no tiene un registro asociado. ¿Deseas restablecerla a LIBRE?`,
-          icon: 'warning',
-          showCancelButton: true,
-          confirmButtonText: 'Sí, restablecer',
-          cancelButtonText: 'Cancelar'
-        }).then((result) => { if (result.isConfirmed) changeStatus(plaza.Id_Plaza, 'LIBRE'); });
-        return;
-      }
-
+      const ocupanteText = infoActual ? `(${infoActual.nombre})` : '(Sin registros)';
       const esAsig = estadoActual === 'ASIGNADA';
+      
       Swal.fire({
-        title: `Plaza ${esAsig ? 'Asignada' : 'Reservada'}`,
-        html: `Esta plaza está <b>${esAsig ? 'asignada a un empleado' : 'reservada'}</b>.<br>Para liberarla, vaya a la página de <b>${esAsig ? 'Asignaciones' : 'Reservaciones'}</b> y gestione el cambio desde allí.`,
-        icon: 'info',
-        confirmButtonColor: esAsig ? '#7c3aed' : '#f59e0b',
-        confirmButtonText: 'Entendido'
+        title: `Liberar Plaza ${esAsig ? 'Asignada' : 'Reservada'}`,
+        html: `Atención: Esta plaza está <b>${esAsig ? 'asignada a un empleado' : 'reservada'}</b> ${ocupanteText}.<br><br>Normalmente se debe liberar desde el módulo correspondiente, pero puedes forzar la limpieza si se trata de un error.<br><br><b>¿Deseas forzar su liberación a LIBRE?</b>`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        confirmButtonText: 'Sí, Forzar Liberación',
+        cancelButtonText: 'Cancelar'
+      }).then((result) => { 
+        if (result.isConfirmed) changeStatus(plaza.Id_Plaza, 'LIBRE'); 
       });
       return;
     }
@@ -404,8 +396,42 @@ export default function Ocupacion() {
       }).then((result) => { if (result.isConfirmed) changeStatus(plaza.Id_Plaza, 'LIBRE'); });
       return;
     }
-    const nuevo = estadoActual === 'LIBRE' ? 'OCUPADA' : 'LIBRE';
-    changeStatus(plaza.Id_Plaza, nuevo);
+    if (estadoActual === 'LIBRE') {
+      Swal.fire({
+        title: 'Acción bloqueada',
+        text: 'La ocupación ya no se puede forzar manualmente. Para ocupar la plaza, emite un Ticket o registra una Entrada en el Acceso Manual.',
+        icon: 'info',
+        confirmButtonColor: '#3b82f6',
+        confirmButtonText: 'Entendido'
+      });
+      return;
+    }
+
+    if (estadoActual === 'OCUPADA') {
+      const infoActual = ocupacionInfo[plaza.Id_Plaza];
+      
+      if (!infoActual) {
+        Swal.fire({
+          title: 'Inconsistencia Detectada',
+          text: 'Esta plaza dice estar OCUPADA pero no detectamos vehículo ni ticket. ¿Restablecer a LIBRE?',
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: 'Sí, restablecer',
+          cancelButtonText: 'Cancelar'
+        }).then((result) => { if (result.isConfirmed) changeStatus(plaza.Id_Plaza, 'LIBRE'); });
+        return;
+      }
+
+      Swal.fire({
+        title: 'Plaza en Uso',
+        html: 'Esta plaza tiene un vehículo legalmente registrado dentro de ella.<br><br>Para liberarla, ve al módulo de <b>Tickets</b> o <b>Acceso Manual</b> y dale Salida al vehículo.',
+        icon: 'info',
+        confirmButtonColor: '#ef4444',
+        confirmButtonText: 'Entendido'
+      });
+      return;
+    }
+
   };
 
   const handleSpecialState = (e, plaza, estadoDeseado) => {

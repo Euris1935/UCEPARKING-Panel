@@ -74,7 +74,10 @@ export default function Notificaciones() {
         `)
         .order('created_at', { ascending: false });
 
-      if (nErr) console.error('Error cargando notificaciones:', nErr.message);
+      if (nErr) {
+        console.error('Error cargando notificaciones:', nErr.message);
+        Swal.fire('Error Interno BD', 'No se pudieron cargar las notificaciones: ' + nErr.message + ' (' + nErr.code + ')', 'error');
+      }
       setNotifs(nData || []);
 
       /* Tipos de notificación desde la BD */
@@ -93,6 +96,7 @@ export default function Notificaciones() {
 
     } catch (e) {
       console.error('Error notificaciones:', e.message);
+      Swal.fire('Error Catastrófico', 'La carga se interrumpió y falló: ' + e.message, 'error');
     } finally {
       setLoading(false);
     }

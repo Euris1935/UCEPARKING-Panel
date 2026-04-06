@@ -313,7 +313,7 @@ export default function ZonasParqueo() {
   };
 
 
-  const handleDeletePlaza = async (id) => {
+  const handleDeletePlaza = async (plaza) => {
     const result = await Swal.fire({
       title: '¿Borrar plaza?',
       text: "Esta acción es irreversible.",
@@ -324,7 +324,12 @@ export default function ZonasParqueo() {
     });
 
     if (result.isConfirmed) {
-      await supabase.from('plazas').delete().eq('Id_Plaza', id);
+      await supabase.from('plazas').delete().eq('Id_Plaza', plaza.Id_Plaza);
+      
+      // Sincronizar automáticamente la capacidad a la baja tras el borrado
+      const { count } = await supabase.from('plazas').select('Id_Plaza', { count: 'exact', head: true }).eq('Id_Zona', plaza.Id_Zona);
+      await supabase.from('zonas_estacionamiento').update({ Capacidad_Total: count || 0 }).eq('Id_Zona', plaza.Id_Zona);
+
       loadData();
       Swal.fire('Eliminada', '', 'success');
     }
@@ -429,7 +434,7 @@ export default function ZonasParqueo() {
                     )}
                     <div className="absolute inset-0 bg-white/90 hidden group-hover:flex items-center justify-center gap-2 rounded transition-all">
                       {canEdit && <button onClick={() => openPlazaModal(plaza)} className="text-blue-600 bg-blue-100 p-2 rounded-full hover:bg-blue-200" title="Editar"><FaEdit /></button>}
-                      {canDelete && <button onClick={() => handleDeletePlaza(plaza.Id_Plaza)} className="text-red-600 bg-red-100 p-2 rounded-full hover:bg-red-200" title="Borrar"><FaTrash /></button>}
+                      {canDelete && <button onClick={() => handleDeletePlaza(plaza)} className="text-red-600 bg-red-100 p-2 rounded-full hover:bg-red-200" title="Borrar"><FaTrash /></button>}
                     </div>
                   </div>
                 ))}

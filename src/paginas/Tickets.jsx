@@ -145,10 +145,15 @@ export default function Tickets() {
       const { data: catMarcas } = await supabase.from('marcas_vehiculo').select('id_marca, nombre').order('nombre');
       const { data: catModelos } = await supabase.from('modelos_vehiculo').select('id_modelo, nombre, id_marca').order('nombre');
       const { data: catColores } = await supabase.from('colores_vehiculo').select('id_color, nombre').order('nombre');
+      // Contar globalmente los tickets activos sin limitarse al día actual
+      const { count: countActivos } = await supabase
+        .from('tickets')
+        .select('*', { count: 'exact', head: true })
+        .eq('Estado', 'Activo');
+      
       setPlazasLibres(plazas || []);
       setTickets(tks || []);
-      // Usar id_estado === 1 (Activo) como fuente confiable de verdad
-      setTicketsActivos((tks || []).filter(t => t.id_estado === 1).length);
+      setTicketsActivos(countActivos || 0);
       setVisitantesRegistrados(visitantesData || []);
       setListaMarcas(catMarcas || []);
       setListaModelos(catModelos || []);
@@ -258,6 +263,7 @@ export default function Tickets() {
         Id_Plaza_Asignada: parseInt(visitanteForm.id_plaza), 
         id_visitante: visitanteId, 
         Estado: 'Activo',
+        id_estado: 1,
         Fecha_Hora_Emision: ahora, 
         Fecha_Hora_Vencimiento: vencimiento,
         ...(orgId ? { organizacion_id: orgId } : {})
@@ -313,13 +319,17 @@ export default function Tickets() {
       // Sincronizar ambas columnas de estado al cerrar
       const { error: tkErr, count: tkCount } = await supabase.from('tickets').update({ id_estado: 2, Estado: 'Cerrado' }, { count: 'exact' }).eq('Id_Ticket', ticket.Id_Ticket);
       if (tkErr) throw tkErr;
+      const vt = visitantesRegistrados.find(v => v.id_visitante === ticket.id_visitante);
+      const nombreCompleto = vt ? `${vt.personas?.nombre || ''} ${vt.personas?.apellido || ''}`.trim() : (ticket.personas?.nombre || 'Visitante');
+
       await Promise.all([
         supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', ticket.Id_Plaza_Asignada),
         (async () => { const { data: ra } = await supabase.from('registros_acceso').select('id_registro').eq('ticket_id', ticket.Id_Ticket).is('salida_at', null).maybeSingle(); if (ra) await supabase.from('registros_acceso').update({ salida_at: ahora }).eq('id_registro', ra.id_registro); })(),
-        registrarLog('SALIDA_VEHICULO', `Salida: ${ticket.Placa_Capturada} — Plaza ${ticket.plazas?.Numero_Plaza}. Tiempo: ${calcTiempo(ticket.Fecha_Hora_Emision, ahora)}.`, ticket.Id_Plaza_Asignada),
+        registrarLog('SALIDA_VEHICULO', `Salida: ${nombreCompleto} — Vehículo: ${ticket.Placa_Capturada} — Plaza ${ticket.plazas?.Numero_Plaza}. Tiempo: ${calcTiempo(ticket.Fecha_Hora_Emision, ahora)}.`, ticket.Id_Plaza_Asignada),
         (async () => { try { const { data: { session } } = await supabase.auth.getSession(); if (session?.access_token) fetch('http://localhost:4000/api/access/open-main', { method: 'POST', headers: { 'Authorization': `Bearer ${session.access_token}` } }).catch(() => {}); } catch (_) {} })()
       ]);
-      setTicketParaImprimir({ ...ticket, Estado: 'Cerrado', _horaSalida: ahora, _esReimpresion: false });
+      // Desactivado a petición del usuario: No lanzar modal de factura de salida automáticamente.
+      // setTicketParaImprimir({ ...ticket, Estado: 'Cerrado', _horaSalida: ahora, _esReimpresion: false });
       Swal.fire('¡Salida Registrada!', `La plaza ${ticket.plazas?.Numero_Plaza} quedó libre.`, 'success');
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
@@ -462,11 +472,17 @@ export default function Tickets() {
                           <td className="px-5 py-4 text-xs">{t.Fecha_Hora_Vencimiento ? <span className={`font-bold ${estadoNombre === 'Activo' && (new Date(t.Fecha_Hora_Vencimiento) - Date.now()) < 600000 ? 'text-red-600 animate-pulse' : 'text-gray-500'}`}>{new Date(t.Fecha_Hora_Vencimiento).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span> : <span className="text-gray-300">—</span>}</td>
                           <td className="px-5 py-4 text-center">
                             <div className="flex gap-1 justify-center">
-                              <button onClick={() => {
+                              <button onClick={async () => {
                                 const vt = visitantesRegistrados.find(v => v.id_visitante === t.id_visitante);
+                                let salida = null;
+                                if (estadoNombre === 'Cerrado') {
+                                    const { data: ra } = await supabase.from('registros_acceso').select('salida_at').eq('ticket_id', t.Id_Ticket).not('salida_at', 'is', null).maybeSingle();
+                                    salida = ra?.salida_at || t.Fecha_Hora_Vencimiento || null;
+                                }
                                 setTicketParaImprimir({
                                   ...t,
                                   _esReimpresion: true,
+                                  _horaSalida: salida,
                                   _visitanteNombre: vt?.personas?.nombre || t.personas?.nombre || '',
                                   _visitanteApellido: vt?.personas?.apellido || t.personas?.apellido || '',
                                   _visitanteCedula: vt?.personas?.cedula || t.personas?.cedula || null,
