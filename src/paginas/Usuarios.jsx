@@ -264,9 +264,15 @@ export default function Usuarios() {
     });
 
     if (result.isConfirmed) {
-      const { error } = await supabase.from('usuarios').delete().eq('id', user.id_usuario);
-      if (error) Swal.fire('Error', error.message, 'error');
-      else {
+      const { error } = await supabase.rpc('eliminar_usuario_admin', { 
+        p_usuario_id: user.id_usuario 
+      });
+      if (error) {
+        if (error.code === 'PGRST202') {
+          return Swal.fire('SQL Requerido', 'La función eliminar_usuario_admin no existe. Ejecuta el SQL provisto.', 'warning');
+        }
+        Swal.fire('Error', error.message, 'error');
+      } else {
         Swal.fire('Eliminado', 'Acceso eliminado correctamente.', 'success');
         loadData();
       }
