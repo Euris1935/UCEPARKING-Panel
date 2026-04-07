@@ -4,13 +4,15 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaSearch, FaPlus, FaCheckCircle, FaWrench, FaTools, FaFilter, FaCalendarAlt, FaEdit, FaTrash } from 'react-icons/fa';
+import { FaSearch, FaPlus, FaCheckCircle, FaTools, FaCalendarAlt, FaEdit, FaTrash, FaSync, FaTimesCircle } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function Mantenimiento() {
     const { orgId } = useOrg();
     const [mantenimientos, setMantenimientos] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
 
     // Catalogos para el formulario
@@ -50,6 +52,7 @@ export default function Mantenimiento() {
 
     const loadData = async () => {
         setLoading(true);
+        setIsRefreshing(true);
         try {
 
             const { data: mantData, error } = await supabase
@@ -96,11 +99,15 @@ export default function Mantenimiento() {
                 .order('id_dispositivo', { ascending: true });
             if (dispError) console.warn('Error cargando dispositivos:', dispError.message);
             const { data: empData } = await supabase.from('empleados').select('Id_Empleado, personas(nombre, apellido)');
-            const { data: tipoData } = await supabase.from('tipo_mantenimiento').select('*');
+            const { data: tipoData } = await supabase.from('tipo_mantenimiento').select('*').order('nombre');
             const { data: estData } = await supabase.from('estado_mantenimiento').select('*');
 
             setDispositivos(dispData || []);
-            setTecnicos(empData || []);
+            setTecnicos((empData || []).sort((a, b) => {
+                const na = `${a.personas?.nombre ?? ''} ${a.personas?.apellido ?? ''}`.toLowerCase();
+                const nb = `${b.personas?.nombre ?? ''} ${b.personas?.apellido ?? ''}`.toLowerCase();
+                return na.localeCompare(nb);
+            }));
             setTiposMantenimiento(tipoData || []);
             setEstadosMantenimiento(estData || []);
 
@@ -108,6 +115,7 @@ export default function Mantenimiento() {
             console.error("Error cargando mantenimientos:", error.message);
         } finally {
             setLoading(false);
+            setIsRefreshing(false);
         }
     };
 
@@ -299,227 +307,221 @@ export default function Mantenimiento() {
 
     return (
         <Layout>
-            <header className="mb-8 flex flex-col md:flex-row justify-between items-center gap-4">
+            <header className="mb-8 flex justify-between items-center">
                 <div>
-                    <h2 className="text-3xl font-bold text-gray-900">Mantenimiento</h2>
-                    <p className="text-gray-500">Gestión de incidencias, reparaciones preventivas y correctivas.</p>
+                    <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Mantenimiento</h2>
+                    <p className="text-gray-500 font-medium">Gestión de incidencias, reparaciones preventivas y correctivas.</p>
                 </div>
+                {!showModal && (
                 <button
                     onClick={() => setShowModal(true)}
-                    className="bg-primary hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-semibold shadow flex items-center gap-2 transition"
+                    className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-6 rounded-lg font-bold shadow flex items-center gap-2 transition duration-150"
                 >
                     <FaPlus /> Nueva Solicitud
                 </button>
+                )}
             </header>
 
+            <div className="flex flex-col lg:flex-row gap-6">
+                
+                <div className="flex-1 min-w-0">
+                    <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+                        <div className="flex justify-between items-center mb-4">
+                            <div className="relative w-72">
+                                <input
+                                    type="text"
+                                    placeholder="Buscar por descripción, técnico o dispositivo..."
+                                    className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-blue-500 focus:border-blue-500 outline-none bg-gray-50 text-sm"
+                                    value={searchTerm}
+                                    onChange={e => setSearchTerm(e.target.value)}
+                                />
+                                <FaSearch className="absolute left-3 top-3 text-gray-400" />
+                            </div>
+                            <button
+                                onClick={loadData}
+                                disabled={isRefreshing}
+                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition disabled:opacity-50"
+                                title="Refrescar vista"
+                            >
+                                <FaSync className={isRefreshing ? 'animate-spin' : ''} />
+                            </button>
+                        </div>
 
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 flex items-center gap-4">
-                <div className="relative flex-1">
-                    <input
-                        type="text"
-                        placeholder="Buscar por descripción, técnico o dispositivo..."
-                        className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-primary focus:border-primary"
-                        value={searchTerm}
-                        onChange={e => setSearchTerm(e.target.value)}
-                    />
-                    <FaSearch className="absolute left-3 top-3 text-gray-400" />
+                        <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Dispositivo / Ubicación</th>
+                                        <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Problema</th>
+                                        <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Tipo</th>
+                                        <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Técnico</th>
+                                        <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Fecha</th>
+                                        <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Estado</th>
+                                        <th className="px-6 py-3 text-center text-[10px] font-black text-gray-500 uppercase tracking-widest">Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {loading && mantenimientos.length === 0 ? (
+                                        <tr><td colSpan="7" className="text-center py-8 text-sm italic text-gray-500">Cargando datos...</td></tr>
+                                    ) : filteredItems.length === 0 ? (
+                                        <tr><td colSpan="7" className="text-center py-8 text-sm italic text-gray-500">No hay mantenimientos registrados.</td></tr>
+                                    ) : (
+                                        filteredItems.map((item) => {
+                                            const isResuelto = !!item.Fecha_Fin || resueltosIds.has(item.Id_Mantenimiento);
+                                            
+                                            return (
+                                                <tr key={item.Id_Mantenimiento} className={`transition duration-150 ${isResuelto ? 'bg-gray-50 text-gray-400 opacity-75' : 'hover:bg-blue-50/20 group'}`}>
+                                                    <td className="px-6 py-4">
+                                                        <div className="text-xs font-bold text-gray-900 uppercase">{item.dispositivos?.tipos_dispositivos?.nombre_tipo || 'Dispositivo Desconocido'}</div>
+                                                        <div className="text-[10px] text-gray-500 italic mt-0.5">{item.dispositivos?.ubicacion || 'Sin ubicación'}</div>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-xs font-medium text-gray-600 max-w-xs truncate" title={item.Descripcion_Problema}>
+                                                        {item.Descripcion_Problema}
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${item.tipo_mantenimiento?.nombre_tipo === 'Preventivo'
+                                                            ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                                            : 'bg-orange-50 text-orange-700 border-orange-200'
+                                                            }`}>
+                                                            {item.tipo_mantenimiento?.nombre_tipo || 'N/A'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-xs font-bold text-gray-700 uppercase">
+                                                        {item.empleados?.personas?.nombre} {item.empleados?.personas?.apellido}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-xs font-medium text-gray-500">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <FaCalendarAlt className="text-gray-400" />
+                                                            {new Date(item.Fecha_Inicio).toLocaleDateString()}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${isResuelto
+                                                            ? 'bg-green-50 text-green-700 border-green-200'
+                                                            : 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                                                            }`}>
+                                                            {item.estado_mantenimiento?.nombre_estado || 'N/A'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-center">
+                                                        <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                                            {!isResuelto ? (
+                                                                <>
+                                                                    <button
+                                                                        onClick={() => handleResolve(item.Id_Mantenimiento)}
+                                                                        className="text-green-500 hover:text-green-700 transition"
+                                                                        title="Marcar como Resuelto"
+                                                                    >
+                                                                        <FaCheckCircle size={17} />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleEdit(item)}
+                                                                        className="text-blue-500 hover:text-blue-700 transition"
+                                                                        title="Editar"
+                                                                    >
+                                                                        <FaEdit size={17} />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleDelete(item.Id_Mantenimiento)}
+                                                                        className="text-red-400 hover:text-red-600 transition"
+                                                                        title="Eliminar"
+                                                                    >
+                                                                        <FaTrash size={15} />
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <span className="text-[10px] font-black text-gray-400 italic">FINALIZADO</span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
-                <FaFilter className="text-gray-400" />
-            </div>
 
-
-            <div className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Dispositivo / Ubicación</th>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Problema</th>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Técnico</th>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Fecha</th>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Estado</th>
-                                <th className="px-6 py-3 text-center text-xs font-bold text-gray-500 uppercase">Acción</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                            {loading ? (
-                                <tr><td colSpan="7" className="text-center py-8">Cargando datos...</td></tr>
-                            ) : filteredItems.length === 0 ? (
-                                <tr><td colSpan="7" className="text-center py-8 text-gray-500">No hay mantenimientos registrados.</td></tr>
-                            ) : (
-                                filteredItems.map((item) => {
-                                    // isResuelto: usa Fecha_Fin como indicador principal (siempre se asigna al resolver)
-                                    // y el set local como respaldo inmediato post-clic
-                                    const isResuelto = !!item.Fecha_Fin || resueltosIds.has(item.Id_Mantenimiento);
-                                    
-                                    return (
-                                        <tr key={item.Id_Mantenimiento} className={`border-b transition ${isResuelto ? 'bg-gray-50 text-gray-400 opacity-75' : 'hover:bg-gray-50'}`}>
-                                            <td className="px-6 py-4">
-                                                <div className="text-sm font-bold text-gray-900">{item.dispositivos?.tipos_dispositivos?.nombre_tipo || 'Dispositivo Desconocido'}</div>
-                                                <div className="text-xs text-gray-500">{item.dispositivos?.ubicacion || 'Sin ubicación'}</div>
-                                            </td>
-                                            <td className="px-6 py-4 text-sm text-gray-600 max-w-xs truncate" title={item.Descripcion_Problema}>
-                                                {item.Descripcion_Problema}
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <span className={`px-2 py-1 text-xs rounded-full border ${item.tipo_mantenimiento?.nombre_tipo === 'Preventivo'
-                                                    ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                                    : 'bg-orange-50 text-orange-700 border-orange-200'
-                                                    }`}>
-                                                    {item.tipo_mantenimiento?.nombre_tipo || 'N/A'}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 text-sm text-gray-700">
-                                                {item.empleados?.personas?.nombre} {item.empleados?.personas?.apellido}
-                                            </td>
-                                            <td className="px-6 py-4 text-sm text-gray-500">
-                                                <div className="flex items-center gap-1">
-                                                    <FaCalendarAlt className="text-gray-400" size={12} />
-                                                    {new Date(item.Fecha_Inicio).toLocaleDateString()}
-                                                </div>
-                                            </td>
-                                            <td className="px-6 py-4">
-                                                <span className={`px-2 py-1 text-xs font-bold rounded-full ${isResuelto
-                                                    ? 'bg-green-100 text-green-800'
-                                                    : 'bg-yellow-100 text-yellow-800'
-                                                    }`}>
-                                                    {item.estado_mantenimiento?.nombre_estado || 'N/A'}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 text-center">
-                                                <div className="flex justify-center gap-2">
-                                                    {!isResuelto ? (
-                                                        <>
-                                                            <button
-                                                                onClick={() => handleResolve(item.Id_Mantenimiento)}
-                                                                className="text-green-600 hover:bg-green-50 p-2 rounded-lg transition border border-transparent hover:border-green-200"
-                                                                title="Marcar como Resuelto"
-                                                            >
-                                                                <FaCheckCircle size={16} />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleEdit(item)}
-                                                                className="text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition border border-transparent hover:border-blue-200"
-                                                                title="Editar"
-                                                            >
-                                                                <FaEdit size={16} />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleDelete(item.Id_Mantenimiento)}
-                                                                className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition border border-transparent hover:border-red-200"
-                                                                title="Eliminar"
-                                                            >
-                                                                <FaTrash size={15} />
-                                                            </button>
-                                                        </>
-                                                    ) : (
-                                                        <span className="text-[10px] font-bold text-gray-400 italic">LECTURA / FINALIZADO</span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-
-            {showModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg">
-                        <div className="flex justify-between items-center mb-4 border-b pb-2">
-                            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                                <FaTools className="text-primary" /> {editingId ? 'Editar Mantenimiento' : 'Nueva Solicitud'}
+                {showModal && (
+                <aside className="w-full lg:w-[400px] flex-shrink-0">
+                    <section className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 sticky top-6">
+                        <div className="flex items-center justify-between mb-5">
+                            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <FaTools className="text-blue-600" /> {editingId ? 'Editar Solicitud' : 'Nueva Solicitud'}
                             </h3>
-                            <button onClick={closeModal} className="text-gray-400 hover:text-gray-600">✕</button>
+                            <button type="button" onClick={closeModal} className="text-gray-400 hover:text-gray-600 transition" title="Cerrar">
+                                <FaTimesCircle size={18} />
+                            </button>
                         </div>
 
                         <form onSubmit={handleSubmit} className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium mb-1">Dispositivo *</label>
-                                    <select
-                                        required
-                                        className="w-full border p-2 rounded bg-gray-50"
-                                        value={formData.id_dispositivo}
-                                        onChange={e => setFormData({ ...formData, id_dispositivo: e.target.value })}
-                                    >
-                                        <option value="">Seleccionar...</option>
-                                        {dispositivos.length === 0 && (
-                                            <option disabled>— No hay dispositivos registrados —</option>
-                                        )}
-                                        {dispositivos.map(d => {
-                                            // Un dispositivo está ocupado si tiene mantenimiento activo
-                                            // EXCEPTO si es el mismo dispositivo del registro que se está editando
-                                            const esMismoDispositivo = editingId && parseInt(formData.id_dispositivo) === d.id_dispositivo;
-                                            const ocupado = dispositivosOcupados.has(d.id_dispositivo) && !esMismoDispositivo;
-                                            return (
-                                                <option
-                                                    key={d.id_dispositivo}
-                                                    value={d.id_dispositivo}
-                                                    disabled={ocupado}
-                                                    style={ocupado ? { color: '#9ca3af', backgroundColor: '#f9fafb' } : {}}
-                                                >
-                                                    [{d.id_dispositivo}] {d.tipos_dispositivos?.nombre_tipo || 'Dispositivo'}{d.modelos_equipo_cat ? ` — ${d.modelos_equipo_cat.marcas_equipo?.nombre || ''} ${d.modelos_equipo_cat.nombre}` : ''}{d.ubicacion ? ` (${d.ubicacion})` : ''}{ocupado ? ' — EN MANTENIMIENTO' : ''}
-                                                </option>
-                                            );
-                                        })}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium mb-1">Tipo Mantenimiento *</label>
-                                    <select
-                                        required
-                                        className="w-full border p-2 rounded bg-gray-50"
-                                        value={formData.id_tipo}
-                                        onChange={e => setFormData({ ...formData, id_tipo: e.target.value })}
-                                    >
-                                        <option value="">Seleccionar...</option>
-                                        {tiposMantenimiento.map(t => (
-                                            <option key={t.id_tipo} value={t.id_tipo}>{t.nombre_tipo}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-
                             <div>
-                                <label className="block text-sm font-medium mb-1">Técnico Asignado *</label>
-                                <select
-                                    required
-                                    className="w-full border p-2 rounded bg-gray-50"
-                                    value={formData.id_tecnico}
-                                    onChange={e => setFormData({ ...formData, id_tecnico: e.target.value })}
-                                >
-                                    <option value="">Seleccionar...</option>
-                                    {tecnicos.map(t => (
-                                        <option key={t.Id_Empleado} value={t.Id_Empleado}>
-                                            {t.personas?.nombre} {t.personas?.apellido}
-                                        </option>
-                                    ))}
-                                </select>
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Dispositivo *</label>
+                                <SearchableSelect
+                                    options={dispositivos.map(d => {
+                                        const esMismoDispositivo = editingId && parseInt(formData.id_dispositivo) === d.id_dispositivo;
+                                        const ocupado = dispositivosOcupados.has(d.id_dispositivo) && !esMismoDispositivo;
+                                        return {
+                                            value: d.id_dispositivo,
+                                            label: `[${d.id_dispositivo}] ${d.tipos_dispositivos?.nombre_tipo || 'Dispositivo'} ${d.modelos_equipo_cat ? `— ${d.modelos_equipo_cat.nombre}` : ''} ${ocupado ? '(OCUPADO)' : ''}`,
+                                            disabled: ocupado
+                                        };
+                                    })}
+                                    value={formData.id_dispositivo}
+                                    onChange={val => setFormData({ ...formData, id_dispositivo: val })}
+                                    placeholder="— Seleccionar Dispositivo —"
+                                    focusRingClass="focus:ring-blue-500"
+                                    selectedItemClass="bg-blue-100 text-blue-800"
+                                    className="bg-gray-50/50"
+                                />
                             </div>
 
-                             <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="block text-sm font-medium mb-1">Fecha Inicio</label>
+                                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo Mantenimiento *</label>
+                                    <SearchableSelect
+                                        options={tiposMantenimiento.map(t => ({ value: t.id_tipo, label: t.nombre_tipo }))}
+                                        value={formData.id_tipo}
+                                        onChange={val => setFormData({ ...formData, id_tipo: val })}
+                                        placeholder="— Tipo —"
+                                        focusRingClass="focus:ring-blue-500"
+                                        selectedItemClass="bg-blue-100 text-blue-800"
+                                        className="bg-gray-50/50"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Técnico Asignado *</label>
+                                    <SearchableSelect
+                                        options={tecnicos.map(t => ({ value: t.Id_Empleado, label: `${t.personas?.nombre} ${t.personas?.apellido}` }))}
+                                        value={formData.id_tecnico}
+                                        onChange={val => setFormData({ ...formData, id_tecnico: val })}
+                                        placeholder="— Técnico —"
+                                        focusRingClass="focus:ring-blue-500"
+                                        selectedItemClass="bg-blue-100 text-blue-800"
+                                        className="bg-gray-50/50"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Inicio</label>
                                     <input
                                         type="date"
                                         required
-                                        className="w-full border p-2 rounded bg-gray-50"
+                                        className="w-full border p-2 rounded-lg text-sm bg-gray-50 outline-none focus:ring-blue-500"
                                         value={formData.fecha_inicio}
                                         onChange={e => setFormData({ ...formData, fecha_inicio: e.target.value })}
                                     />
                                 </div>
                                 {editingId && (
                                     <div>
-                                        <label className="block text-sm font-medium mb-1">Fecha Fin</label>
+                                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Fin</label>
                                         <input
                                             type="date"
-                                            className="w-full border p-2 rounded bg-gray-50"
+                                            className="w-full border p-2 rounded-lg text-sm bg-gray-50 outline-none focus:ring-blue-500"
                                             value={formData.fecha_fin}
                                             onChange={e => setFormData({ ...formData, fecha_fin: e.target.value })}
                                         />
@@ -529,14 +531,14 @@ export default function Mantenimiento() {
 
                             {editingId && (
                                 <div>
-                                    <label className="block text-sm font-medium mb-1">Estado de Mantenimiento *</label>
+                                    <label className="block text-[10px] font-bold text-blue-600 uppercase mb-1">Estado *</label>
                                     <select
                                         required
-                                        className="w-full border p-2 rounded bg-blue-50 border-blue-200"
+                                        className="w-full border p-2 rounded-lg text-sm bg-blue-50 border-blue-200 font-bold outline-none focus:ring-blue-500"
                                         value={formData.id_estado}
                                         onChange={e => setFormData({ ...formData, id_estado: e.target.value })}
                                     >
-                                        <option value="">Seleccionar estado...</option>
+                                        <option value="">— Estado —</option>
                                         {estadosMantenimiento.map(est => (
                                             <option key={est.id_estado} value={est.id_estado}>{est.nombre_estado}</option>
                                         ))}
@@ -545,27 +547,27 @@ export default function Mantenimiento() {
                             )}
 
                             <div>
-                                <label className="block text-sm font-medium mb-1">Descripción del Problema *</label>
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Descripción del Problema *</label>
                                 <textarea
                                     required
                                     rows="3"
-                                    className="w-full border p-2 rounded bg-gray-50"
+                                    className="w-full border p-2 rounded-lg text-sm bg-gray-50 outline-none focus:ring-blue-500"
                                     placeholder="Detalle la falla o tarea a realizar..."
                                     value={formData.descripcion}
                                     onChange={e => setFormData({ ...formData, descripcion: e.target.value })}
                                 ></textarea>
                             </div>
 
-                             <div className="flex justify-end gap-2 pt-4">
-                                <button type="button" onClick={closeModal} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancelar</button>
-                                <button type="submit" disabled={loading} className="px-6 py-2 bg-primary text-white rounded hover:bg-blue-700 shadow font-bold">
-                                    {loading ? 'Procesando...' : editingId ? 'Guardar Cambios' : 'Registrar'}
+                            <div className="pt-2">
+                                <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2 py-3 rounded-lg font-black uppercase text-[10px] tracking-wide transition-all shadow-md">
+                                    <FaTools /> {loading ? 'Procesando...' : editingId ? 'Guardar Cambios' : 'Registrar'}
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+                    </section>
+                </aside>
+                )}
+            </div>
         </Layout>
     );
 }

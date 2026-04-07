@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaBell, FaCheckDouble, FaTrash, FaPlus, FaEnvelopeOpen } from 'react-icons/fa';
+import { FaBell, FaCheckDouble, FaTrash, FaPlus, FaEnvelopeOpen, FaSearch, FaSync, FaTimesCircle } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 /* Colores de badge según nombre del tipo */
 const getBadgeColor = (tipo) => {
@@ -23,6 +24,8 @@ export default function Notificaciones() {
   const [tiposNotif, setTiposNotif] = useState([]);
   const [personasList, setPersonasList] = useState([]);
   const [loading, setLoading]       = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal]   = useState(false);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
 
@@ -57,7 +60,7 @@ export default function Notificaciones() {
 
   /* ── Cargar datos ── */
   const loadAll = async () => {
-    setLoading(true);
+    setIsRefreshing(true);
     try {
       /* Notificaciones: join personas (destinatario) y tipo_notificacion */
       const { data: nData, error: nErr } = await supabase
@@ -99,6 +102,7 @@ export default function Notificaciones() {
       Swal.fire('Error Catastrófico', 'La carga se interrumpió y falló: ' + e.message, 'error');
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -182,183 +186,219 @@ export default function Notificaciones() {
   const noLeidas = notifs.filter(n => !n.Leida).length;
 
   /* ════════════════════════════════ RENDER ════════════════════════════════ */
+  const filteredNotifs = notifs.filter(n => {
+    const text = searchTerm.toLowerCase();
+    const dest = n.personas ? `${n.personas.nombre} ${n.personas.apellido}`.toLowerCase() : '';
+    return n.Contenido?.toLowerCase().includes(text) || n.tipo_notificacion?.nombre_tipo?.toLowerCase().includes(text) || dest.includes(text);
+  });
+
+  /* ════════════════════════════════ RENDER ════════════════════════════════ */
   return (
     <Layout>
       {/* Header */}
-      <header className="mb-8 flex justify-between items-start">
+      <header className="mb-8 flex justify-between items-center">
         <div>
           <div className="flex items-center gap-3">
-            <h2 className="text-3xl font-bold text-gray-900">Notificaciones</h2>
+            <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Notificaciones</h2>
             {noLeidas > 0 && (
-              <span className="bg-red-500 text-white text-xs font-bold px-2.5 py-1 rounded-full animate-pulse">
+              <span className="bg-red-500 text-white text-xs font-bold px-2.5 py-1 rounded-full animate-pulse shadow-sm">
                 {noLeidas} nueva{noLeidas > 1 ? 's' : ''}
               </span>
             )}
           </div>
-          <p className="text-gray-500 mt-1">Centro de alertas y mensajes del sistema.</p>
+          <p className="text-gray-500 font-medium mt-1">Centro de alertas y mensajes del sistema.</p>
         </div>
         <div className="flex gap-3">
           {noLeidas > 0 && (
             <button
               onClick={marcarTodasLeidas}
-              className="flex items-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 px-4 py-2 rounded-lg font-medium text-sm transition"
+              className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-4 py-2.5 rounded-lg font-bold text-[10px] uppercase tracking-wide shadow-sm transition"
             >
-              <FaCheckDouble /> Marcar todas leídas
+              <FaCheckDouble size={14}/> Marcar todas leídas
             </button>
           )}
+          {!showModal && (
           <button
             onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold shadow transition"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-bold shadow-md transition duration-150"
           >
             <FaPlus /> Nueva Notificación
           </button>
+          )}
         </div>
       </header>
 
-      {/* ── Modal nueva notificación ── */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border-t-4 border-blue-600">
-            <h3 className="text-xl font-bold mb-5 text-gray-800 flex items-center gap-2">
-              <FaBell className="text-blue-600" /> Nueva Notificación
-            </h3>
-            <div className="space-y-4">
+      <div className="flex flex-col lg:flex-row gap-6">
 
-              {/* Tipo desde la BD — también llena el campo Tipo texto */}
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                  Tipo de Notificación *
-                </label>
-                <select
-                  className="w-full border p-2 rounded-lg text-sm focus:ring-blue-500"
-                  value={form.id_tipo}
-                  onChange={e => handleTipoChange(e.target.value)}
-                  required
-                >
-                  <option value="">— Seleccionar tipo —</option>
-                  {tiposNotif.length === 0 && (
-                    <option disabled>No hay tipos registrados en la BD</option>
-                  )}
-                  {tiposNotif.map(t => (
-                    <option key={t.id_tipo} value={t.id_tipo}>{t.nombre_tipo}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Destinatario */}
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                  Destinatario (opcional)
-                </label>
-                <select
-                  className="w-full border p-2 rounded-lg text-sm bg-gray-50 focus:ring-blue-500"
-                  value={form.id_persona}
-                  onChange={e => setForm(f => ({ ...f, id_persona: e.target.value }))}
-                >
-                  <option value="">— General / Todos —</option>
-                  {personasList.map(p => (
-                    <option key={p.id_persona} value={p.id_persona}>{p.nombre} {p.apellido}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Contenido */}
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-                  Contenido *
-                </label>
-                <textarea
-                  rows={3}
-                  className="w-full border p-2 rounded-lg text-sm resize-none focus:ring-blue-500"
-                  placeholder="Escriba el mensaje de la notificación..."
-                  value={form.Contenido}
-                  onChange={e => setForm(f => ({ ...f, Contenido: e.target.value }))}
-                />
-              </div>
-
-              <div className="flex justify-end gap-3 pt-2 border-t">
+        {/* ── Lista de notificaciones ── */}
+        <div className="flex-1 min-w-0">
+          <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+            {/* Buscador superior */}
+            <div className="flex justify-between items-center mb-6">
+                <div className="relative w-72">
+                    <input
+                        type="text"
+                        placeholder="Buscar notificaciones..."
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                    <FaSearch className="absolute left-3 top-3 text-gray-400" />
+                </div>
                 <button
-                  onClick={() => { setShowModal(false); setForm({ Tipo: '', Contenido: '', id_persona: '', id_tipo: '' }); }}
-                  className="px-4 py-2 text-gray-500 font-medium hover:bg-gray-100 rounded-lg transition"
+                    onClick={loadAll}
+                    disabled={isRefreshing}
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition disabled:opacity-50"
+                    title="Refrescar lista"
                 >
-                  Cancelar
+                    <FaSync className={isRefreshing ? 'animate-spin' : ''} />
                 </button>
-                <button
-                  onClick={handleCreate}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold shadow hover:bg-blue-700 transition"
-                >
-                  Enviar
-                </button>
-              </div>
+            </div>
+
+            <div className="space-y-3 overflow-y-auto max-h-[600px] pr-2 custom-scrollbar">
+              {loading && notifs.length === 0 ? (
+                <p className="text-center py-10 text-gray-400 text-sm italic">Cargando notificaciones...</p>
+              ) : filteredNotifs.length === 0 ? (
+                <div className="text-center py-16 text-gray-400">
+                  <FaEnvelopeOpen className="mx-auto mb-3 text-4xl opacity-30" />
+                  <p className="text-sm italic">No hay notificaciones.</p>
+                </div>
+              ) : (
+                filteredNotifs.map(n => (
+                  <div
+                    key={n.ID_Notificacion}
+                    className={`flex items-start gap-4 p-4 rounded-xl border transition-all duration-200 group ${
+                      n.Leida ? 'bg-gray-50 border-gray-100 opacity-75' : 'bg-white border-blue-100 shadow'
+                    }`}
+                  >
+                    {/* Indicador no leída */}
+                    <div className={`mt-1.5 w-2.5 h-2.5 rounded-full shrink-0 ${n.Leida ? 'bg-gray-200' : 'bg-blue-500'}`} />
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        {/* Badge de tipo */}
+                        <span className={`px-2 py-0.5 rounded border uppercase tracking-tighter text-[10px] font-bold ${getBadgeColor(n.Tipo || n.tipo_notificacion?.nombre_tipo)}`}>
+                          {n.tipo_notificacion?.nombre_tipo || n.Tipo || 'Sin tipo'}
+                        </span>
+
+                        {/* Destinatario */}
+                        {n.personas && (
+                          <span className="text-[10px] text-gray-400 italic">
+                            → {n.personas.nombre} {n.personas.apellido}
+                          </span>
+                        )}
+
+                        {/* Fecha */}
+                        <span className="text-[10px] font-bold text-gray-400 ml-auto uppercase tracking-wide">
+                          {new Date(n.created_at).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })}
+                        </span>
+                      </div>
+                      <p className={`text-sm ${n.Leida ? 'text-gray-500 font-medium' : 'text-gray-800 font-bold'}`}>{n.Contenido}</p>
+                    </div>
+
+                    {/* Acciones */}
+                    <div className="flex gap-2 items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {!n.Leida && (
+                        <button
+                          onClick={() => marcarLeida(n.ID_Notificacion)}
+                          title="Marcar como leída"
+                          className="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition border border-transparent hover:border-blue-200"
+                        >
+                          <FaCheckDouble size={14} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => eliminar(n.ID_Notificacion)}
+                        title="Eliminar"
+                        className="text-red-400 hover:text-red-600 p-2 rounded-lg hover:bg-red-50 transition border border-transparent hover:border-red-200"
+                      >
+                        <FaTrash size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
-      )}
 
-      {/* ── Lista de notificaciones ── */}
-      <div className="space-y-3">
-        {loading ? (
-          <p className="text-center py-10 text-gray-400">Cargando notificaciones...</p>
-        ) : notifs.length === 0 ? (
-          <div className="text-center py-16 text-gray-400">
-            <FaEnvelopeOpen className="mx-auto mb-3 text-4xl opacity-30" />
-            <p>No hay notificaciones.</p>
-          </div>
-        ) : (
-          notifs.map(n => (
-            <div
-              key={n.ID_Notificacion}
-              className={`flex items-start gap-4 p-4 rounded-xl border transition-all ${
-                n.Leida ? 'bg-white border-gray-100 opacity-60' : 'bg-white border-blue-100 shadow-md'
-              }`}
-            >
-              {/* Indicador no leída */}
-              <div className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${n.Leida ? 'bg-gray-200' : 'bg-blue-500 animate-pulse'}`} />
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap mb-1">
-                  {/* Badge de tipo */}
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getBadgeColor(n.Tipo || n.tipo_notificacion?.nombre_tipo)}`}>
-                    {n.tipo_notificacion?.nombre_tipo || n.Tipo || 'Sin tipo'}
-                  </span>
-
-                  {/* Destinatario */}
-                  {n.personas && (
-                    <span className="text-[10px] text-gray-400 italic">
-                      → {n.personas.nombre} {n.personas.apellido}
-                    </span>
-                  )}
-
-                  {/* Fecha */}
-                  <span className="text-xs text-gray-400 ml-auto">
-                    {new Date(n.created_at).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })}
-                  </span>
+        {/* ── Panel lateral (Formulario) ── */}
+        {showModal && (
+        <aside className="w-full lg:w-[400px] flex-shrink-0">
+            <section className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 sticky top-6">
+                <div className="flex items-center justify-between mb-5">
+                    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                        <FaBell className="text-blue-600" /> Nueva Notificación
+                    </h3>
+                    <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 transition" title="Cerrar">
+                        <FaTimesCircle size={18} />
+                    </button>
                 </div>
-                <p className="text-sm text-gray-700 font-medium">{n.Contenido}</p>
-              </div>
 
-              {/* Acciones */}
-              <div className="flex gap-2 items-center shrink-0">
-                {!n.Leida && (
-                  <button
-                    onClick={() => marcarLeida(n.ID_Notificacion)}
-                    title="Marcar como leída"
-                    className="text-blue-500 hover:text-blue-700 p-1.5 rounded-full hover:bg-blue-50 transition"
-                  >
-                    <FaCheckDouble size={14} />
-                  </button>
-                )}
-                <button
-                  onClick={() => eliminar(n.ID_Notificacion)}
-                  title="Eliminar"
-                  className="text-red-400 hover:text-red-600 p-1.5 rounded-full hover:bg-red-50 transition"
-                >
-                  <FaTrash size={13} />
-                </button>
-              </div>
-            </div>
-          ))
+                <div className="space-y-4">
+
+                    {/* Tipo desde la BD */}
+                    <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">
+                            Tipo de Notificación *
+                        </label>
+                        <SearchableSelect
+                            options={tiposNotif.map(t => ({ value: t.id_tipo, label: t.nombre_tipo }))}
+                            value={form.id_tipo}
+                            onChange={(val) => handleTipoChange(val)}
+                            placeholder="— Tipo —"
+                            focusRingClass="focus:ring-blue-500"
+                            selectedItemClass="bg-blue-100 text-blue-800"
+                            className="bg-gray-50/50"
+                        />
+                    </div>
+
+                    {/* Destinatario */}
+                    <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">
+                            Destinatario (opcional)
+                        </label>
+                        <SearchableSelect
+                            options={[
+                                { value: "", label: "— General / Todos —" },
+                                ...personasList.map(p => ({ value: p.id_persona, label: `${p.nombre} ${p.apellido}` }))
+                            ]}
+                            value={form.id_persona}
+                            onChange={(val) => setForm(f => ({ ...f, id_persona: val }))}
+                            placeholder="— General / Todos —"
+                            focusRingClass="focus:ring-blue-500"
+                            selectedItemClass="bg-blue-100 text-blue-800"
+                            className="bg-gray-50/50"
+                        />
+                    </div>
+
+                    {/* Contenido */}
+                    <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">
+                            Contenido *
+                        </label>
+                        <textarea
+                            rows={3}
+                            className="w-full border p-2 rounded-lg text-sm resize-none focus:ring-blue-500 bg-gray-50 outline-none"
+                            placeholder="Escriba el mensaje de la notificación..."
+                            value={form.Contenido}
+                            onChange={e => setForm(f => ({ ...f, Contenido: e.target.value }))}
+                        />
+                    </div>
+
+                    <div className="pt-2">
+                        <button
+                            onClick={handleCreate}
+                            className="w-full py-3 bg-blue-600 text-white flex justify-center items-center gap-2 rounded-lg hover:bg-blue-700 transition shadow-md font-black uppercase text-[10px] tracking-wide"
+                        >
+                            ENVIAR NOTIFICACIÓN
+                        </button>
+                    </div>
+                </div>
+            </section>
+        </aside>
         )}
+
       </div>
     </Layout>
   );

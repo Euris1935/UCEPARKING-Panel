@@ -61,7 +61,7 @@ export default function Usuarios() {
         { data: rolesData },
         { data: orgUsers, error: orgErr }
       ] = await Promise.all([
-        supabase.from('roles').select('*'),
+        supabase.from('roles').select('*').order('Nombre_Rol'),
         supabase.rpc('get_usuarios_org')
       ]);
 

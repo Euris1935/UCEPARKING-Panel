@@ -4,11 +4,13 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2'; 
-import { FaSearch, FaDownload, FaFileAlt, FaPlus, FaTrash, FaUser } from 'react-icons/fa';
+import { FaSearch, FaDownload, FaFileAlt, FaPlus, FaTrash, FaUser, FaSync, FaTimesCircle } from 'react-icons/fa';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function Reportes() {
   const [reportes, setReportes] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   
   const [showModal, setShowModal] = useState(false);
@@ -25,6 +27,7 @@ export default function Reportes() {
   useEffect(() => { loadReportes(); }, []);
 
   const loadReportes = async () => {
+    setIsRefreshing(true);
     try {
         const { data, error } = await supabase
           .from('reportes')
@@ -38,6 +41,8 @@ export default function Reportes() {
         setReportes(data || []);
     } catch (error) {
         console.error("Error cargando reportes:", error.message);
+    } finally {
+        setIsRefreshing(false);
     }
   };
 
@@ -217,180 +222,198 @@ export default function Reportes() {
     <Layout>
       <header className="mb-8 flex justify-between items-center">
         <div>
-          <h2 className="text-3xl font-bold text-gray-900">Reportes</h2>
-          <p className="text-gray-500">Historial de reportes e incidencias.</p>
+          <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Reportes</h2>
+          <p className="text-gray-500 font-medium">Historial de reportes e incidencias.</p>
         </div>
+        {!showModal && (
         <button 
-          className="flex items-center gap-2 bg-primary hover:bg-blue-700 text-white py-2.5 px-5 rounded-lg font-semibold shadow-md transition"
+          className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-6 rounded-lg font-bold shadow flex items-center gap-2 transition duration-150"
           onClick={() => setShowModal(true)}
         >
-          <FaPlus /> Generar Nuevo Reporte
+          <FaPlus /> Generar Reporte
         </button>
+        )}
       </header>
 
-      
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-xl w-96">
-                <h3 className="text-xl font-bold mb-4 text-gray-800">Nuevo Reporte</h3>
-                
-                <div className="mb-4">
-                    <label className="block text-sm font-medium mb-1 text-gray-700">Tipo de Reporte:</label>
-                    <select 
-                        className="w-full border p-2 rounded focus:ring-primary focus:border-primary"
-                        value={tipoReporte}
-                        onChange={(e) => setTipoReporte(e.target.value)}
-                    >
-                        <option value="">-- Seleccionar --</option>
-                        <option value="GENERAL">General (Ocupación, Ingresos, y Accesos)</option>
-                        <option value="EVENTOS">Eventos (Registro de actividad de hardware/sistema)</option>
-                        <option value="OCUPACION">Ocupación Diaria</option>
-                        <option value="INCIDENCIAS">Incidencias Técnicas</option>
-                        <option value="ACTIVIDAD">Actividad de Usuarios</option>
-                    </select>
-                </div>
+      <div className="flex flex-col lg:flex-row gap-6">
 
-                <div className="flex gap-4 mb-4">
-                    <div className="w-1/2">
-                        <label className="block text-sm font-medium mb-1 text-gray-700">Fecha Desde:</label>
-                        <input 
-                            type="date"
-                            className="w-full border p-2 rounded focus:ring-primary focus:border-primary"
-                            value={fechaDesde}
-                            onChange={(e) => setFechaDesde(e.target.value)}
-                        />
-                    </div>
-                    <div className="w-1/2">
-                        <label className="block text-sm font-medium mb-1 text-gray-700">Fecha Hasta:</label>
-                        <input 
-                            type="date"
-                            className="w-full border p-2 rounded focus:ring-primary focus:border-primary"
-                            value={fechaHasta}
-                            onChange={(e) => setFechaHasta(e.target.value)}
-                        />
-                    </div>
+        <div className="flex-1 min-w-0">
+          <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+            <div className="flex justify-between items-center mb-6">
+                <div className="relative w-72">
+                    <input 
+                        type="text" placeholder="Buscar reporte por tipo o usuario..." 
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+                        value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                    <FaSearch className="absolute left-3 top-3 text-gray-400" />
                 </div>
-
-                <div className="mb-6">
-                    <label className="block text-sm font-medium mb-1 text-gray-700">Descripción / Observaciones:</label>
-                    <textarea 
-                        className="w-full border p-2 rounded h-24 resize-none focus:ring-primary focus:border-primary"
-                        placeholder="Escriba los detalles del reporte aquí..."
-                        value={descripcion}
-                        onChange={(e) => setDescripcion(e.target.value)}
-                    ></textarea>
-                </div>
-                
-                <div className="flex justify-end gap-2 pt-2 border-t">
-                    <button 
-                        onClick={() => setShowModal(false)} 
-                        className="px-4 py-2 text-gray-600 bg-gray-100 rounded hover:bg-gray-200 transition font-bold"
-                    >
-                        Cancelar
-                    </button>
-                    <button 
-                        onClick={handlePreviewNewReport} 
-                        disabled={previewLoading} 
-                        className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 disabled:opacity-50 transition shadow font-bold"
-                    >
-                        {previewLoading ? "Cargando..." : "Previsualizar"}
-                    </button>
-                    <button 
-                        onClick={handleCreateReport} 
-                        disabled={loading} 
-                        className="px-4 py-2 bg-primary text-white rounded hover:bg-blue-700 disabled:opacity-50 transition shadow font-bold"
-                    >
-                        {loading ? "Guardando..." : "Guardar"}
-                    </button>
-                </div>
+                <button
+                    onClick={loadReportes}
+                    disabled={isRefreshing}
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition disabled:opacity-50"
+                    title="Refrescar lista"
+                >
+                    <FaSync className={isRefreshing ? 'animate-spin' : ''} />
+                </button>
             </div>
-        </div>
-      )}
 
-      
-      <div className="bg-white p-8 rounded-xl shadow-lg border border-gray-100">
-        <div className="flex justify-between items-center mb-6">
-            <h3 className="text-xl font-semibold text-gray-900">Documentos Recientes</h3>
-            <div className="relative w-64">
-                <input 
-                    type="text" placeholder="Buscar reporte..." 
-                    className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-primary"
-                    value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                />
-                <FaSearch className="absolute left-3 top-3 text-gray-400" />
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="px-6 py-3 text-left font-black text-gray-500 uppercase tracking-widest text-[10px]">Detalles del Reporte</th>
+                    <th className="px-6 py-3 text-left font-black text-gray-500 uppercase tracking-widest text-[10px]">Fecha Creación</th>
+                    <th className="px-6 py-3 text-left font-black text-gray-500 uppercase tracking-widest text-[10px]">Generado Por</th>
+                    <th className="px-6 py-3 text-center font-black text-gray-500 uppercase tracking-widest text-[10px]">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-100">
+                  {filteredReportes.length === 0 ? (
+                    <tr><td colSpan="4" className="p-8 text-center text-gray-500 italic text-sm">No hay reportes generados aún.</td></tr>
+                  ) : (
+                    filteredReportes.map(r => (
+                    <tr key={r.Id_Reporte} className="hover:bg-blue-50/20 transition group">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center">
+                            <div className="bg-blue-50 p-2 text-blue-600 rounded-lg mr-3 shadow-sm border border-blue-100">
+                                <FaFileAlt className='text-lg'/> 
+                            </div>
+                            <div>
+                                <p className="font-bold text-gray-900 text-xs uppercase">{r.Tipo_Reporte}</p>
+                                <p className="text-[10px] italic font-medium text-gray-400 max-w-xs truncate mt-0.5" title={r.Descripcion}>
+                                    {r.Descripcion || "Sin descripción"}
+                                </p>
+                            </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-xs font-medium text-gray-500">
+                        {new Date(r.created_at).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                            <div className="bg-gray-100 p-1.5 rounded-full text-gray-500 border border-gray-200">
+                                <FaUser className="text-[10px]"/>
+                            </div>
+                            <span className="text-xs font-bold text-gray-700 uppercase">
+                                {r.personas ? `${r.personas.nombre} ${r.personas.apellido}` : 'Sistema / Desconocido'}
+                            </span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 flex gap-2 justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                        <button 
+                            onClick={() => handlePreviewExistingReport(r.Id_Reporte)} 
+                            className="text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 p-2 rounded transition" 
+                            title="Previsualizar"
+                        >
+                            <FaSearch size={16}/>
+                        </button>
+                        <button 
+                            onClick={() => handleDownloadExcel(r.Id_Reporte, r.Tipo_Reporte)} 
+                            className="text-green-500 hover:text-green-700 hover:bg-green-50 p-2 rounded transition" 
+                            title="Descargar Excel"
+                        >
+                            <FaDownload size={16}/>
+                        </button>
+                        <button 
+                            onClick={() => handleDelete(r.Id_Reporte)} 
+                            className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded transition" 
+                            title="Eliminar"
+                        >
+                            <FaTrash size={15}/>
+                        </button>
+                      </td>
+                    </tr>
+                  )))}
+                </tbody>
+              </table>
             </div>
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase text-xs">Detalles del Reporte</th>
-                <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase text-xs">Fecha Creación</th>
-                <th className="px-6 py-3 text-left font-bold text-gray-500 uppercase text-xs">Generado Por</th>
-                <th className="px-6 py-3 text-center font-bold text-gray-500 uppercase text-xs">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredReportes.length === 0 ? (
-                <tr><td colSpan="4" className="p-8 text-center text-gray-500">No hay reportes generados aún.</td></tr>
-              ) : (
-                filteredReportes.map(r => (
-                <tr key={r.Id_Reporte} className="hover:bg-gray-50 transition">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center">
-                        <div className="bg-blue-50 p-2 rounded-lg mr-3">
-                            <FaFileAlt className='text-blue-600 text-lg'/> 
-                        </div>
-                        <div>
-                            <p className="font-bold text-gray-900">{r.Tipo_Reporte}</p>
-                            <p className="text-xs text-gray-500 max-w-xs truncate" title={r.Descripcion}>
-                                {r.Descripcion || "Sin descripción"}
-                            </p>
-                        </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    {new Date(r.created_at).toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                        <div className="bg-gray-100 p-1.5 rounded-full text-gray-500 border border-gray-200">
-                            <FaUser className="text-xs"/>
-                        </div>
-                        <span className="text-sm font-medium text-gray-700">
-                            {r.personas ? `${r.personas.nombre} ${r.personas.apellido}` : 'Sistema / Desconocido'}
-                        </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 flex gap-3 justify-center">
-                    <button 
-                        onClick={() => handlePreviewExistingReport(r.Id_Reporte)} 
-                        className="text-indigo-600 hover:text-indigo-800 bg-indigo-50 p-2 rounded-full transition" 
-                        title="Previsualizar"
-                    >
-                        <FaSearch />
-                    </button>
-                    <button 
-                        onClick={() => handleDownloadExcel(r.Id_Reporte, r.Tipo_Reporte)} 
-                        className="text-green-600 hover:text-green-800 bg-green-50 p-2 rounded-full transition" 
-                        title="Descargar Excel"
-                    >
-                        <FaDownload />
-                    </button>
-                    <button 
-                        onClick={() => handleDelete(r.Id_Reporte)} 
-                        className="text-red-600 hover:text-red-800 bg-red-50 p-2 rounded-full transition" 
-                        title="Eliminar"
-                    >
-                        <FaTrash />
-                    </button>
-                  </td>
-                </tr>
-              )))}
-            </tbody>
-          </table>
-        </div>
+        {showModal && (
+        <aside className="w-full lg:w-[400px] flex-shrink-0">
+          <section className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 sticky top-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-bold flex items-center gap-2 text-gray-800">
+                  <FaFileAlt className="text-blue-600"/> Nuevo Reporte
+              </h3>
+              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600 transition" title="Cerrar">
+                  <FaTimesCircle size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo de Reporte *</label>
+                  <SearchableSelect
+                      options={[
+                          { value: "GENERAL", label: "General (Ocupación, Accesos)" },
+                          { value: "EVENTOS", label: "Eventos (Tráfico, Hardware)" },
+                          { value: "OCUPACION", label: "Ocupación Diaria" },
+                          { value: "INCIDENCIAS", label: "Incidencias Técnicas" },
+                          { value: "ACTIVIDAD", label: "Actividad de Usuarios" }
+                      ]}
+                      value={tipoReporte}
+                      onChange={val => setTipoReporte(val)}
+                      placeholder="— Seleccionar Tipo —"
+                      focusRingClass="focus:ring-blue-500"
+                      selectedItemClass="bg-blue-100 text-blue-800"
+                      className="bg-gray-50/50"
+                  />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                  <div>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Desde *</label>
+                      <input 
+                          type="date"
+                          className="w-full border p-2 rounded-lg text-sm bg-gray-50 outline-none focus:ring-blue-500"
+                          value={fechaDesde}
+                          onChange={(e) => setFechaDesde(e.target.value)}
+                      />
+                  </div>
+                  <div>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Hasta *</label>
+                      <input 
+                          type="date"
+                          className="w-full border p-2 rounded-lg text-sm bg-gray-50 outline-none focus:ring-blue-500"
+                          value={fechaHasta}
+                          onChange={(e) => setFechaHasta(e.target.value)}
+                      />
+                  </div>
+              </div>
+
+              <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Descripción / Observaciones *</label>
+                  <textarea 
+                      className="w-full border p-2 rounded-lg bg-gray-50 text-sm outline-none focus:ring-blue-500 h-24 resize-none"
+                      placeholder="Escriba los detalles del reporte..."
+                      value={descripcion}
+                      onChange={(e) => setDescripcion(e.target.value)}
+                  ></textarea>
+              </div>
+              
+              <div className="flex flex-col gap-2 pt-2">
+                  <button 
+                      onClick={handlePreviewNewReport} 
+                      disabled={previewLoading || loading} 
+                      className="w-full py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition font-black uppercase text-[10px] tracking-wide"
+                  >
+                      {previewLoading ? "CARGANDO DATOS..." : "PREVISUALIZAR"}
+                  </button>
+                  <button 
+                      onClick={handleCreateReport} 
+                      disabled={loading || previewLoading} 
+                      className="w-full py-3 bg-blue-600 text-white flex justify-center items-center gap-2 rounded-lg hover:bg-blue-700 transition shadow-md font-black uppercase text-[10px] tracking-wide"
+                  >
+                      <FaDownload/> {loading ? "GUARDANDO..." : "GUARDAR REPORTE"}
+                  </button>
+              </div>
+            </div>
+          </section>
+        </aside>
+        )}
       </div>
 
       {/* Modal de Previsualización */}

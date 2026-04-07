@@ -5,9 +5,10 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import {
-    FaSearch, FaPlus, FaUserTie, FaTrash, FaSuitcase, FaCalendarAlt, FaCar, FaEdit
+    FaSearch, FaPlus, FaUserTie, FaTrash, FaSuitcase, FaCalendarAlt, FaCar, FaEdit, FaSync, FaTimesCircle
 } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function Asignaciones() {
     const { orgId } = useOrg();
@@ -15,6 +16,7 @@ export default function Asignaciones() {
     const [loading, setLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
     // Modo edición
     const [editingAsignacion, setEditingAsignacion] = useState(null); // null = creando, objeto = editando
@@ -45,6 +47,7 @@ export default function Asignaciones() {
 
     const loadData = async () => {
         setLoading(true);
+        setIsRefreshing(true);
         try {
             // 1. Cargar asignaciones
             const { data: asigData, error: asigError } = await supabase
@@ -59,10 +62,14 @@ export default function Asignaciones() {
                 return;
             }
 
-            // 2. Cargar todos los empleados
             const { data: todosEmpleados } = await supabase
                 .from('empleados')
                 .select('Id_Empleado, personas(nombre, apellido)');
+            const todosEmpleadosOrdenados = (todosEmpleados || []).sort((a, b) => {
+                const na = `${a.personas?.nombre ?? ''} ${a.personas?.apellido ?? ''}`.toLowerCase();
+                const nb = `${b.personas?.nombre ?? ''} ${b.personas?.apellido ?? ''}`.toLowerCase();
+                return na.localeCompare(nb);
+            });
 
             // 3. Cargar todas las plazas (para mostrar en tabla)
             const { data: todasPlazas } = await supabase
@@ -71,7 +78,7 @@ export default function Asignaciones() {
 
             // 4. Unir datos manualmente
             const asignacionesConDatos = asigData.map(asig => {
-                const empleado = todosEmpleados?.find(e => e.Id_Empleado === asig.Id_Empleado_Asignado);
+                const empleado = todosEmpleadosOrdenados?.find(e => e.Id_Empleado === asig.Id_Empleado_Asignado);
                 const plaza = todasPlazas?.find(p => p.Id_Plaza === asig.Id_Plaza);
                 return {
                     ...asig,
@@ -82,15 +89,24 @@ export default function Asignaciones() {
 
             setAsignaciones(asignacionesConDatos || []);
 
-            // 4.1. Calcular conjunto de empleados que ya tienen plaza
-            const ocupados = new Set((asigData || []).map(a => a.Id_Empleado_Asignado));
+            // 4.1. Calcular conjunto de empleados que ya tienen plaza (solo activas)
+            const ocupados = new Set(
+                (asigData || [])
+                .filter(a => a.id_estado === 1 && (!a.Fecha_Fin || new Date(a.Fecha_Fin) >= new Date(new Date().setHours(0,0,0,0))))
+                .map(a => a.Id_Empleado_Asignado)
+            );
             setEmpleadosConPlaza(ocupados);
 
             // 5. Empleados con persona_id para el selector
             const { data: empData } = await supabase
                 .from('empleados')
                 .select(`Id_Empleado, id_persona, personas ( nombre, apellido )`);
-            setEmpleadosList(empData || []);
+            const sortedEmpData = (empData || []).sort((a, b) => {
+                const na = `${a.personas?.nombre ?? ''} ${a.personas?.apellido ?? ''}`.toLowerCase();
+                const nb = `${b.personas?.nombre ?? ''} ${b.personas?.apellido ?? ''}`.toLowerCase();
+                return na.localeCompare(nb);
+            });
+            setEmpleadosList(sortedEmpData);
 
             // 6. Mapa de vehículos por persona_id
             const { data: vehData } = await supabase
@@ -117,6 +133,7 @@ export default function Asignaciones() {
             console.error("Error general:", error.message);
         } finally {
             setLoading(false);
+            setIsRefreshing(false);
         }
     };
 
@@ -180,6 +197,15 @@ export default function Asignaciones() {
 
     // CREAR asignación
     const handleCreate = async () => {
+        if (!vehiculoVinculado) {
+            return Swal.fire({
+                title: 'Sin vehículo registrado',
+                text: 'No se puede crear la asignación. El empleado seleccionado no tiene un vehículo registrado en el sistema. Registra el vehículo primero en el módulo de Vehículos.',
+                icon: 'warning',
+                confirmButtonText: 'Entendido'
+            });
+        }
+
         const { data: estadosCat } = await supabase.from('estado_plaza').select('id_estado, nombre_estado');
         const estadoAsig = (estadosCat || []).find(e => 
             e.nombre_estado.toUpperCase().includes('ASIGN') || 
@@ -319,244 +345,229 @@ export default function Asignaciones() {
                     <h2 className="text-3xl font-bold text-gray-900">Asignaciones Fijas</h2>
                     <p className="text-gray-500">Gestión de parqueos asignados a empleados.</p>
                 </div>
-                <button
-                    onClick={handleOpenCreate}
-                    className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2.5 rounded-lg font-bold shadow flex items-center gap-2 transition"
-                >
-                    <FaPlus /> Nueva Asignación
-                </button>
+                {!showModal && (
+                    <button
+                        onClick={handleOpenCreate}
+                        className="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2.5 rounded-lg font-bold shadow flex items-center gap-2 transition"
+                    >
+                        <FaPlus /> Nueva Asignación
+                    </button>
+                )}
             </header>
 
-            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
-                <div className="flex justify-end mb-4">
-                    <div className="relative w-64">
-                        <input
-                            type="text"
-                            placeholder="Buscar empleado o plaza..."
-                            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-purple-500 outline-none"
-                            value={searchTerm}
-                            onChange={e => setSearchTerm(e.target.value)}
-                        />
-                        <FaSearch className="absolute left-3 top-3 text-gray-400" />
+            <div className="flex flex-col lg:flex-row gap-6">
+
+                <div className="flex-1 min-w-0">
+                  <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-100">
+                    <div className="flex justify-between items-center mb-4">
+                        <div className="relative w-64">
+                            <input
+                                type="text"
+                                placeholder="Buscar empleado o plaza..."
+                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500 outline-none text-sm"
+                                value={searchTerm}
+                                onChange={e => setSearchTerm(e.target.value)}
+                            />
+                            <FaSearch className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+                        </div>
+                        <button
+                            onClick={loadData}
+                            disabled={isRefreshing}
+                            className="p-2 text-purple-600 hover:bg-purple-50 rounded-full transition disabled:opacity-50"
+                            title="Refrescar lista"
+                        >
+                            <FaSync className={isRefreshing ? 'animate-spin' : ''} />
+                        </button>
+                    </div>
+
+                    <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-purple-50 sticky top-0 z-10 shadow-sm">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Empleado</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Plaza</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Inicio</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Fin</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Notas</th>
+                                    <th className="px-6 py-3 text-right text-xs font-bold text-purple-800 uppercase">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                                {filteredData.length === 0 ? (
+                                    <tr><td colSpan="6" className="text-center py-8 text-gray-500 italic">No hay asignaciones registradas.</td></tr>
+                                ) : (
+                                    filteredData.map(item => (
+                                        <tr key={item.Id_Asignacion} className="hover:bg-purple-50/20 transition">
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center gap-2">
+                                                <div className="bg-purple-100 p-2 rounded-full text-purple-600"><FaUserTie /></div>
+                                                {item.empleados ?
+                                                    `${item.empleados.personas?.nombre || ''} ${item.empleados.personas?.apellido || ''}`.trim()
+                                                    : <span className="text-gray-400 italic font-normal">Sin datos</span>
+                                                }
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-purple-700">
+                                                {item.plazas?.Numero_Plaza || 'N/A'}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                <div className="flex items-center gap-1">
+                                                    <FaCalendarAlt className="text-gray-400" />
+                                                    {item.Fecha_Inicio ? new Date(item.Fecha_Inicio).toLocaleDateString() : '-'}
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                {item.Fecha_Fin
+                                                    ? <span className="flex items-center gap-1"><FaCalendarAlt className="text-red-400" />{new Date(item.Fecha_Fin).toLocaleDateString()}</span>
+                                                    : <span className="flex items-center gap-1 font-bold text-green-600"><FaCalendarAlt className="text-green-600"/> Indeterminada</span>}
+                                            </td>
+                                            <td className="px-6 py-4 text-sm text-gray-500 italic max-w-xs truncate">
+                                                {item.Notas || '-'}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-right">
+                                                <div className="flex items-center justify-end gap-2">
+                                                    <button
+                                                        onClick={() => handleOpenEdit(item)}
+                                                        className="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded border border-blue-200 text-xs font-bold transition"
+                                                    >
+                                                        <FaEdit className="inline mr-1" /> Editar
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleLiberar(item)}
+                                                        className="text-red-600 hover:bg-red-50 px-3 py-1 rounded border border-red-200 text-xs font-bold transition"
+                                                    >
+                                                        <FaTrash className="inline mr-1" /> Liberar
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
                     </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-purple-50">
-                            <tr>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Empleado</th>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Plaza</th>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Inicio</th>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Fin</th>
-                                <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Notas</th>
-                                <th className="px-6 py-3 text-right text-xs font-bold text-purple-800 uppercase">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                            {filteredData.length === 0 ? (
-                                <tr><td colSpan="6" className="text-center py-8 text-gray-500 italic">No hay asignaciones registradas.</td></tr>
-                            ) : (
-                                filteredData.map(item => (
-                                    <tr key={item.Id_Asignacion} className="hover:bg-purple-50/20 transition">
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center gap-2">
-                                            <div className="bg-purple-100 p-2 rounded-full text-purple-600"><FaUserTie /></div>
-                                            {item.empleados ?
-                                                `${item.empleados.personas?.nombre || ''} ${item.empleados.personas?.apellido || ''}`.trim()
-                                                : <span className="text-gray-400 italic font-normal">Sin datos</span>
-                                            }
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-purple-700">
-                                            {item.plazas?.Numero_Plaza || 'N/A'}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            <div className="flex items-center gap-1">
-                                                <FaCalendarAlt className="text-gray-400" />
-                                                {item.Fecha_Inicio ? new Date(item.Fecha_Inicio).toLocaleDateString() : '-'}
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {item.Fecha_Fin
-                                                ? <span className="flex items-center gap-1"><FaCalendarAlt className="text-red-400" />{new Date(item.Fecha_Fin).toLocaleDateString()}</span>
-                                                : <span className="flex items-center gap-1 font-bold text-green-600"><FaCalendarAlt className="text-green-600"/> Indeterminada</span>}
-                                        </td>
-                                        <td className="px-6 py-4 text-sm text-gray-500 italic max-w-xs truncate">
-                                            {item.Notas || '-'}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-right">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <button
-                                                    onClick={() => handleOpenEdit(item)}
-                                                    className="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded border border-blue-200 text-xs font-bold transition"
-                                                >
-                                                    <FaEdit className="inline mr-1" /> Editar
-                                                </button>
-                                                <button
-                                                    onClick={() => handleLiberar(item)}
-                                                    className="text-red-600 hover:bg-red-50 px-3 py-1 rounded border border-red-200 text-xs font-bold transition"
-                                                >
-                                                    <FaTrash className="inline mr-1" /> Liberar
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            {showModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white p-6 rounded-lg shadow-xl w-[420px] animate-fade-in-down border-t-4 border-purple-600">
-                        <h3 className="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2">
-                            {editingAsignacion
-                                ? <><FaEdit className="text-blue-500" /> Editar Asignación</>
-                                : <><FaSuitcase className="text-purple-600" /> Asignar Plaza</>
-                            }
+                {showModal && (
+                <aside className="w-full lg:w-[400px] flex-shrink-0">
+                   <section className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 sticky top-6">
+                      <div className="flex items-center justify-between mb-5">
+                        <h3 className="text-lg font-bold flex items-center gap-2 text-gray-800">
+                            <FaSuitcase className="text-purple-600"/> {editingAsignacion ? 'Editar Asignación' : 'Asignar Plaza'}
                         </h3>
+                        <button type="button" onClick={handleCloseModal} className="text-gray-400 hover:text-gray-600 transition" title="Cerrar">
+                            <FaTimesCircle size={18} />
+                        </button>
+                      </div>
+                      <form onSubmit={handleSubmit} className="space-y-4">
+                         <div>
+                           <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Empleado *</label>
+                           <SearchableSelect
+                             options={empleadosList.filter(emp => {
+                                 const esMismoEmpleado = editingAsignacion && parseInt(formData.Id_Empleado) === emp.Id_Empleado;
+                                 return !empleadosConPlaza.has(emp.Id_Empleado) || esMismoEmpleado;
+                             }).map(emp => ({
+                                 value: emp.Id_Empleado,
+                                 label: emp.personas ? `${emp.personas.nombre} ${emp.personas.apellido}` : `ID: ${emp.Id_Empleado}`
+                             }))}
+                             value={formData.Id_Empleado}
+                             onChange={(val) => handleEmpleadoChange(val)}
+                             placeholder="— Seleccionar Empleado —"
+                             focusRingClass="focus:ring-purple-500"
+                             selectedItemClass="bg-purple-100 text-purple-800"
+                             className="bg-gray-50/50"
+                           />
+                         </div>
 
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                            {/* Selector de Empleado */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1 font-bold">Empleado</label>
-                                <select
-                                    className="w-full border p-2 rounded focus:ring-purple-500 outline-none"
-                                    value={formData.Id_Empleado}
-                                    onChange={e => handleEmpleadoChange(e.target.value)}
-                                    required
-                                >
-                                    <option value="">-- Seleccionar Empleado --</option>
-                                    {empleadosList.map(emp => {
-                                        const esMismoEmpleado = editingAsignacion && parseInt(formData.Id_Empleado) === emp.Id_Empleado;
-                                        const tienePlaza = empleadosConPlaza.has(emp.Id_Empleado) && !esMismoEmpleado;
-                                        return (
-                                            <option 
-                                                key={emp.Id_Empleado} 
-                                                value={emp.Id_Empleado}
-                                                disabled={tienePlaza}
-                                                style={tienePlaza ? { color: '#9ca3af', backgroundColor: '#f9fafb' } : {}}
-                                            >
-                                                {emp.personas ? `${emp.personas.nombre} ${emp.personas.apellido}` : `ID: ${emp.Id_Empleado}`}
-                                                {tienePlaza ? ' — [YA TIENE PLAZA]' : ''}
-                                            </option>
-                                        );
-                                    })}
-                                </select>
-                            </div>
+                         {/* Vehículo Vinculado (solo lectura) */}
+                         {formData.Id_Empleado && (
+                             <div className={`rounded-lg p-3 border flex items-start gap-3 ${vehiculoVinculado ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200'}`}>
+                                 <div className={`mt-0.5 p-1.5 rounded-full ${vehiculoVinculado ? 'bg-purple-100 text-purple-600' : 'bg-gray-200 text-gray-400'}`}>
+                                     <FaCar size={13} />
+                                 </div>
+                                 {vehiculoVinculado ? (
+                                     <div>
+                                         <p className="text-[10px] font-bold text-purple-700 uppercase tracking-wide mb-0.5">Vehículo Vinculado</p>
+                                         <p className="text-sm font-bold text-gray-800 font-mono">{vehiculoVinculado.placa}</p>
+                                         {(vehiculoVinculado.marcas_vehiculo?.nombre || vehiculoVinculado.colores_vehiculo?.nombre) && (
+                                             <p className="text-xs text-gray-500">
+                                                 {[vehiculoVinculado.marcas_vehiculo?.nombre, vehiculoVinculado.colores_vehiculo?.nombre].filter(Boolean).join(' · ')}
+                                             </p>
+                                         )}
+                                     </div>
+                                 ) : (
+                                     <div>
+                                         <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-0.5">Sin vehículo vinculado</p>
+                                         <p className="text-xs text-gray-400">Este empleado no tiene vehículo registrado.</p>
+                                     </div>
+                                 )}
+                             </div>
+                         )}
 
-                            {/* Vehículo Vinculado (solo lectura) */}
-                            {formData.Id_Empleado && (
-                                <div className={`rounded-lg p-3 border flex items-start gap-3 ${vehiculoVinculado ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200'}`}>
-                                    <div className={`mt-0.5 p-1.5 rounded-full ${vehiculoVinculado ? 'bg-purple-100 text-purple-600' : 'bg-gray-200 text-gray-400'}`}>
-                                        <FaCar size={13} />
-                                    </div>
-                                    {vehiculoVinculado ? (
-                                        <div>
-                                            <p className="text-xs font-bold text-purple-700 uppercase tracking-wide mb-0.5">Vehículo Vinculado</p>
-                                            <p className="text-sm font-bold text-gray-800 font-mono">{vehiculoVinculado.placa}</p>
-                                            {(vehiculoVinculado.marcas_vehiculo?.nombre || vehiculoVinculado.colores_vehiculo?.nombre) && (
-                                                <p className="text-xs text-gray-500">
-                                                    {[vehiculoVinculado.marcas_vehiculo?.nombre, vehiculoVinculado.colores_vehiculo?.nombre].filter(Boolean).join(' · ')}
-                                                </p>
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <div>
-                                            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-0.5">Sin vehículo vinculado</p>
-                                            <p className="text-xs text-gray-400">Este empleado no tiene vehículo registrado.</p>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
+                         <div>
+                           <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">
+                               Plaza {editingAsignacion ? '(Disponibles + Actual)' : 'Disponible'} *
+                           </label>
+                           <SearchableSelect
+                             options={plazasDisponibles.map(p => ({
+                                 value: p.Id_Plaza,
+                                 label: `${p.Numero_Plaza}${editingAsignacion && String(p.Id_Plaza) === String(editingAsignacion.Id_Plaza) ? ' (actual)' : ''}`
+                             }))}
+                             value={formData.Id_Plaza}
+                             onChange={(val) => setFormData({...formData, Id_Plaza: val})}
+                             placeholder="— Seleccionar Plaza —"
+                             focusRingClass="focus:ring-purple-500"
+                             selectedItemClass="bg-purple-100 text-purple-800"
+                             className="bg-gray-50/50"
+                           />
+                         </div>
 
-                            {/* Plaza */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1 font-bold">
-                                    Plaza {editingAsignacion ? '(Disponibles + Actual)' : 'Disponible'}
-                                </label>
-                                <select
-                                    className="w-full border p-2 rounded focus:ring-purple-500 outline-none"
-                                    value={formData.Id_Plaza}
-                                    onChange={e => setFormData({ ...formData, Id_Plaza: e.target.value })}
-                                    required
-                                >
-                                    <option value="">-- Seleccionar Plaza --</option>
-                                    {plazasDisponibles.map(p => (
-                                        <option key={p.Id_Plaza} value={p.Id_Plaza}>
-                                            {p.Numero_Plaza}
-                                            {editingAsignacion && p.Id_Plaza === editingAsignacion.Id_Plaza ? ' (actual)' : ''}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
+                         <div className="grid grid-cols-2 gap-3">
+                           <div>
+                             <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Inicio *</label>
+                             <input type="date" className="w-full border rounded-lg p-2 text-sm focus:ring-purple-500 bg-gray-50 outline-none" value={formData.Fecha_Inicio} onChange={(e) => setFormData({...formData, Fecha_Inicio: e.target.value})} required />
+                           </div>
+                           <div className="flex flex-col">
+                              <div className="flex justify-between items-center mb-1">
+                                  <label className="block text-[10px] font-bold text-gray-400 uppercase">Fecha Fin *</label>
+                                  <label className="flex items-center gap-1 text-[10px] uppercase font-bold text-purple-700 cursor-pointer">
+                                      <input 
+                                          type="checkbox" 
+                                          checked={isPermanent}
+                                          onChange={(e) => {
+                                              setIsPermanent(e.target.checked);
+                                              if (e.target.checked) setFormData({ ...formData, Fecha_Fin: '' });
+                                          }}
+                                          className="rounded text-purple-600 focus:ring-purple-500"
+                                      />
+                                      Fija
+                                  </label>
+                              </div>
+                              <input type="date" className={`w-full border rounded-lg p-2 text-sm focus:ring-purple-500 bg-gray-50 outline-none ${isPermanent ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : ''}`} value={formData.Fecha_Fin} onChange={(e) => setFormData({...formData, Fecha_Fin: e.target.value})} min={formData.Fecha_Inicio || undefined} disabled={isPermanent} />
+                           </div>
+                         </div>
+                         
+                         <div>
+                           <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Notas</label>
+                           <textarea
+                             className="w-full border rounded-lg p-2 text-sm focus:ring-purple-500 bg-gray-50 outline-none"
+                             rows="2"
+                             placeholder="Detalles adicionales..."
+                             value={formData.Notas}
+                             onChange={e => setFormData({ ...formData, Notas: e.target.value })}
+                           />
+                         </div>
 
-                            {/* Fechas */}
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1 font-bold">Fecha Inicio</label>
-                                    <input
-                                        type="date"
-                                        className="w-full border p-2 rounded focus:ring-purple-500 outline-none"
-                                        value={formData.Fecha_Inicio}
-                                        onChange={e => setFormData({ ...formData, Fecha_Inicio: e.target.value })}
-                                        required
-                                    />
-                                </div>
-                                <div className="flex flex-col">
-                                    <div className="flex justify-between items-center mb-1">
-                                        <label className="block text-sm font-medium text-gray-700 font-bold">Fecha Fin</label>
-                                        <label className="flex items-center gap-1 text-xs text-purple-700 cursor-pointer">
-                                            <input 
-                                                type="checkbox" 
-                                                checked={isPermanent}
-                                                onChange={(e) => {
-                                                    setIsPermanent(e.target.checked);
-                                                    if (e.target.checked) {
-                                                        setFormData({ ...formData, Fecha_Fin: '' });
-                                                    }
-                                                }}
-                                                className="rounded text-purple-600 focus:ring-purple-500"
-                                            />
-                                            Indeterminada
-                                        </label>
-                                    </div>
-                                    <input
-                                        type="date"
-                                        className={`w-full border p-2 rounded focus:ring-purple-500 outline-none ${isPermanent ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
-                                        value={formData.Fecha_Fin}
-                                        onChange={e => setFormData({ ...formData, Fecha_Fin: e.target.value })}
-                                        min={formData.Fecha_Inicio || undefined}
-                                        disabled={isPermanent}
-                                    />
-                                </div>
-                            </div>
+                         <div className="pt-2">
+                           <button type="submit" disabled={loading} className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-lg font-bold tracking-wide transition-all shadow-md disabled:opacity-50 flex justify-center items-center gap-2">
+                             <FaSuitcase /> {editingAsignacion ? 'GUARDAR CAMBIOS' : 'GUARDAR ASIGNACIÓN'}
+                           </button>
+                         </div>
+                      </form>
+                   </section>
+                </aside>
+                )}
 
-                            {/* Notas */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1 font-bold">Notas</label>
-                                <textarea
-                                    className="w-full border p-2 rounded focus:ring-purple-500 outline-none"
-                                    rows="2"
-                                    placeholder="Detalles adicionales..."
-                                    value={formData.Notas}
-                                    onChange={e => setFormData({ ...formData, Notas: e.target.value })}
-                                />
-                            </div>
-
-                            <div className="flex justify-end gap-2 pt-4 border-t mt-2">
-                                <button type="button" onClick={handleCloseModal} className="px-4 py-2 text-gray-600 bg-gray-100 rounded hover:bg-gray-200 font-bold">Cancelar</button>
-                                <button type="submit" disabled={loading}
-                                    className={`px-4 py-2 text-white rounded font-bold shadow transition ${editingAsignacion ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'}`}
-                                >
-                                    {loading ? 'Guardando...' : editingAsignacion ? 'Guardar Cambios' : 'Guardar Asignación'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+            </div>
         </Layout>
     );
 }

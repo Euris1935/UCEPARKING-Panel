@@ -192,6 +192,7 @@ export default function Ocupacion() {
   const [estadosCatalogo, setEstadosCatalogo] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
   // #17: Mapa de plaza → info del vehículo/persona que la ocupa
   const [ocupacionInfo, setOcupacionInfo] = useState({});
@@ -214,11 +215,13 @@ export default function Ocupacion() {
     loadData();
     const channel = supabase.channel('realtime_plazas')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'plazas' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'asignaciones_parqueo' }, () => loadData())
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, []);
 
   const loadData = async () => {
+    setIsRefreshing(true);
     try {
       const { data: estData } = await supabase.from('estado_plaza').select('*');
       setEstadosCatalogo(estData || []);
@@ -273,19 +276,21 @@ export default function Ocupacion() {
       // 3. ASIGNACIONES (Fijas)
       const { data: asignacionesActivas } = await supabase
         .from('asignaciones_parqueo')
-        .select('Id_Plaza, vehiculos(placa), empleados(personas(nombre, apellido))');
+        .select('Id_Plaza, empleados(id_persona, personas(nombre, apellido))')
+        .eq('id_estado', 1)
+        .or(`Fecha_Fin.is.null,Fecha_Fin.gte.${new Date().toISOString().split('T')[0]}`);
       
       (asignacionesActivas || []).forEach(asig => {
         if (asig.Id_Plaza) {
           mapaOcupacion[asig.Id_Plaza] = {
-            placa: asig.vehiculos?.placa || mapaOcupacion[asig.Id_Plaza]?.placa,
+            placa: mapaOcupacion[asig.Id_Plaza]?.placa || 'Asignada',
             nombre: `${asig.empleados?.personas?.nombre || ''} ${asig.empleados?.personas?.apellido || ''}`.trim()
           };
         }
       });
 
       setOcupacionInfo(mapaOcupacion);
-    } catch (error) { console.error("Error cargando datos:", error); } finally { setLoading(false); }
+    } catch (error) { console.error("Error cargando datos:", error); } finally { setLoading(false); setIsRefreshing(false); }
   };
 
   const getEstadoId = (nombre) => {
@@ -505,7 +510,9 @@ export default function Ocupacion() {
           <span className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-yellow-400"></div> Reservadas: {stats.reservadas}</span>
           <span className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-purple-600"></div> Asignadas: {stats.asignadas}</span>
           <span className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-orange-500"></div> Mant.: {stats.mantenimiento}</span>
-          <button onClick={loadData} className="ml-2 text-primary hover:bg-blue-50 p-2 rounded-full"><FaSync /></button>
+          <button onClick={loadData} disabled={isRefreshing} className="ml-2 text-primary hover:bg-blue-50 p-2 rounded-full transition disabled:opacity-50">
+            <FaSync className={isRefreshing ? 'animate-spin' : ''} />
+          </button>
         </div>
       </div>
 

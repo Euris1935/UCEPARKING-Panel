@@ -5,6 +5,7 @@ import Swal from 'sweetalert2';
 import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import { playBeep } from '../utils/audio';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function AccesoManual() {
   const { orgId, loadingOrg } = useOrg();
@@ -104,9 +105,10 @@ export default function AccesoManual() {
 
   const handleRegistrarEntrada = async (e) => {
     e.preventDefault();
-    if (!entradaForm.vehiculo_id) return Swal.fire('Atención', 'Seleccione un vehículo/cliente.', 'warning');
+
+    if (!entradaForm.vehiculo_id) return Swal.fire('Atención', 'Seleccione un vehículo.', 'warning');
     if (!entradaForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
-    if (loadingOrg) return Swal.fire('Espere', 'Cargando contexto de organización...', 'info');
+    if (!entradaForm.puertaDestino) return Swal.fire('Atención', 'Seleccione una puerta de acceso.', 'warning');
     if (!orgId) return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Verifique que su usuario esté vinculado a un empleado/organización.', 'error');
 
     setLoading(true);
@@ -367,34 +369,33 @@ export default function AccesoManual() {
               )}
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Asignar Plaza *</label>
-              <select
-                className="w-full border rounded-lg p-2 text-sm focus:ring-indigo-500 bg-gray-50"
-                value={entradaForm.id_plaza}
-                onChange={(e) => setEntradaForm({ ...entradaForm, id_plaza: e.target.value })}
-                required
-              >
-                <option value="">— Seleccione una plaza libre —</option>
-                {plazasLibres.map(p => (
-                  <option key={p.Id_Plaza} value={p.Id_Plaza}>
-                    Plaza {p.Numero_Plaza}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Asignar Plaza *</label>
+                <SearchableSelect
+                  options={plazasLibres.map(p => ({ value: p.Id_Plaza, label: `Plaza ${p.Numero_Plaza}` }))}
+                  value={entradaForm.id_plaza}
+                  onChange={(val) => setEntradaForm({ ...entradaForm, id_plaza: val })}
+                  placeholder="— Seleccione una plaza libre —"
+                  focusRingClass="focus:ring-indigo-500"
+                  selectedItemClass="bg-indigo-100 text-indigo-800"
+                />
+              </div>
 
-            <div>
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Puerta de Acceso *</label>
-              <select
-                className="w-full border rounded-lg p-2 text-sm focus:ring-indigo-500 bg-gray-50"
-                value={entradaForm.puertaDestino}
-                onChange={(e) => setEntradaForm({ ...entradaForm, puertaDestino: e.target.value })}
-                required
-              >
-                <option value="main">Barrera Principal</option>
-                <option value="vip">Barrera VIP</option>
-              </select>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Puerta de Acceso *</label>
+                <SearchableSelect
+                  options={[
+                    { value: 'main', label: 'Barrera Principal' },
+                    { value: 'vip', label: 'Barrera VIP' }
+                  ]}
+                  value={entradaForm.puertaDestino}
+                  onChange={(val) => setEntradaForm({ ...entradaForm, puertaDestino: val })}
+                  placeholder="— Seleccionar puerta —"
+                  focusRingClass="focus:ring-indigo-500"
+                  selectedItemClass="bg-indigo-100 text-indigo-800"
+                />
+              </div>
             </div>
 
             <div className="pt-4">

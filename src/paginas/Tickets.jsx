@@ -9,6 +9,7 @@ import {
   FaClipboardCheck, FaSyncAlt, FaBan
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
   const handlePrint = () => window.print();
@@ -87,6 +88,7 @@ export default function Tickets() {
   const canEdit   = tienePermiso('Módulo Parqueo', 'editar');
 
   const [loading,                 setLoading]                 = useState(false);
+  const [isRefreshing,            setIsRefreshing]            = useState(false);
   const [orgId,                   setOrgId]                   = useState(null); // organizacion_id del usuario activo
   const [activeTab,               setActiveTab]               = useState(canCreate ? 'entrada' : 'activos');
   const [tickets,                 setTickets]                 = useState([]);
@@ -129,6 +131,7 @@ export default function Tickets() {
   }, []);
 
   const loadData = async () => {
+    setIsRefreshing(true);
     try {
       const { data: plazas } = await supabase.from('plazas').select('*').eq('id_estado', 1).order('Numero_Plaza');
       const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
@@ -160,11 +163,17 @@ export default function Tickets() {
       setPlazasLibres(plazas || []);
       setTickets(tks || []);
       setTicketsActivos(countActivos || 0);
-      setVisitantesRegistrados(visitantesData || []);
+      setVisitantesRegistrados(
+        (visitantesData || []).sort((a, b) => {
+          const na = `${a.personas?.nombre ?? ''} ${a.personas?.apellido ?? ''}`.toLowerCase();
+          const nb = `${b.personas?.nombre ?? ''} ${b.personas?.apellido ?? ''}`.toLowerCase();
+          return na.localeCompare(nb);
+        })
+      );
       setListaMarcas(catMarcas || []);
       setListaModelos(catModelos || []);
       setListaColores(catColores || []);
-    } catch (err) { console.error('Error cargando datos:', err); }
+    } catch (err) { console.error('Error cargando datos:', err); } finally { setIsRefreshing(false); }
   };
 
   const registrarLog = async (tipo, descripcion, idPlaza = null) => {
@@ -383,10 +392,22 @@ export default function Tickets() {
             <form onSubmit={handleEmitirTicket} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Visitante ya registrado?</label>
-                <select className="w-full border rounded-lg p-2 text-sm focus:ring-green-500 bg-gray-50" value={visitanteForm.id_visitante ?? ''} onChange={(e) => { const val = e.target.value; if (val) { const v = visitantesRegistrados.find(vis => vis.id_visitante === parseInt(val)); if (v) setVisitanteForm(f => ({ ...f, id_visitante: v.id_visitante, nombre: v.personas?.nombre || '', apellido: v.personas?.apellido || '', cedula: v.personas?.cedula || '', telefono: v.personas?.telefono || '', sexo: v.personas?.sexo || 'M' })); } else { setVisitanteForm(f => ({ ...f, id_visitante: null, nombre: '', apellido: '', cedula: '', telefono: '', sexo: 'M' })); } }}>
-                  <option value="">— Nuevo visitante —</option>
-                  {visitantesRegistrados.map(v => <option key={v.id_visitante} value={v.id_visitante}>{v.personas?.nombre} {v.personas?.apellido}{v.personas?.telefono ? ` — ${v.personas.telefono}` : ''}</option>)}
-                </select>
+                <SearchableSelect
+                  options={visitantesRegistrados.map(v => ({ value: v.id_visitante, label: `${v.personas?.nombre} ${v.personas?.apellido}${v.personas?.telefono ? ` — ${v.personas.telefono}` : ''}` }))}
+                  value={visitanteForm.id_visitante ?? ''}
+                  onChange={(val) => { 
+                    if (val) { 
+                      const v = visitantesRegistrados.find(vis => String(vis.id_visitante) === String(val)); 
+                      if (v) setVisitanteForm(f => ({ ...f, id_visitante: v.id_visitante, nombre: v.personas?.nombre || '', apellido: v.personas?.apellido || '', cedula: v.personas?.cedula || '', telefono: v.personas?.telefono || '', sexo: v.personas?.sexo || 'M' })); 
+                    } else { 
+                      setVisitanteForm(f => ({ ...f, id_visitante: null, nombre: '', apellido: '', cedula: '', telefono: '', sexo: 'M' })); 
+                    } 
+                  }}
+                  placeholder="— Nuevo visitante —"
+                  className="bg-gray-50/50"
+                  focusRingClass="focus:ring-green-500"
+                  selectedItemClass="bg-green-100 text-green-800"
+                />
               </div>
               <div className={`grid grid-cols-2 gap-3 ${visitanteForm.id_visitante ? 'opacity-50 pointer-events-none' : ''}`}>
                 <div><label className="text-[10px] font-bold text-gray-400 uppercase">Nombre *</label><input className="w-full border rounded-lg p-2 text-sm mt-0.5" placeholder="Juan" value={visitanteForm.nombre} onChange={e => setVisitanteForm(f => ({ ...f, nombre: e.target.value }))} required={!visitanteForm.id_visitante} /></div>
@@ -414,12 +435,25 @@ export default function Tickets() {
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Datos del Vehículo</p>
               <div><label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (máx. 6 caracteres)</label><input className="w-full border-2 border-green-300 focus:border-green-500 rounded-lg p-2 text-sm font-mono font-bold uppercase mt-0.5 text-center tracking-widest text-lg" placeholder="ABC123" value={visitanteForm.placa} maxLength={7} onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (val.length <= 6) setVisitanteForm(f => ({ ...f, placa: val })); }} required /></div>
               <div className="grid grid-cols-2 gap-3">
-                <div><label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label><select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.id_marca} onChange={e => setVisitanteForm(f => ({ ...f, id_marca: e.target.value, id_modelo: '' }))}><option value="">— Seleccionar —</option>{listaMarcas.map(m => <option key={m.id_marca} value={m.id_marca}>{m.nombre}</option>)}</select></div>
-                <div><label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label><select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.id_modelo} onChange={e => setVisitanteForm(f => ({ ...f, id_modelo: e.target.value }))} disabled={!visitanteForm.id_marca}><option value="">— Seleccionar —</option>{listaModelos.filter(m => m.id_marca === parseInt(visitanteForm.id_marca)).map(m => <option key={m.id_modelo} value={m.id_modelo}>{m.nombre}</option>)}</select></div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
+                  <SearchableSelect options={listaMarcas.map(m => ({ value: m.id_marca, label: m.nombre }))} value={visitanteForm.id_marca} onChange={(val) => setVisitanteForm(f => ({ ...f, id_marca: val, id_modelo: '' }))} placeholder="— Seleccionar —" focusRingClass="focus:ring-green-500" selectedItemClass="bg-green-100 text-green-800" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
+                  <SearchableSelect options={listaModelos.filter(m => m.id_marca === parseInt(visitanteForm.id_marca)).map(m => ({ value: m.id_modelo, label: m.nombre }))} value={visitanteForm.id_modelo} onChange={(val) => setVisitanteForm(f => ({ ...f, id_modelo: val }))} disabled={!visitanteForm.id_marca} placeholder="— Seleccionar —" focusRingClass="focus:ring-green-500" selectedItemClass="bg-green-100 text-green-800" />
+                </div>
               </div>
-              <div><label className="text-[10px] font-bold text-gray-400 uppercase">Color</label><select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.id_color} onChange={e => setVisitanteForm(f => ({ ...f, id_color: e.target.value }))}><option value="">— Seleccionar —</option>{listaColores.map(c => <option key={c.id_color} value={c.id_color}>{c.nombre}</option>)}</select></div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
+                <SearchableSelect options={listaColores.map(c => ({ value: c.id_color, label: c.nombre }))} value={visitanteForm.id_color} onChange={(val) => setVisitanteForm(f => ({ ...f, id_color: val }))} placeholder="— Seleccionar —" focusRingClass="focus:ring-green-500" selectedItemClass="bg-green-100 text-green-800" />
+              </div>
               <hr className="border-dashed" />
-              <div><label className="text-[10px] font-bold text-gray-400 uppercase">Plaza Asignada *</label><select className="w-full border rounded-lg p-2 text-sm mt-0.5 focus:ring-green-500" value={visitanteForm.id_plaza} onChange={e => setVisitanteForm(f => ({ ...f, id_plaza: e.target.value }))} required><option value="">— Seleccionar plaza libre —</option>{plazasLibres.map(p => <option key={p.Id_Plaza} value={p.Id_Plaza}>{p.Numero_Plaza}</option>)}</select>{plazasLibres.length === 0 && <p className="text-red-500 text-xs mt-1">⚠️ No hay plazas libres disponibles.</p>}</div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Plaza Asignada *</label>
+                <SearchableSelect options={plazasLibres.map(p => ({ value: p.Id_Plaza, label: p.Numero_Plaza }))} value={visitanteForm.id_plaza} onChange={(val) => setVisitanteForm(f => ({ ...f, id_plaza: val }))} placeholder="— Seleccionar plaza libre —" focusRingClass="focus:ring-green-500" selectedItemClass="bg-green-100 text-green-800" />
+                {plazasLibres.length === 0 && <p className="text-red-500 text-xs mt-1">⚠️ No hay plazas libres disponibles.</p>}
+              </div>
               <hr className="border-dashed" />
               <div><label className="text-[10px] font-bold text-gray-400 uppercase">Duración *</label><select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={visitanteForm.duracion} onChange={e => setVisitanteForm(f => ({ ...f, duracion: e.target.value }))}><option value="0">Sin límite</option><option value="30">30 minutos</option><option value="60">1 hora</option><option value="120">2 horas</option><option value="240">4 horas</option><option value="480">8 horas</option><option value="1440">24 horas</option></select></div>
               {visitanteForm.duracion !== '0' && visitanteForm.duracion && <p className="text-xs text-amber-600 font-medium">⏰ Vence a las {new Date(Date.now() + parseInt(visitanteForm.duracion) * 60000).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</p>}
@@ -452,7 +486,9 @@ export default function Tickets() {
         <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
           <div className="flex items-center justify-between p-5 border-b">
             <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaClipboardCheck className="text-green-600" /> Lista de Tickets del Día</h3>
-            <button onClick={loadData} className="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition"><FaSyncAlt /></button>
+            <button onClick={loadData} disabled={isRefreshing} className="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition disabled:opacity-50">
+                <FaSyncAlt className={isRefreshing ? 'animate-spin text-green-600' : ''} />
+            </button>
           </div>
           {tickets.length === 0
             ? <div className="text-center py-16 text-gray-400"><FaTicketAlt className="mx-auto text-4xl mb-3 opacity-20" /><p>No hay tickets registrados hoy.</p></div>

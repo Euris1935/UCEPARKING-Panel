@@ -6,10 +6,11 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2'; 
 import { 
   FaSearch, FaEdit, FaCheckCircle, FaTimesCircle, 
-  FaPlus, FaCalendarAlt, FaTrash, FaLock 
+  FaPlus, FaCalendarAlt, FaTrash, FaLock, FaSync
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function Reservaciones() {
   const { tienePermiso } = useRbac();
@@ -22,6 +23,7 @@ export default function Reservaciones() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   const [editingReservaId, setEditingReservaId] = useState(null);
   const [originalPlazaId, setOriginalPlazaId] = useState(null); 
@@ -53,6 +55,7 @@ export default function Reservaciones() {
   }, [reservas]); 
 
   const loadReservas = async () => {
+    setIsRefreshing(true);
     try {
         const { data, error } = await supabase
           .from('RESERVA')
@@ -67,6 +70,7 @@ export default function Reservaciones() {
         if (error) throw error;
         setReservas(data || []);
     } catch (error) { console.error("Error cargando reservas:", error.message); }
+    finally { setIsRefreshing(false); }
   };
 
   const loadAuxData = async () => {
@@ -213,87 +217,142 @@ export default function Reservaciones() {
             <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Reservaciones</h2>
             <p className="text-gray-500 font-medium">Gestión de tiempos y plazas reservadas.</p>
         </div>
-        {canCreate && (
-        <button onClick={() => { resetForm(); setShowModal(true); }} className="bg-primary hover:bg-blue-700 text-white py-2.5 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2">
+        {canCreate && !showModal && (
+        <button onClick={() => { resetForm(); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-6 rounded-xl font-bold shadow-md flex items-center gap-2">
             <FaPlus /> Nueva Reserva
         </button>
         )}
       </header>
 
-      {showModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md border-t-8 border-primary">
-                <h3 className="text-2xl font-black mb-6 text-gray-800 flex items-center gap-2 uppercase tracking-tighter">
-                    <FaCalendarAlt className="text-primary"/> {isUpdating ? 'Editar' : 'Nueva'} Reserva
-                </h3>
-                <form onSubmit={handleSubmit} className="space-y-5">
-                    <select className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm outline-none bg-gray-50/50" value={formData.id_persona} onChange={(e) => setFormData({...formData, id_persona: e.target.value})} required>
-                        <option value="">-- Seleccionar Persona --</option>
-                        {personasList.map(p => <option key={p.id_persona} value={p.id_persona}>{p.nombre} {p.apellido}</option>)}
-                    </select>
-                    <select className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm outline-none bg-gray-50/50" value={formData.Id_Plaza} onChange={(e) => setFormData({...formData, Id_Plaza: e.target.value})} required>
-                        <option value="">-- Seleccionar Plaza --</option>
-                        {plazasList.map(p => <option key={p.Id_Plaza} value={p.Id_Plaza}>{p.Numero_Plaza}</option>)}
-                    </select>
-                    <div className="grid grid-cols-1 gap-4">
-                        <input type="datetime-local" className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm" value={formData.Fecha_Hora_Inicio} onChange={(e) => setFormData({...formData, Fecha_Hora_Inicio: e.target.value})} required />
-                        <input type="datetime-local" className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm" value={formData.Fecha_Hora_Fin} onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})} required />
-                    </div>
-                    <div className="flex justify-end gap-3 pt-6 border-t">
-                        <button type="button" onClick={resetForm} className="px-6 py-2.5 text-gray-400 font-bold uppercase text-xs">Cancelar</button>
-                        <button type="submit" disabled={loading} className="px-8 py-2.5 bg-primary text-white rounded-xl font-black uppercase text-xs shadow-lg">Guardar</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-      )}
+      <div className="flex flex-col lg:flex-row gap-6">
 
-      <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-100">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-100">
-            <thead className="bg-gray-50/50">
-              <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                <th className="px-6 py-4 text-left">Persona</th>
-                <th className="px-6 py-4 text-left">Plaza</th>
-                <th className="px-6 py-4 text-left">Inicio</th>
-                <th className="px-6 py-4 text-left">Fin</th>
-                <th className="px-6 py-4 text-left">Estado</th>
-                <th className="px-6 py-4 text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-50">
-              {reservas.filter(r => `${r.personas?.nombre} ${r.personas?.apellido} ${r.plazas?.Numero_Plaza}`.toLowerCase().includes(searchTerm.toLowerCase())).map(r => {
-                const nombreEstado = r.estado_reserva?.nombre_estado;
-                const isActive = nombreEstado === 'Activa' || r.id_estado === 1;
-                return (
-                  <tr key={r.Id_Reserva} className="hover:bg-gray-50/50 transition-all text-sm">
-                    <td className="px-6 py-4 font-bold text-gray-700">{r.personas?.nombre} {r.personas?.apellido}</td>
-                    <td className="px-6 py-4"><span className="bg-blue-50 text-blue-600 px-2 py-1 rounded-lg font-black text-xs">#{r.plazas?.Numero_Plaza}</span></td>
-                    <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Inicio)}</td>
-                    <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Fin)}</td>
-                    <td className="px-6 py-4">
-                        <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${isActive ? 'bg-green-100 text-green-800' : nombreEstado === 'Cancelada' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
-                            {nombreEstado || 'Activa'}
-                        </span>
-                    </td>
-                    <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
-                      {isActive ? (
-                        <>
-                          {canEdit && <button onClick={() => handleMarkCompleted(r.Id_Reserva, r.Id_Plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>}
-                          {canEdit && <button onClick={() => handleCancel(r.Id_Reserva, r.Id_Plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>}
-                          {canEdit && <button onClick={() => handleEdit(r)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>}
-                        </>
-                      ) : (
-                        <div className="text-gray-300 italic text-xs flex items-center gap-1"><FaLock size={12} /> Cerrada</div>
-                      )}
-                      {canDelete && <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza, nombreEstado)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>}
-                    </td>
+        <div className="flex-1 min-w-0">
+          <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-100">
+            <div className="flex justify-between items-center mb-4">
+              <div className="relative w-64">
+                <input
+                  type="text"
+                  placeholder="Buscar persona o plaza..."
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <FaSearch className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+              </div>
+              <button
+                onClick={() => { loadReservas(); loadAuxData(); }}
+                disabled={isRefreshing}
+                className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition disabled:opacity-50"
+                title="Refrescar lista"
+              >
+                <FaSync className={isRefreshing ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <table className="min-w-full divide-y divide-gray-100">
+                <thead className="bg-gray-50/50 sticky top-0 z-10 shadow-sm">
+                  <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                    <th className="px-6 py-4 text-left">Persona</th>
+                    <th className="px-6 py-4 text-left">Plaza</th>
+                    <th className="px-6 py-4 text-left">Inicio</th>
+                    <th className="px-6 py-4 text-left">Fin</th>
+                    <th className="px-6 py-4 text-left">Estado</th>
+                    <th className="px-6 py-4 text-right">Acciones</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-50">
+                  {reservas.filter(r => `${r.personas?.nombre} ${r.personas?.apellido} ${r.plazas?.Numero_Plaza}`.toLowerCase().includes(searchTerm.toLowerCase())).map(r => {
+                    const nombreEstado = r.estado_reserva?.nombre_estado;
+                    const isActive = nombreEstado === 'Activa' || r.id_estado === 1;
+                    return (
+                      <tr key={r.Id_Reserva} className="hover:bg-gray-50/50 transition-all text-sm">
+                        <td className="px-6 py-4 font-bold text-gray-700">{r.personas?.nombre} {r.personas?.apellido}</td>
+                        <td className="px-6 py-4"><span className="bg-blue-50 text-blue-600 px-2 py-1 rounded-lg font-black text-xs">#{r.plazas?.Numero_Plaza}</span></td>
+                        <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Inicio)}</td>
+                        <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Fin)}</td>
+                        <td className="px-6 py-4">
+                            <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${isActive ? 'bg-green-100 text-green-800' : nombreEstado === 'Cancelada' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
+                                {nombreEstado || 'Activa'}
+                            </span>
+                        </td>
+                        <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
+                          {isActive ? (
+                            <>
+                              {canEdit && <button onClick={() => handleMarkCompleted(r.Id_Reserva, r.Id_Plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>}
+                              {canEdit && <button onClick={() => handleCancel(r.Id_Reserva, r.Id_Plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>}
+                              {canEdit && <button onClick={() => handleEdit(r)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>}
+                            </>
+                          ) : (
+                            <div className="text-gray-300 italic text-xs flex items-center gap-1"><FaLock size={12} /> Cerrada</div>
+                          )}
+                          {canDelete && <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza, nombreEstado)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
+
+        {showModal && (
+        <aside className="w-full lg:w-[400px] flex-shrink-0">
+           <section className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 sticky top-6">
+              <div className="flex items-center justify-between mb-5">
+                <h3 className="text-lg font-bold flex items-center gap-2 text-gray-800">
+                    <FaCalendarAlt className="text-blue-600"/> {isUpdating ? 'Editar Reserva' : 'Nueva Reserva'}
+                </h3>
+                <button type="button" onClick={resetForm} className="text-gray-400 hover:text-gray-600 transition" title="Cerrar">
+                    <FaTimesCircle size={18} />
+                </button>
+              </div>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                 <div>
+                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Persona *</label>
+                   <SearchableSelect
+                     options={personasList.map(p => ({ value: p.id_persona, label: `${p.nombre} ${p.apellido}` }))}
+                     value={formData.id_persona}
+                     onChange={(val) => setFormData({...formData, id_persona: val})}
+                     placeholder="— Seleccionar Persona —"
+                     focusRingClass="focus:ring-blue-500"
+                     selectedItemClass="bg-blue-100 text-blue-800"
+                     className="bg-gray-50/50"
+                   />
+                 </div>
+                 <div>
+                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Plaza *</label>
+                   <SearchableSelect
+                     options={plazasList.map(p => ({ value: p.Id_Plaza, label: p.Numero_Plaza }))}
+                     value={formData.Id_Plaza}
+                     onChange={(val) => setFormData({...formData, Id_Plaza: val})}
+                     placeholder="— Seleccionar Plaza —"
+                     focusRingClass="focus:ring-blue-500"
+                     selectedItemClass="bg-blue-100 text-blue-800"
+                     className="bg-gray-50/50"
+                   />
+                 </div>
+                 <div className="grid grid-cols-2 gap-3">
+                   <div>
+                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Inicio *</label>
+                     <input type="datetime-local" className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none" value={formData.Fecha_Hora_Inicio} onChange={(e) => setFormData({...formData, Fecha_Hora_Inicio: e.target.value})} required />
+                   </div>
+                   <div>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fin *</label>
+                      <input type="datetime-local" className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none" value={formData.Fecha_Hora_Fin} onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})} required />
+                   </div>
+                 </div>
+                 <div className="pt-2">
+                   <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-bold tracking-wide transition-all shadow-md flex justify-center items-center gap-2">
+                     <FaCalendarAlt /> GUARDAR RESERVA
+                   </button>
+                 </div>
+              </form>
+           </section>
+        </aside>
+        )}
+
       </div>
     </Layout>
   );

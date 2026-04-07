@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaSearch, FaPlus, FaMicrochip, FaTrash, FaEdit } from 'react-icons/fa';
+import { FaSearch, FaPlus, FaMicrochip, FaTrash, FaEdit, FaSync, FaTimesCircle } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function Sensores() {
   const { orgId } = useOrg();
@@ -37,6 +38,7 @@ export default function Sensores() {
     param_timeout: 30
   };
   const [formData, setFormData] = useState(initialForm);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     const init = async () => {
@@ -51,6 +53,7 @@ export default function Sensores() {
   }, []);
 
   const loadData = async () => {
+    setIsRefreshing(true);
     try {
       const { data: dispData, error } = await supabase
         .from('dispositivos')
@@ -84,6 +87,8 @@ export default function Sensores() {
       
     } catch (error) {
       console.error("Error cargando datos:", error.message);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -262,134 +267,151 @@ export default function Sensores() {
           <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Gestión de Hardware</h2>
           <p className="text-gray-500 font-medium">Administración de dispositivos y sensores del parqueo.</p>
         </div>
-        <button
-          onClick={() => { setEditingId(null); setFormData(initialForm); setShowModal(true); }}
-          className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-6 rounded-lg font-bold shadow-md flex items-center gap-2 transition duration-150"
-        >
-          <FaPlus /> Nuevo Registro
-        </button>
+        {!showModal && (
+          <button
+            onClick={() => { setEditingId(null); setFormData(initialForm); setShowModal(true); }}
+            className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-6 rounded-lg font-bold shadow flex items-center gap-2 transition duration-150"
+          >
+            <FaPlus /> Nuevo Registro
+          </button>
+        )}
       </header>
 
-      <div className="bg-white p-8 rounded-xl shadow-lg border border-gray-100">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-xl font-bold text-gray-800">Inventario</h3>
-          <div className="relative w-72">
-            <input
-              type="text" placeholder="Buscar por nombre o plaza..."
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 outline-none"
-              value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-            />
-            <FaSearch className="absolute left-3 top-3 text-gray-400" />
+      <div className="flex flex-col lg:flex-row gap-6">
+        
+        <div className="flex-1 min-w-0">
+          <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+            <div className="flex justify-between items-center mb-6">
+              <div className="relative w-72">
+                <input
+                  type="text" placeholder="Buscar por nombre o plaza..."
+                  className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-blue-500 focus:border-blue-500 outline-none text-[10px] sm:text-xs"
+                  value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <FaSearch className="absolute left-3 top-3 text-gray-400" />
+              </div>
+              <button
+                onClick={loadData}
+                disabled={isRefreshing}
+                className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition disabled:opacity-50"
+                title="Refrescar lista"
+              >
+                  <FaSync className={isRefreshing ? 'animate-spin' : ''} />
+              </button>
+            </div>
+
+            <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50 uppercase text-[10px] text-gray-500 font-black tracking-widest sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="px-6 py-4 text-left">Hardware</th>
+                    <th className="px-6 py-4 text-left">Marca - Modelo</th>
+                    <th className="px-6 py-4 text-left">Plaza</th>
+                    <th className="px-6 py-4 text-left">Estado</th>
+                    <th className="px-6 py-4 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-100">
+                  {filteredDispositivos.map((disp) => (
+                    <tr key={disp.id_dispositivo} className="hover:bg-gray-50/50 transition duration-150 group">
+                      <td className="px-6 py-4">
+                        <div className="font-bold text-gray-900 uppercase text-xs">{disp.tipos_dispositivos?.nombre_tipo}</div>
+                        <div className="text-[10px] text-gray-400 italic font-medium">{disp.tipos_dispositivos?.descripcion || '-'}</div>
+                      </td>
+                      <td className="px-6 py-4 font-medium text-gray-600 text-xs">
+                        {disp.modelos_equipo_cat?.marcas_equipo?.nombre} - {disp.modelos_equipo_cat?.nombre}
+                      </td>
+                      <td className="px-6 py-4">
+                        {disp.plazas && (
+                          <div className="inline-flex items-center gap-1.5 bg-[#2eb17b]/10 border border-[#2eb17b] px-2.5 py-0.5 rounded-md shadow-sm">
+                            <span className="text-[9px] font-black text-[#2eb17b] uppercase tracking-tighter">Plaza</span>
+                            <span className="text-sm font-black text-[#2eb17b]">{disp.plazas.Numero_Plaza}</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        {disp.estado_sensor ? (
+                          <span className={`px-2 py-0.5 rounded font-bold text-[10px] border uppercase tracking-tighter ${
+                            disp.id_estado === 1 ? 'bg-green-50 text-green-700 border-green-200' :
+                            disp.id_estado === 3 ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                            'bg-red-50 text-red-700 border-red-200'
+                          }`}>
+                            {disp.estado_sensor.nombre_estado}
+                          </span>
+                        ) : <span className="text-gray-300 text-[10px] italic">N/A</span>}
+                      </td>
+                      <td className="px-6 py-4 text-right flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                        <button onClick={() => handleEdit(disp)} className="text-blue-500 hover:text-blue-700"><FaEdit size={17} /></button>
+                        <button onClick={() => handleDelete(disp)} className="text-red-400 hover:text-red-600"><FaTrash size={15} /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200 text-sm">
-            <thead className="bg-gray-50 uppercase text-[10px] text-gray-500 font-black tracking-widest">
-              <tr>
-                <th className="px-6 py-4 text-left">Hardware</th>
-                <th className="px-6 py-4 text-left">Marca - Modelo</th>
-                <th className="px-6 py-4 text-left">Plaza</th>
-                <th className="px-6 py-4 text-left">Estado</th>
-                <th className="px-6 py-4 text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-100">
-              {filteredDispositivos.map((disp) => (
-                <tr key={disp.id_dispositivo} className="hover:bg-gray-50/50 transition duration-150 group">
-                  <td className="px-6 py-4">
-                    <div className="font-bold text-gray-900 uppercase text-xs">{disp.tipos_dispositivos?.nombre_tipo}</div>
-                    <div className="text-[10px] text-gray-400 italic font-medium">{disp.tipos_dispositivos?.descripcion || '-'}</div>
-                  </td>
-                  <td className="px-6 py-4 font-medium text-gray-600 text-xs">
-                    {disp.modelos_equipo_cat?.marcas_equipo?.nombre} - {disp.modelos_equipo_cat?.nombre}
-                  </td>
-                  <td className="px-6 py-4">
-                    {disp.plazas && (
-                      <div className="inline-flex items-center gap-1.5 bg-[#2eb17b]/10 border border-[#2eb17b] px-2.5 py-0.5 rounded-md shadow-sm">
-                        <span className="text-[9px] font-black text-[#2eb17b] uppercase tracking-tighter">Plaza</span>
-                        <span className="text-sm font-black text-[#2eb17b]">{disp.plazas.Numero_Plaza}</span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    {disp.estado_sensor ? (
-                      <span className={`px-2 py-0.5 rounded font-bold text-[10px] border uppercase tracking-tighter ${
-                        disp.id_estado === 1 ? 'bg-green-50 text-green-700 border-green-200' :
-                        disp.id_estado === 3 ? 'bg-orange-50 text-orange-700 border-orange-200' :
-                        'bg-red-50 text-red-700 border-red-200'
-                      }`}>
-                        {disp.estado_sensor.nombre_estado}
-                      </span>
-                    ) : <span className="text-gray-300 text-[10px] italic">N/A</span>}
-                  </td>
-                  <td className="px-6 py-4 text-right flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    <button onClick={() => handleEdit(disp)} className="text-blue-500 hover:text-blue-700"><FaEdit size={17} /></button>
-                    <button onClick={() => handleDelete(disp)} className="text-red-400 hover:text-red-600"><FaTrash size={15} /></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {showModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-lg overflow-y-auto max-h-[90vh] animate-fadeIn border-t-8 border-blue-600">
-            <h3 className="text-xl font-black mb-6 text-gray-800 flex items-center gap-2 uppercase tracking-tight border-b pb-2">
-              <FaMicrochip className="text-blue-600" /> {editingId ? 'Editar Hardware' : 'Nuevo Hardware'}
-            </h3>
+        {showModal && (
+        <aside className="w-full lg:w-[400px] flex-shrink-0">
+          <section className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 sticky top-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-bold flex items-center gap-2 text-gray-800">
+                <FaMicrochip className="text-blue-600" /> {editingId ? 'Editar Hardware' : 'Nuevo Hardware'}
+              </h3>
+              <button type="button" onClick={closeModal} className="text-gray-400 hover:text-gray-600 transition" title="Cerrar">
+                <FaTimesCircle size={18} />
+              </button>
+            </div>
             <form onSubmit={handleSubmit} className="space-y-4">
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-600 mb-1 uppercase tracking-wider">Tipo de Equipo *</label>
-                  <select 
-                    className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all font-semibold" 
-                    value={formData.id_tipo} 
-                    onChange={e => setFormData({ ...formData, id_tipo: e.target.value })} 
-                    required
-                  >
-                    <option value="">— Seleccionar —</option>
-                    {listaTipos.map(t => <option key={t.id_tipo} value={t.id_tipo}>{t.nombre_tipo}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-600 mb-1 uppercase tracking-wider">Descripción Breve</label>
-                  <input 
-                    type="text" 
-                    className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" 
-                    placeholder="Ej: Cámara carril entrada" 
-                    value={formData.tipo_descripcion} 
-                    onChange={e => setFormData({ ...formData, tipo_descripcion: e.target.value })} 
-                  />
-                </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo de Equipo *</label>
+                <SearchableSelect 
+                  options={listaTipos.map(t => ({ value: t.id_tipo, label: t.nombre_tipo }))}
+                  value={formData.id_tipo} 
+                  onChange={val => setFormData({ ...formData, id_tipo: val })} 
+                  placeholder="— Seleccionar Tipo —"
+                  focusRingClass="focus:ring-blue-500"
+                  selectedItemClass="bg-blue-100 text-blue-800"
+                  className="bg-gray-50/50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Descripción Breve</label>
+                <input 
+                  type="text" 
+                  className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" 
+                  placeholder="Ej: Cámara carril entrada" 
+                  value={formData.tipo_descripcion} 
+                  onChange={e => setFormData({ ...formData, tipo_descripcion: e.target.value })} 
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-gray-600 mb-1 uppercase tracking-wider">Marca *</label>
-                  <select 
-                    className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all font-semibold" 
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Marca *</label>
+                  <SearchableSelect 
+                    options={listaMarcas.map(m => ({ value: m.id_marca, label: m.nombre }))}
                     value={formData.id_marca} 
-                    onChange={e => setFormData({ ...formData, id_marca: e.target.value, id_modelo: '' })} 
-                    required
-                  >
-                    <option value="">— Seleccionar —</option>
-                    {listaMarcas.map(m => <option key={m.id_marca} value={m.id_marca}>{m.nombre}</option>)}
-                  </select>
+                    onChange={val => setFormData({ ...formData, id_marca: val, id_modelo: '' })} 
+                    placeholder="— Marca —"
+                    focusRingClass="focus:ring-blue-500"
+                    selectedItemClass="bg-blue-100 text-blue-800"
+                    className="bg-gray-50/50"
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-600 mb-1 uppercase tracking-wider">Modelo *</label>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Modelo *</label>
                   <select 
-                    className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all font-semibold" 
+                    className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" 
                     value={formData.id_modelo} 
                     onChange={e => setFormData({ ...formData, id_modelo: e.target.value })} 
                     required 
                     disabled={!formData.id_marca}
                   >
-                    <option value="">— Seleccionar —</option>
+                    <option value="">— Modelo —</option>
                     {listaModelos.filter(m => m.id_marca === parseInt(formData.id_marca)).map(m => (
                       <option key={m.id_modelo_equipo} value={m.id_modelo_equipo}>{m.nombre}</option>
                     ))}
@@ -399,16 +421,16 @@ export default function Sensores() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-gray-600 mb-1 uppercase tracking-wider">Fecha Instalación</label>
-                  <input type="date" className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.fecha_instalacion} onChange={e => setFormData({ ...formData, fecha_instalacion: e.target.value })} required />
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Instalación</label>
+                  <input type="date" className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" value={formData.fecha_instalacion} onChange={e => setFormData({ ...formData, fecha_instalacion: e.target.value })} required />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-600 mb-1 uppercase tracking-wider">Vincular Plaza</label>
-                  <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all" value={formData.id_plaza} onChange={e => setFormData({ ...formData, id_plaza: e.target.value })}>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Vincular Plaza</label>
+                  <select className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" value={formData.id_plaza} onChange={e => setFormData({ ...formData, id_plaza: e.target.value })}>
                     <option value="">— Ninguna —</option>
                     {plazas.map(p => <option key={p.Id_Plaza} value={p.Id_Plaza}>{p.Numero_Plaza}</option>)}
                     {editingId && formData.id_plaza && !plazas.find(p => String(p.Id_Plaza) === String(formData.id_plaza)) && (
-                      <option value={formData.id_plaza}>Plaza actualmente asignada</option>
+                      <option value={formData.id_plaza}>Plaza asignada</option>
                     )}
                   </select>
                 </div>
@@ -418,7 +440,7 @@ export default function Sensores() {
                 {esSensor ? (
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-[10px] font-black text-purple-600 mb-1 uppercase tracking-widest">Estado del Sensor (Específico)</label>
+                      <label className="block text-[10px] font-black text-purple-600 mb-1 uppercase tracking-widest">Estado (Sensor)</label>
                       <select className="border p-2 rounded-lg w-full text-sm bg-purple-50 border-purple-200 outline-none focus:ring-2 focus:ring-purple-200 font-bold" value={formData.id_estado} onChange={e => setFormData({ ...formData, id_estado: e.target.value })} required>
                         <option value="">-- Seleccionar Estado --</option>
                         {estadosSensor.map(est => <option key={est.id_estado} value={est.id_estado}>{est.nombre_estado}</option>)}
@@ -429,7 +451,7 @@ export default function Sensores() {
                       <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-3">Parámetros IoT Remotos</p>
                       <div className="grid grid-cols-3 gap-2">
                         <div>
-                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Frecuencia (seg)</label>
+                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Frecuencia (s)</label>
                           <input type="number" min="1" max="60" className="w-full border rounded-lg p-2 text-sm text-center font-bold bg-orange-50 border-orange-200" value={formData.param_frecuencia} onChange={e => setFormData({ ...formData, param_frecuencia: e.target.value })} />
                         </div>
                         <div>
@@ -437,7 +459,7 @@ export default function Sensores() {
                           <input type="number" min="1" max="500" className="w-full border rounded-lg p-2 text-sm text-center font-bold bg-orange-50 border-orange-200" value={formData.param_umbral} onChange={e => setFormData({ ...formData, param_umbral: e.target.value })} />
                         </div>
                         <div>
-                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Timeout (seg)</label>
+                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Timeout (s)</label>
                           <input type="number" min="5" max="300" className="w-full border rounded-lg p-2 text-sm text-center font-bold bg-orange-50 border-orange-200" value={formData.param_timeout} onChange={e => setFormData({ ...formData, param_timeout: e.target.value })} />
                         </div>
                       </div>
@@ -445,8 +467,8 @@ export default function Sensores() {
                   </div>
                 ) : (
                   <div>
-                    <label className="block text-[10px] font-black text-blue-600 mb-1 uppercase tracking-widest">Estado Operativo del Equipo</label>
-                    <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 font-bold" value={formData.id_estado} onChange={e => setFormData({ ...formData, id_estado: e.target.value })}>
+                    <label className="block text-[10px] font-black text-blue-600 mb-1 uppercase tracking-widest">Estado Operativo</label>
+                    <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-blue-500 bg-white font-bold" value={formData.id_estado} onChange={e => setFormData({ ...formData, id_estado: e.target.value })}>
                       {estadosSensor.map(est => <option key={est.id_estado} value={est.id_estado}>{est.nombre_estado}</option>)}
                     </select>
                   </div>
@@ -456,22 +478,22 @@ export default function Sensores() {
               <div className={`grid ${editingId ? 'grid-cols-2' : ''} gap-3`}>
                 {editingId && (
                   <div className="flex flex-col">
-                    <label className="text-[10px] font-bold text-gray-400 ml-1 uppercase">Últ. Mant.</label>
-                    <input type="date" className="border p-2 rounded-lg text-sm w-full outline-none focus:ring-2 focus:ring-blue-100" value={formData.ultimo_mantenimiento} onChange={e => setFormData({ ...formData, ultimo_mantenimiento: e.target.value })} />
+                    <label className="text-[10px] font-bold text-gray-400 mb-1 uppercase">Últ. Mant.</label>
+                    <input type="date" className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-blue-500 bg-gray-50" value={formData.ultimo_mantenimiento} onChange={e => setFormData({ ...formData, ultimo_mantenimiento: e.target.value })} />
                   </div>
                 )}
               </div>
 
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                <button type="button" onClick={closeModal} className="px-4 py-2 text-gray-500 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors font-bold uppercase text-[10px]">Cancelar</button>
-                <button type="submit" disabled={loading} className="px-8 py-2 bg-blue-600 text-white rounded-lg font-black hover:bg-blue-700 shadow shadow-blue-200 transition-all active:scale-95 uppercase text-[10px]">
-                  {loading ? 'Procesando...' : editingId ? 'Actualizar' : 'Registrar'}
+              <div className="flex justify-end pt-2">
+                <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-bold tracking-wide transition-all shadow-md flex justify-center items-center gap-2">
+                  <FaMicrochip /> {loading ? 'PROCESANDO...' : editingId ? 'ACTUALIZAR' : 'REGISTRAR'}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+          </section>
+        </aside>
+        )}
+      </div>
     </Layout>
   );
 }

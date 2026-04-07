@@ -3,9 +3,10 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaCar, FaSave, FaTrash, FaEdit, FaSyncAlt } from 'react-icons/fa';
+import { FaCar, FaSave, FaTrash, FaEdit, FaSyncAlt, FaSearch } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function Vehiculos() {
   const { orgId } = useOrg();
@@ -15,7 +16,9 @@ export default function Vehiculos() {
   const canDelete = tienePermiso('Módulo Vehículos', 'eliminar');
 
   const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [vehiculos, setVehiculos] = useState([]);
+  const [searchFlota, setSearchFlota] = useState('');
   const [personasSistema, setPersonasSistema] = useState([]);
   const [listaMarcas, setListaMarcas] = useState([]);
   const [listaModelos, setListaModelos] = useState([]);
@@ -36,6 +39,7 @@ export default function Vehiculos() {
   }, []);
 
   const loadData = async () => {
+    setIsRefreshing(true);
     try {
       const { data: vhs } = await supabase
         .from('vehiculos')
@@ -64,12 +68,15 @@ export default function Vehiculos() {
       setListaMarcas(catMarcas || []);
       setListaModelos(catModelos || []);
       setListaColores(catColores || []);
-      setPersonasSistema(Array.from(mapa.values()));
-    } catch (err) { console.error('Error cargando datos:', err); }
+      setPersonasSistema(Array.from(mapa.values()).sort((a, b) =>
+        `${a.nombre} ${a.apellido}`.toLowerCase().localeCompare(`${b.nombre} ${b.apellido}`.toLowerCase())
+      ));
+    } catch (err) { console.error('Error cargando datos:', err); } finally { setIsRefreshing(false); }
   };
 
   const handleVehiculoPersonalSubmit = async (e) => {
     e.preventDefault();
+    if (!vehiculoPersonalForm.persona_id) return Swal.fire('Atención', 'Seleccione un propietario.', 'warning');
     const placaLimpia = vehiculoPersonalForm.placa.replace(/[^A-Z0-9]/gi, '');
     if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres.', 'warning');
     setLoading(true);
@@ -140,10 +147,12 @@ export default function Vehiculos() {
           <form onSubmit={handleVehiculoPersonalSubmit} className="space-y-4">
             <div>
               <label className="text-[10px] font-bold text-gray-400 uppercase">Propietario *</label>
-              <select className="w-full border rounded-lg p-2 text-sm mt-0.5 focus:ring-purple-500" value={vehiculoPersonalForm.persona_id} onChange={e => setVehiculoPersonalForm(f => ({ ...f, persona_id: e.target.value }))} required>
-                <option value="">— Seleccionar persona —</option>
-                {personasSistema.map(p => <option key={p.id_persona} value={p.id_persona}>{p.nombre} {p.apellido} ({p.rol})</option>)}
-              </select>
+              <SearchableSelect
+                options={personasSistema.map(p => ({ value: p.id_persona, label: `${p.nombre} ${p.apellido} (${p.rol})` }))}
+                value={vehiculoPersonalForm.persona_id}
+                onChange={(val) => setVehiculoPersonalForm(f => ({ ...f, persona_id: val }))}
+                placeholder="— Seleccionar persona —"
+              />
             </div>
             <div>
               <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (máx. 6 caracteres)</label>
@@ -157,25 +166,32 @@ export default function Vehiculos() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
-                <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.id_marca} onChange={e => setVehiculoPersonalForm(f => ({ ...f, id_marca: e.target.value, id_modelo: '' }))}>
-                  <option value="">— Seleccionar —</option>
-                  {listaMarcas.map(m => <option key={m.id_marca} value={m.id_marca}>{m.nombre}</option>)}
-                </select>
+                <SearchableSelect
+                  options={listaMarcas.map(m => ({ value: m.id_marca, label: m.nombre }))}
+                  value={vehiculoPersonalForm.id_marca}
+                  onChange={(val) => setVehiculoPersonalForm(f => ({ ...f, id_marca: val, id_modelo: '' }))}
+                  placeholder="— Seleccionar —"
+                />
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
-                <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.id_modelo} onChange={e => setVehiculoPersonalForm(f => ({ ...f, id_modelo: e.target.value }))} disabled={!vehiculoPersonalForm.id_marca}>
-                  <option value="">— Seleccionar —</option>
-                  {listaModelos.filter(m => m.id_marca === parseInt(vehiculoPersonalForm.id_marca)).map(m => <option key={m.id_modelo} value={m.id_modelo}>{m.nombre}</option>)}
-                </select>
+                <SearchableSelect
+                  options={listaModelos.filter(m => m.id_marca === parseInt(vehiculoPersonalForm.id_marca)).map(m => ({ value: m.id_modelo, label: m.nombre }))}
+                  value={vehiculoPersonalForm.id_modelo}
+                  onChange={(val) => setVehiculoPersonalForm(f => ({ ...f, id_modelo: val }))}
+                  disabled={!vehiculoPersonalForm.id_marca}
+                  placeholder="— Seleccionar —"
+                />
               </div>
             </div>
             <div>
               <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-              <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={vehiculoPersonalForm.id_color} onChange={e => setVehiculoPersonalForm(f => ({ ...f, id_color: e.target.value }))}>
-                <option value="">— Seleccionar —</option>
-                {listaColores.map(c => <option key={c.id_color} value={c.id_color}>{c.nombre}</option>)}
-              </select>
+              <SearchableSelect
+                options={listaColores.map(c => ({ value: c.id_color, label: c.nombre }))}
+                value={vehiculoPersonalForm.id_color}
+                onChange={(val) => setVehiculoPersonalForm(f => ({ ...f, id_color: val }))}
+                placeholder="— Seleccionar —"
+              />
             </div>
             <button type="submit" disabled={loading} className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 shadow">
               <FaSave /> VINCULAR VEHÍCULO
@@ -185,17 +201,31 @@ export default function Vehiculos() {
         )}
 
         {/* Tabla flota */}
-        <section className={`${canCreate ? 'lg:col-span-3' : 'lg:col-span-5'} bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden`}>
-          <div className="flex items-center justify-between p-5 border-b">
+        <section className={`${canCreate ? 'lg:col-span-3' : 'lg:col-span-5'} bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden flex flex-col`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between p-5 border-b gap-4">
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
               <FaCar className="text-purple-600" /> Flota Registrada
               <span className="ml-2 bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-full">{vehiculos.length} vehículos</span>
             </h3>
-            <button onClick={loadData} className="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition"><FaSyncAlt /></button>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="relative flex-1 sm:w-64">
+                <FaSearch className="absolute left-3 top-2.5 text-gray-400" size={14} />
+                <input 
+                  type="text" 
+                  placeholder="Buscar por placa o propietario..." 
+                  className="w-full pl-9 pr-4 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-purple-500 focus:outline-none"
+                  value={searchFlota}
+                  onChange={(e) => setSearchFlota(e.target.value)}
+                />
+              </div>
+              <button onClick={loadData} disabled={isRefreshing} className="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition disabled:opacity-50">
+                <FaSyncAlt className={isRefreshing ? 'animate-spin text-purple-600' : ''} />
+              </button>
+            </div>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
             <table className="min-w-full divide-y divide-gray-100 text-sm">
-              <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase">
+              <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase sticky top-0 z-10 shadow-sm">
                 <tr>
                   <th className="px-5 py-3 text-left">Propietario</th>
                   <th className="px-5 py-3 text-left">Placa</th>
@@ -205,9 +235,17 @@ export default function Vehiculos() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {vehiculos.length === 0
-                  ? <tr><td colSpan="5" className="text-center py-10 text-gray-400">No hay vehículos registrados.</td></tr>
-                  : vehiculos.map(v => (
+                {vehiculos.filter(v => {
+                    const matchName = `${v.personas?.nombre || ''} ${v.personas?.apellido || ''}`.toLowerCase().includes(searchFlota.toLowerCase());
+                    const matchPlaca = (v.placa || '').toLowerCase().includes(searchFlota.toLowerCase());
+                    return matchName || matchPlaca;
+                }).length === 0
+                  ? <tr><td colSpan="5" className="text-center py-10 text-gray-400">No hay vehículos que coincidan.</td></tr>
+                  : vehiculos.filter(v => {
+                        const matchName = `${v.personas?.nombre || ''} ${v.personas?.apellido || ''}`.toLowerCase().includes(searchFlota.toLowerCase());
+                        const matchPlaca = (v.placa || '').toLowerCase().includes(searchFlota.toLowerCase());
+                        return matchName || matchPlaca;
+                    }).map(v => (
                     <tr key={v.id_vehiculo} className="hover:bg-gray-50 transition-all">
                       <td className="px-5 py-4 font-medium text-gray-800">{v.personas?.nombre} {v.personas?.apellido}</td>
                       <td className="px-5 py-4"><span className="font-mono font-bold bg-gray-900 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span></td>
@@ -241,25 +279,29 @@ export default function Vehiculos() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
-                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={editVehiculoForm.id_marca} onChange={e => setEditVehiculoForm(f => ({ ...f, id_marca: e.target.value, id_modelo: '' }))}>
-                    <option value="">— Seleccionar —</option>
-                    {listaMarcas.map(m => <option key={m.id_marca} value={m.id_marca}>{m.nombre}</option>)}
-                  </select>
+                  <SearchableSelect
+                    options={listaMarcas.map(m => ({ value: m.id_marca, label: m.nombre }))}
+                    value={editVehiculoForm.id_marca}
+                    onChange={(val) => setEditVehiculoForm(f => ({ ...f, id_marca: val, id_modelo: '' }))}
+                  />
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Modelo</label>
-                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={editVehiculoForm.id_modelo} onChange={e => setEditVehiculoForm(f => ({ ...f, id_modelo: e.target.value }))} disabled={!editVehiculoForm.id_marca}>
-                    <option value="">— Seleccionar —</option>
-                    {listaModelos.filter(m => m.id_marca === parseInt(editVehiculoForm.id_marca)).map(m => <option key={m.id_modelo} value={m.id_modelo}>{m.nombre}</option>)}
-                  </select>
+                  <SearchableSelect
+                    options={listaModelos.filter(m => m.id_marca === parseInt(editVehiculoForm.id_marca)).map(m => ({ value: m.id_modelo, label: m.nombre }))}
+                    value={editVehiculoForm.id_modelo}
+                    onChange={(val) => setEditVehiculoForm(f => ({ ...f, id_modelo: val }))}
+                    disabled={!editVehiculoForm.id_marca}
+                  />
                 </div>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Color</label>
-                <select className="w-full border rounded-lg p-2 text-sm mt-0.5" value={editVehiculoForm.id_color} onChange={e => setEditVehiculoForm(f => ({ ...f, id_color: e.target.value }))}>
-                  <option value="">— Seleccionar —</option>
-                  {listaColores.map(c => <option key={c.id_color} value={c.id_color}>{c.nombre}</option>)}
-                </select>
+                  <SearchableSelect
+                    options={listaColores.map(c => ({ value: c.id_color, label: c.nombre }))}
+                    value={editVehiculoForm.id_color}
+                    onChange={(val) => setEditVehiculoForm(f => ({ ...f, id_color: val }))}
+                  />
               </div>
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={() => setEditandoVehiculo(null)} className="flex-1 bg-gray-100 text-gray-600 py-2 rounded-lg font-bold">Cancelar</button>
