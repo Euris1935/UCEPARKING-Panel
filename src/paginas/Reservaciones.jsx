@@ -169,16 +169,23 @@ export default function Reservaciones() {
             organizacion_id: orgId
         };
 
+        let error;
         if (isUpdating) {
-            await supabase.from('RESERVA').update(payload).eq('Id_Reserva', editingReservaId);
-            if (parseInt(formData.Id_Plaza) !== originalPlazaId) {
+            const { error: updateError } = await supabase.from('RESERVA').update(payload).eq('Id_Reserva', editingReservaId);
+            error = updateError;
+            if (!error && parseInt(formData.Id_Plaza) !== originalPlazaId) {
                 await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', originalPlazaId);
                 await supabase.from('plazas').update({ id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
             }
         } else {
-            await supabase.from('RESERVA').insert([payload]);
-            await supabase.from('plazas').update({ id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
+            const { error: insertError } = await supabase.from('RESERVA').insert([payload]);
+            error = insertError;
+            if (!error) {
+                await supabase.from('plazas').update({ id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
+            }
         }
+        
+        if (error) throw error;
         resetForm();
         loadReservas();
         loadAuxData();

@@ -96,11 +96,11 @@ export default function Mantenimiento() {
             const { data: dispData, error: dispError } = await supabase
                 .from('dispositivos')
                 .select('id_dispositivo, id_plaza, ubicacion, id_estado, tipos_dispositivos(nombre_tipo), modelos_equipo_cat(nombre, marcas_equipo(nombre))')
-                .order('id_dispositivo', { ascending: true });
+                .order('ubicacion', { ascending: true });
             if (dispError) console.warn('Error cargando dispositivos:', dispError.message);
             const { data: empData } = await supabase.from('empleados').select('Id_Empleado, personas(nombre, apellido)');
-            const { data: tipoData } = await supabase.from('tipo_mantenimiento').select('*').order('nombre');
-            const { data: estData } = await supabase.from('estado_mantenimiento').select('*');
+            const { data: tipoData } = await supabase.from('tipo_mantenimiento').select('*').order('nombre_tipo');
+            const { data: estData } = await supabase.from('estado_mantenimiento').select('*').order('nombre_estado');
 
             setDispositivos(dispData || []);
             setTecnicos((empData || []).sort((a, b) => {
@@ -207,7 +207,8 @@ export default function Mantenimiento() {
                 id_tipo_mantenimiento: parseInt(formData.id_tipo),
                 id_estado: editingId ? nuevoEstadoId : estadoInicialId,
                 Fecha_Fin: formData.fecha_fin || null,
-                organizacion_id: orgId
+                // RLS Fix: solo enviar orgId si existe y añadir id_persona
+                ...(orgId ? { organizacion_id: orgId } : {})
             };
 
             let error;
@@ -270,7 +271,9 @@ export default function Mantenimiento() {
             const idCompletado = estadosMantenimiento.find(e => e.nombre_estado?.toLowerCase().includes('completado'))?.id_estado || null;
             const fechaFin = new Date().toISOString();
 
-            const updatePayload = { Fecha_Fin: fechaFin };
+            const updatePayload = { 
+                Fecha_Fin: fechaFin
+            };
             if (idCompletado) updatePayload.id_estado = idCompletado;
 
             const { error } = await supabase.from('mantenimientos').update(updatePayload).eq('Id_Mantenimiento', id);
@@ -465,7 +468,7 @@ export default function Mantenimiento() {
                                         const ocupado = dispositivosOcupados.has(d.id_dispositivo) && !esMismoDispositivo;
                                         return {
                                             value: d.id_dispositivo,
-                                            label: `[${d.id_dispositivo}] ${d.tipos_dispositivos?.nombre_tipo || 'Dispositivo'} ${d.modelos_equipo_cat ? `— ${d.modelos_equipo_cat.nombre}` : ''} ${ocupado ? '(OCUPADO)' : ''}`,
+                                            label: `${d.tipos_dispositivos?.nombre_tipo || 'Disp.'} — ${d.ubicacion || 'Sin ubicación'} ${d.modelos_equipo_cat ? `(${d.modelos_equipo_cat.marcas_equipo?.nombre} ${d.modelos_equipo_cat.nombre})` : ''} ${ocupado ? '[OCUPADO]' : ''}`,
                                             disabled: ocupado
                                         };
                                     })}

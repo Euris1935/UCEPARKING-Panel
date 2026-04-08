@@ -40,12 +40,19 @@ export default function Sensores() {
   const [formData, setFormData] = useState(initialForm);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  const [localOrgId, setLocalOrgId] = useState(null);
+
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
-        if (data) setCurrentPersonaId(data.id_persona);
+        // Obtener persona y organización de forma redundante (como en Tickets.jsx)
+        const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (uData?.id_persona) {
+          setCurrentPersonaId(uData.id_persona);
+          const { data: empData } = await supabase.from('empleados').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
+          if (empData?.organizacion_id) setLocalOrgId(empData.organizacion_id);
+        }
       }
     };
     init();
@@ -73,7 +80,7 @@ export default function Sensores() {
       const plazasAsignadas = new Set((dispData || []).filter(d => d.id_plaza).map(d => d.id_plaza));
       setPlazas((plazaData || []).filter(p => !plazasAsignadas.has(p.Id_Plaza)));
 
-      const { data: estSensor } = await supabase.from('estado_sensor').select('*').order('id_estado');
+      const { data: estSensor } = await supabase.from('estado_sensor').select('*').order('nombre_estado');
       setEstadosSensor(estSensor || []);
 
       const { data: tTipos } = await supabase.from('tipos_dispositivos').select('*').order('nombre_tipo');
@@ -93,15 +100,18 @@ export default function Sensores() {
   };
 
   const registrarLog = async (tipo, descripcion, idPlaza = null, idDisp = null) => {
-    if (!currentPersonaId) return;
+    // Si no hay persona, intentamos usar el ID del usuario como fallback o simplemente registrar sin persona
+    // Esto evita que los logs se pierdan si el perfil no ha cargado
     try {
+      const { data: { user } } = await supabase.auth.getUser();
       const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Hardware').maybeSingle();
+      
       await supabase.from('eventos').insert([{
         Fecha_Hora: new Date().toISOString(),
         Descripcion: descripcion,
         Id_Plaza: idPlaza,
-        id_persona: currentPersonaId,
+        id_usuario: user?.id || null,         // Guardar ID de auth como respaldo si existe la columna
         id_tipo_evento: te?.id_tipo || null,
         id_origen_evento: oe?.id_origen || null,
         id_dispositivo: idDisp,
@@ -131,7 +141,7 @@ export default function Sensores() {
       id_tipo: disp.id_tipo || '',
       id_marca: disp.modelos_equipo_cat?.id_marca || '',
       id_modelo: disp.id_modelo_equipo || '',
-      tipo_descripcion: descTexto,
+      tipo_descripcion: disp.ubicacion || descTexto, // Preferir ubicacion de la tabla dispositivos
       id_plaza: disp.id_plaza || '',
       id_estado: disp.id_estado || 1,
       fecha_instalacion: disp.fecha_instalacion ? disp.fecha_instalacion.split('T')[0] : '',
@@ -159,6 +169,8 @@ export default function Sensores() {
           await supabase.from('tipos_dispositivos').update({ descripcion: descripcionFinal }).eq('id_tipo', formData.id_tipo);
       }
 
+      const effectiveOrgId = localOrgId || orgId;
+
       const dispData = {
         id_tipo: parseInt(formData.id_tipo),
         id_modelo_equipo: parseInt(formData.id_modelo),
@@ -166,7 +178,9 @@ export default function Sensores() {
         id_estado: parseInt(formData.id_estado),
         fecha_instalacion: formData.fecha_instalacion,
         ultimo_mantenimiento: formData.ultimo_mantenimiento || null,
-        organizacion_id: orgId
+        ubicacion: formData.tipo_descripcion,
+        // Enviar organizacion_id solo si existe (evita violar RLS por null)
+        ...(effectiveOrgId ? { organizacion_id: effectiveOrgId } : {})
       };
 
       if (editingId) {
@@ -236,16 +250,29 @@ export default function Sensores() {
     });
 
     if (result.isConfirmed) {
-      const { error } = await supabase.from('dispositivos').delete().eq('id_dispositivo', disp.id_dispositivo);
-      if (error) Swal.fire('Error', error.message, 'error');
-      else {
+      try {
+        // 1. Desvincular de Eventos y Mantenimientos para evitar error de Foreign Key
+        // Usamos una promesa paralela para que sea más rápido
+        await Promise.all([
+          supabase.from('eventos').update({ id_dispositivo: null }).eq('id_dispositivo', disp.id_dispositivo),
+          supabase.from('mantenimientos').update({ id_dispositivo: null }).eq('id_dispositivo', disp.id_dispositivo)
+        ]);
+
+        // 2. Ahora sí, borrar el dispositivo
+        const { error } = await supabase.from('dispositivos').delete().eq('id_dispositivo', disp.id_dispositivo);
+        
+        if (error) throw error;
+
         await registrarLog(
           'Dispositivo Offline',
-          `Dispositivo eliminado: ${disp.tipos_dispositivos?.nombre_tipo || 'Equipo'}.`,
+          `Dispositivo eliminado permanentemente: ${disp.tipos_dispositivos?.nombre_tipo || 'Equipo'}.`,
           disp.id_plaza || null,
-          disp.id_dispositivo
+          null // Ya no existe el ID del dispositivo
         );
+        Swal.fire('Eliminado', 'Dispositivo borrado correctamente', 'success');
         loadData();
+      } catch (err) {
+        Swal.fire('Error', err.message, 'error');
       }
     }
   };
@@ -316,7 +343,7 @@ export default function Sensores() {
                     <tr key={disp.id_dispositivo} className="hover:bg-gray-50/50 transition duration-150 group">
                       <td className="px-6 py-4">
                         <div className="font-bold text-gray-900 uppercase text-xs">{disp.tipos_dispositivos?.nombre_tipo}</div>
-                        <div className="text-[10px] text-gray-400 italic font-medium">{disp.tipos_dispositivos?.descripcion || '-'}</div>
+                        <div className="text-[10px] text-gray-400 italic font-medium">{disp.ubicacion || '-'}</div>
                       </td>
                       <td className="px-6 py-4 font-medium text-gray-600 text-xs">
                         {disp.modelos_equipo_cat?.marcas_equipo?.nombre} - {disp.modelos_equipo_cat?.nombre}
