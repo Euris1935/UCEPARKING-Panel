@@ -10,14 +10,15 @@ import SearchableSelect from '../componentes/SearchableSelect';
 export default function AccesoManual() {
   const { orgId, loadingOrg } = useOrg();
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos'
-
-  // Datos
-  const [vehiculos, setVehiculos] = useState([]);
-  const [todasPlazas, setTodasPlazas] = useState([]);
-  const [plazasLibres, setPlazasLibres] = useState([]);
-  const [accesosActivos, setAccesosActivos] = useState([]);
-  const [currentPersonaId, setCurrentPersonaId] = useState(null);
+   const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos'
+ 
+   // Datos
+   const [vehiculos, setVehiculos] = useState([]);
+   const [visitantes, setVisitantes] = useState([]);
+   const [todasPlazas, setTodasPlazas] = useState([]);
+   const [plazasLibres, setPlazasLibres] = useState([]);
+   const [accesosActivos, setAccesosActivos] = useState([]);
+   const [currentPersonaId, setCurrentPersonaId] = useState(null);
 
   // Formulario Entrada Manual
   const [entradaForm, setEntradaForm] = useState({
@@ -71,16 +72,24 @@ export default function AccesoManual() {
         .order('Fecha_Registro', { ascending: false });
       if (vErr) console.error('Error cargando vehiculos:', vErr);
 
+      // Visitantes registrados
+      const { data: vis, error: visErr } = await supabase
+        .from('visitantes')
+        .select('*, personas(nombre, apellido, telefono)')
+        .order('created_at', { ascending: false });
+      if (visErr) console.error('Error cargando visitantes:', visErr);
+
       // Accesos activos (entradas manuales sin salida)
       const { data: activos, error: activosErr } = await supabase
         .from('registros_acceso')
-        .select('*, vehiculos(placa, id_persona, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido, telefono))')
+        .select('*, vehiculos(placa, id_persona, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido, telefono)), tickets(id_visitante)')
         .is('salida_at', null)
         .order('entrada_at', { ascending: false });
 
       if (activosErr) console.error('Error cargando accesos activos:', activosErr);
-
+ 
       setVehiculos(vhs || []);
+      setVisitantes(vis || []);
       setAccesosActivos(activos || []);
 
     } catch (err) { console.error('Error cargando datos:', err); }
@@ -445,10 +454,13 @@ export default function AccesoManual() {
                 {(() => {
                   const busq = busquedaActivos.toLowerCase();
                   const filtrados = accesosActivos.filter(acc => {
-                    if (!busq) return true;
                     const placa = acc.vehiculos?.placa?.toLowerCase() || '';
-                    const nombre = `${acc.vehiculos?.personas?.nombre || ''} ${acc.vehiculos?.personas?.apellido || ''}`.toLowerCase();
-                    const tel = (acc.vehiculos?.personas?.telefono || '').toLowerCase();
+                    const vOwner = acc.vehiculos?.personas;
+                    const vGuest = acc.tickets?.id_visitante ? visitantes.find(v => v.id_visitante === acc.tickets.id_visitante)?.personas : null;
+                    const per = vOwner || vGuest;
+
+                    const nombre = `${per?.nombre || ''} ${per?.apellido || ''}`.toLowerCase();
+                    const tel = (per?.telefono || '').toLowerCase();
                     return placa.includes(busq) || nombre.includes(busq) || tel.includes(busq);
                   });
                   if (filtrados.length === 0) {
@@ -458,11 +470,29 @@ export default function AccesoManual() {
                     <tr key={acc.id_registro} className="hover:bg-gray-50 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-indigo-700 text-base">{acc.vehiculos?.placa}</td>
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-gray-800">{acc.vehiculos?.personas?.nombre} {acc.vehiculos?.personas?.apellido}</div>
+                        <div className="font-semibold text-gray-800">
+                            {(() => {
+                                const vOwner = acc.vehiculos?.personas;
+                                const guestPersona = acc.tickets?.id_visitante ? visitantes.find(v => v.id_visitante === acc.tickets.id_visitante)?.personas : null;
+                                
+                                if (vOwner) return `${vOwner.nombre} ${vOwner.apellido}`;
+                                if (guestPersona) return (
+                                    <div className="flex items-center gap-2">
+                                        <span>{guestPersona.nombre} {guestPersona.apellido}</span>
+                                        <span className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded-md font-black border border-amber-200">VISITANTE</span>
+                                    </div>
+                                );
+                                return 'Visitante';
+                            })()}
+                        </div>
                         <div className="text-xs text-gray-500">{acc.vehiculos?.marcas_vehiculo?.nombre} {acc.vehiculos?.modelos_vehiculo?.nombre}</div>
                       </td>
                       <td className="py-3 px-4 text-gray-600">
-                        {acc.vehiculos?.personas?.telefono || <span className="text-gray-300 italic">—</span>}
+                        {(() => {
+                             const vOwner = acc.vehiculos?.personas;
+                             const vGuest = acc.tickets?.id_visitante ? visitantes.find(v => v.id_visitante === acc.tickets.id_visitante)?.personas : null;
+                             return vOwner?.telefono || vGuest?.telefono || <span className="text-gray-300 italic">—</span>;
+                        })()}
                       </td>
                       <td className="py-3 px-4">
                         <span className="bg-gray-200 text-gray-800 px-2 py-1 rounded font-bold text-xs">
