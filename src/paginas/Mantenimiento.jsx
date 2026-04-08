@@ -132,10 +132,10 @@ export default function Mantenimiento() {
                 Fecha_Hora: new Date().toISOString(),
                 Descripcion: descripcion,
                 id_persona: currentPersonaId,
-                id_dispositivo: idDispositivo,
                 id_tipo_evento: te?.id_tipo || null,
                 id_origen_evento: oe?.id_origen || null,
-                Id_Plaza: idPlaza || null,
+                id_dispositivo: idDispositivo,
+                Id_Plaza: idPlaza,
                 organizacion_id: orgId
             }]);
         } catch (err) { console.warn('Error log:', err.message); }

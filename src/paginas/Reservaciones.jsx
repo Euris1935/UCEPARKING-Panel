@@ -24,6 +24,7 @@ export default function Reservaciones() {
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [currentPersonaId, setCurrentPersonaId] = useState(null);
   
   const [editingReservaId, setEditingReservaId] = useState(null);
   const [originalPlazaId, setOriginalPlazaId] = useState(null); 
@@ -42,6 +43,14 @@ export default function Reservaciones() {
 
   // --- 1. CARGA INICIAL ---
   useEffect(() => {
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
+      }
+    };
+    init();
     loadReservas();
     loadAuxData();
   }, []);
@@ -82,6 +91,23 @@ export default function Reservaciones() {
     } catch (error) { console.error("Error aux:", error); }
   };
 
+  const registrarLog = async (tipo, descripcion, idPlaza = null) => {
+    if (!currentPersonaId) return;
+    try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Reservas').maybeSingle();
+      await supabase.from('eventos').insert([{ 
+        Fecha_Hora: new Date().toISOString(), 
+        Descripcion: descripcion, 
+        Id_Plaza: idPlaza, 
+        id_persona: currentPersonaId, 
+        id_tipo_evento: te?.id_tipo || null, 
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
+      }]);
+    } catch (e) { console.warn('Log error:', e.message); }
+  };
+
   // --- 3. LÓGICA DE PRECISIÓN PARA AUTO-COMPLETADO ---
   const checkExpiredReservations = async () => {
     if (reservas.length === 0) return;
@@ -110,7 +136,11 @@ export default function Reservaciones() {
     try {
         await supabase.from('RESERVA').update({ id_estado: 3 }).eq('Id_Reserva', id);
         if (idPlaza) await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
-        if (!isAuto) Swal.fire('Éxito', 'Reserva completada.', 'success');
+        if (!isAuto) {
+            Swal.fire('Éxito', 'Reserva completada.', 'success');
+            const p = plazasList.find(p => p.Id_Plaza === idPlaza);
+            registrarLog('Ticket Cerrado', `Reserva completada para plaza ${p?.Numero_Plaza || idPlaza}`, idPlaza);
+        }
         loadReservas();
         loadAuxData(); 
     } catch (e) { console.error(e); }
@@ -121,6 +151,8 @@ export default function Reservaciones() {
     if (result.isConfirmed) {
         await supabase.from('RESERVA').update({ id_estado: 2 }).eq('Id_Reserva', idReserva);
         if (idPlaza) await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
+        const p = plazasList.find(p => p.Id_Plaza === idPlaza);
+        registrarLog('Reserva Cancelada', `Reserva cancelada para plaza ${p?.Numero_Plaza || idPlaza}`, idPlaza);
         loadReservas();
         loadAuxData();
     }
@@ -186,6 +218,15 @@ export default function Reservaciones() {
         }
         
         if (error) throw error;
+        
+        const plazaSelect = plazasList.find(p => p.Id_Plaza === parseInt(formData.Id_Plaza));
+        const personaSelect = personasList.find(p => p.id_persona === formData.id_persona);
+        registrarLog(
+            isUpdating ? 'Cambio de Estado' : 'Reserva Creada',
+            `${isUpdating ? 'Edición' : 'Creación'} de reserva: ${personaSelect?.nombre} ${personaSelect?.apellido} en Plaza ${plazaSelect?.Numero_Plaza || formData.Id_Plaza}`, 
+            parseInt(formData.Id_Plaza)
+        );
+
         resetForm();
         loadReservas();
         loadAuxData();

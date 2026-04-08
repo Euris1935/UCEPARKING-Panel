@@ -100,10 +100,8 @@ export default function Sensores() {
   };
 
   const registrarLog = async (tipo, descripcion, idPlaza = null, idDisp = null) => {
-    // Si no hay persona, intentamos usar el ID del usuario como fallback o simplemente registrar sin persona
-    // Esto evita que los logs se pierdan si el perfil no ha cargado
+    if (!currentPersonaId) return;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
       const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Hardware').maybeSingle();
       
@@ -111,7 +109,7 @@ export default function Sensores() {
         Fecha_Hora: new Date().toISOString(),
         Descripcion: descripcion,
         Id_Plaza: idPlaza,
-        id_usuario: user?.id || null,         // Guardar ID de auth como respaldo si existe la columna
+        id_persona: currentPersonaId,
         id_tipo_evento: te?.id_tipo || null,
         id_origen_evento: oe?.id_origen || null,
         id_dispositivo: idDisp,

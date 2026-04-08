@@ -5,15 +5,26 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2'; 
 import { FaSearch, FaClock, FaExclamationTriangle, FaMapMarkerAlt, FaSync } from 'react-icons/fa';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function Ocupacion() {
+  const { orgId } = useOrg();
   const [plazas, setPlazas] = useState([]);
   const [zonas, setZonas] = useState([]);
   const [estadosCatalogo, setEstadosCatalogo] = useState([]); 
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
+  const [currentPersonaId, setCurrentPersonaId] = useState(null);
 
   useEffect(() => {
+    const init = async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+          if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
+        }
+    };
+    init();
     loadData();
     // Suscripción a cambios en tiempo real
     const channel = supabase.channel('realtime_plazas')
@@ -44,6 +55,23 @@ export default function Ocupacion() {
     } catch (error) { console.error("Error cargando datos:", error); } finally { setLoading(false); }
   };
 
+  const registrarLog = async (tipo, descripcion, idPlaza = null) => {
+    if (!currentPersonaId) return;
+    try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Ocupación').maybeSingle();
+      await supabase.from('eventos').insert([{ 
+        Fecha_Hora: new Date().toISOString(), 
+        Descripcion: descripcion, 
+        Id_Plaza: idPlaza, 
+        id_persona: currentPersonaId, 
+        id_tipo_evento: te?.id_tipo || null, 
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
+      }]);
+    } catch (e) { console.warn('Log error:', e.message); }
+  };
+
   const getEstadoId = (nombre) => estadosCatalogo.find(e => e.nombre_estado.toUpperCase() === nombre.toUpperCase())?.id_estado;
 
   const changeStatus = async (idPlaza, nombreNuevoEstado) => {
@@ -55,8 +83,14 @@ export default function Ocupacion() {
 
     setPlazas(prev => prev.map(p => p.Id_Plaza === idPlaza ? { ...p, Nombre_Estado_Rel: nombreNuevoEstado } : p));
 
+    const pHeader = plazas.find(p => p.Id_Plaza === idPlaza);
     const { error } = await supabase.from('plazas').update({ id_estado: idNuevoEstado }).eq('Id_Plaza', idPlaza);
-    if (error) { Swal.fire('Error', error.message, 'error'); loadData(); }
+    if (!error) {
+        registrarLog('Cambio de Estado', `Cambio manual de estado para plaza ${pHeader?.Numero_Plaza || idPlaza}: ${nombreNuevoEstado}`, idPlaza);
+    } else {
+        Swal.fire('Error', error.message, 'error');
+        loadData();
+    }
   };
 
   const toggleOccupancy = (plaza) => {

@@ -20,6 +20,7 @@ export default function ZonasParqueo() {
   const [editingZone, setEditingZone] = useState(null);
   const initialZoneState = { Nombre_Zona: '', Capacidad_Total: '' };
   const [zoneForm, setZoneForm] = useState(initialZoneState);
+  const [currentPersonaId, setCurrentPersonaId] = useState(null);
 
   // --- ESTADOS DE PLAZAS ---
   const [plazas, setPlazas] = useState([]);
@@ -28,7 +29,17 @@ export default function ZonasParqueo() {
   const initialPlazaState = { Numero_Plaza: '', Id_Zona: '', Amplitud: '2.50', Longitud: '5.00' };
   const [plazaForm, setPlazaForm] = useState(initialPlazaState);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { 
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
+      }
+    };
+    init();
+    loadData(); 
+  }, []);
 
   const loadData = async () => {
     try {
@@ -38,6 +49,22 @@ export default function ZonasParqueo() {
       const { data: pData } = await supabase.from('plazas').select(`*, estado_plaza(nombre_estado)`).order('Numero_Plaza');
       setPlazas(pData || []);
     } catch (error) { console.error(error); }
+  };
+
+  const registrarLog = async (tipo, descripcion) => {
+    if (!currentPersonaId) return;
+    try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Parqueos').maybeSingle();
+      await supabase.from('eventos').insert([{ 
+        Fecha_Hora: new Date().toISOString(), 
+        Descripcion: descripcion, 
+        id_persona: currentPersonaId, 
+        id_tipo_evento: te?.id_tipo || null, 
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
+      }]);
+    } catch (e) { console.warn('Log error:', e.message); }
   };
 
   /* ── Helper: obtiene las iniciales de las palabras del nombre ──
@@ -147,6 +174,7 @@ export default function ZonasParqueo() {
         const { error } = await supabase.from('zonas_estacionamiento').update(payload).eq('Id_Zona', editingZone.Id_Zona);
         if (error) throw error;
         Swal.fire('Éxito', 'Zona actualizada.', 'success');
+        registrarLog('Zona Modificada', `Edición de zona: ${zoneForm.Nombre_Zona} (Capacidad: ${zoneForm.Capacidad_Total})`);
         setZoneForm(initialZoneState);
         setEditingZone(null);
         loadData();
@@ -180,6 +208,7 @@ export default function ZonasParqueo() {
       const idLibre = est?.id_estado || 1;
       const { total } = await generarPlazasEnLote(zona.Id_Zona, zona.Nombre_Zona, zona.Capacidad_Total, idLibre);
       Swal.fire('Listo', `Se generaron ${total} plazas nuevas.`, 'success');
+      registrarLog('Plazas Generadas', `Generación de ${total} plazas para zona: ${zona.Nombre_Zona}`);
       loadData();
     } catch (error) { Swal.fire('Error', error.message, 'error'); }
   };
@@ -208,6 +237,7 @@ export default function ZonasParqueo() {
         await supabase.from('plazas').delete().eq('Id_Zona', zoneId);
         await supabase.from('zonas_estacionamiento').delete().eq('Id_Zona', zoneId);
         Swal.fire('Eliminado', 'Zona y plazas eliminadas.', 'success');
+        registrarLog('Zona Eliminada', `Eliminación de zona ID: ${zoneId}`);
         loadData();
       } catch (error) {
         Swal.fire('Error', 'No se pudo eliminar la zona', 'error');

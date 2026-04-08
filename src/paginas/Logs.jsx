@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import { FaSearch, FaFilter, FaSync, FaExclamationTriangle, FaCheckCircle, FaBolt, FaHistory, FaCar, FaCarSide, FaBan, FaTicketAlt, FaTools, FaWifi, FaWrench } from 'react-icons/fa';
+import { FaSearch, FaFilter, FaSync, FaExclamationTriangle, FaCheckCircle, FaBolt, FaHistory, FaCar, FaCarSide, FaBan, FaTicketAlt, FaTools, FaWifi, FaWrench, FaTrash, FaUserPlus, FaList, FaLock, FaCog, FaMapMarkerAlt, FaUserTie } from 'react-icons/fa';
 
 const TIPO_COLORES = {
     'Entrada': { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', icon: FaCar },
@@ -25,6 +25,17 @@ const TIPO_COLORES = {
     'Entrada LPR Denegada': { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', icon: FaBan },
     'Salida LPR': { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: FaCarSide },
     'Placa No Reconocida': { bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', icon: FaExclamationTriangle },
+    // Nuevos tipos añadidos:
+    'Vehículo Registrado': { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', icon: FaCar },
+    'Vehículo Eliminado': { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', icon: FaTrash },
+    'Usuario Creado': { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-200', icon: FaUserPlus },
+    'Usuario Eliminado': { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-200', icon: FaTrash },
+    'Asignación Modificada': { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', icon: FaList },
+    'Permiso Actualizado': { bg: 'bg-fuchsia-50', text: 'text-fuchsia-700', border: 'border-fuchsia-200', icon: FaLock },
+    'Configuración Cambiada': { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200', icon: FaCog },
+    'Zona Modificada': { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: FaMapMarkerAlt },
+    'Empleado Registrado': { bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', icon: FaUserTie },
+    'Cambio de Estado': { bg: 'bg-zinc-50', text: 'text-zinc-700', border: 'border-zinc-200', icon: FaSync },
 };
 const TIPO_DEFAULT = { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200', icon: FaHistory };
 

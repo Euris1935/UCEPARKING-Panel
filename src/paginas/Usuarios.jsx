@@ -5,6 +5,7 @@ import Swal from 'sweetalert2';
 import Layout from '../componentes/Layout';
 import RolesPermisosManager from '../componentes/RolesPermisosManager';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
 import {
   FaSearch, FaEdit, FaTrash, FaUserTie, FaUsers,
   FaShieldAlt, FaKey, FaCheck, FaTimes, FaUserCircle
@@ -28,6 +29,7 @@ function RoleBadge({ roleName }) {
 }
 
 export default function Usuarios() {
+  const { orgId } = useOrg();
   const { tienePermiso, esAdmin } = useRbac();
   const canCreate = tienePermiso('Módulo Usuarios', 'crear');
   const canEdit   = tienePermiso('Módulo Usuarios', 'editar');
@@ -39,6 +41,7 @@ export default function Usuarios() {
   const [rolesList, setRolesList]   = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading]       = useState(false);
+  const [currentPersonaId, setCurrentPersonaId] = useState(null);
 
   // Estado para edición completa (formulario lateral)
   const [editingUser, setEditingUser] = useState(null); // objeto completo o null
@@ -51,7 +54,17 @@ export default function Usuarios() {
 
   const isUpdating = !!editingUser;
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { 
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
+      }
+    };
+    init();
+    loadData(); 
+  }, []);
 
   // ── Carga de datos ────────────────────────────────────────────────────────
   const loadData = async () => {
@@ -67,11 +80,8 @@ export default function Usuarios() {
 
       if (orgErr) {
         console.error('Error get_usuarios_org:', orgErr);
-        // Fallback: carga directa si el RPC falla
-        // usamos get_all_usuarios que no tiene restriccion de empleado
         await loadUsuariosFallback(rolesData || []);
       } else {
-        // El RPC devuelve: id_usuario, nombre, apellido, email, nombre_rol, id_rol
         const filtrados = (orgUsers || []).filter(u => {
           const rol = u.nombre_rol?.toLowerCase();
           return rol !== 'visitante';
@@ -89,13 +99,11 @@ export default function Usuarios() {
 
   const loadUsuariosFallback = async (rolesDisponibles) => {
     try {
-      // Con RLS, la query directa retorna solo el usuario propio.
-      // Intentar a traves de personas + usuarios en paralelo.
       const [{ data: usrs }, { data: pers }] = await Promise.all([
         supabase.from('usuarios').select('id, id_persona, rol_id'),
         supabase.from('personas').select('id_persona, nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion')
       ]);
-      if (!usrs || usrs.length === 0) return; // RLS bloquea — necesita SQL fix
+      if (!usrs || usrs.length === 0) return;
       const lista = usrs.map(u => {
         const persona = (pers || []).find(p => p.id_persona === u.id_persona);
         const rol = rolesDisponibles.find(r => r.Id_Rol === u.rol_id);
@@ -116,6 +124,22 @@ export default function Usuarios() {
 
       setUsuarios(lista);
     } catch (err) { console.error('Fallback error:', err); }
+  };
+
+  const registrarLog = async (tipo, descripcion) => {
+    if (!currentPersonaId) return;
+    try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Usuarios').maybeSingle();
+      await supabase.from('eventos').insert([{ 
+        Fecha_Hora: new Date().toISOString(), 
+        Descripcion: descripcion, 
+        id_persona: currentPersonaId, 
+        id_tipo_evento: te?.id_tipo || null, 
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
+      }]);
+    } catch (e) { console.warn('Log error:', e.message); }
   };
 
   // ── Formulario ────────────────────────────────────────────────────────────
@@ -157,7 +181,6 @@ export default function Usuarios() {
         Swal.fire({ title: 'Procesando...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
 
         if (isUpdating) {
-          // Actualizar persona
           if (editingUser.id_persona) {
             const { error: pErr } = await supabase.from('personas')
               .update({ nombre, apellido, telefono, email, sexo, fecha_nacimiento: fecha_nacimiento || null, direccion })
@@ -165,7 +188,6 @@ export default function Usuarios() {
             if (pErr) console.warn('personas update:', pErr.message);
           }
 
-          // Cambiar rol usando el nuevo RPC seguro
           if (parseInt(rol_id) !== editingUser.id_rol) {
             const { error: rolErr } = await supabase.rpc('cambiar_rol_usuario', {
               p_usuario_id: editingUser.id_usuario,
@@ -174,14 +196,10 @@ export default function Usuarios() {
             if (rolErr) throw new Error('Error cambiando rol: ' + rolErr.message);
           }
 
+          registrarLog('Cambio de Estado', `Edición de usuario: ${nombre} ${apellido} (${email})`);
           Swal.fire('Éxito', 'Usuario actualizado correctamente.', 'success');
           handleCancel();
         } else {
-          // ── CREAR NUEVO USUARIO ──────────────────────────────────────────
-          // supabase.auth.signUp() NO funciona para crear usuarios desde admin:
-          //   - Crea la sesión del admin actual (no crea otro usuario)
-          //   - Requiere confirmación de email (el usuario queda pendiente)
-          // Solucion: usar RPC crear_usuario_admin (SECURITY DEFINER)
           if (!email || !contrasena)
             return Swal.fire('Error', 'Email y contraseña son requeridos.', 'error');
 
@@ -198,7 +216,6 @@ export default function Usuarios() {
           });
 
           if (rpcError) {
-            // Si la RPC no existe aun, mostrar instrucciones de SQL
             if (rpcError.code === 'PGRST202' || rpcError.message.includes('function') || rpcError.message.includes('exist')) {
               return Swal.fire({
                 title: 'SQL requerido',
@@ -210,6 +227,7 @@ export default function Usuarios() {
             throw new Error(rpcError.message);
           }
 
+          registrarLog('Usuario Creado', `Creación de usuario: ${nombre} ${apellido} (${email})`);
           Swal.fire('¡Creado!', `Usuario <b>${email}</b> registrado exitosamente. Ya puede iniciar sesión.`, 'success');
           handleCancel();
         }
@@ -244,8 +262,12 @@ export default function Usuarios() {
 
       if (error) throw error;
 
-      Swal.fire('¡Listo!', 'El rol fue actualizado correctamente.', 'success');
+      Swal.fire('Éxito', 'Rol actualizado.', 'success');
+      const u = usuarios.find(u => u.id_usuario === changingRolFor);
+      const r = rolesList.find(r => r.Id_Rol === parseInt(newRolId));
+      registrarLog('Asignación Modificada', `Cambio de rol para ${u?.nombre} ${u?.apellido}: ahora es ${r?.Nombre_Rol}`);
       setChangingRolFor(null);
+      setNewRolId('');
       loadData();
     } catch (err) {
       Swal.fire('Error', err.message, 'error');
@@ -273,6 +295,7 @@ export default function Usuarios() {
         }
         Swal.fire('Error', error.message, 'error');
       } else {
+        registrarLog('Usuario Eliminado', `Eliminación de acceso para: ${user.nombre} ${user.apellido} (${user.email})`);
         Swal.fire('Eliminado', 'Acceso eliminado correctamente.', 'success');
         loadData();
       }

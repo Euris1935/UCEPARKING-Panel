@@ -17,6 +17,7 @@ export default function Vehiculos() {
 
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [currentPersonaId, setCurrentPersonaId] = useState(null);
   const [vehiculos, setVehiculos] = useState([]);
   const [searchFlota, setSearchFlota] = useState('');
   const [personasSistema, setPersonasSistema] = useState([]);
@@ -31,6 +32,14 @@ export default function Vehiculos() {
   const [editVehiculoForm, setEditVehiculoForm] = useState({ placa: '', id_marca: '', id_modelo: '', id_color: '' });
 
   useEffect(() => {
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
+      }
+    };
+    init();
     loadData();
     const ch = supabase.channel('rt_vehiculos')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculos' }, loadData)
@@ -74,6 +83,22 @@ export default function Vehiculos() {
     } catch (err) { console.error('Error cargando datos:', err); } finally { setIsRefreshing(false); }
   };
 
+  const registrarLog = async (tipo, descripcion) => {
+    if (!currentPersonaId) return;
+    try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Vehículos').maybeSingle();
+      await supabase.from('eventos').insert([{ 
+        Fecha_Hora: new Date().toISOString(), 
+        Descripcion: descripcion, 
+        id_persona: currentPersonaId, 
+        id_tipo_evento: te?.id_tipo || null, 
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
+      }]);
+    } catch (e) { console.warn('Log error:', e.message); }
+  };
+
   const handleVehiculoPersonalSubmit = async (e) => {
     e.preventDefault();
     if (!vehiculoPersonalForm.persona_id) return Swal.fire('Atención', 'Seleccione un propietario.', 'warning');
@@ -91,6 +116,8 @@ export default function Vehiculos() {
       }]);
       if (error) throw error;
       Swal.fire('Registrado', 'Vehículo vinculado correctamente.', 'success');
+      const p = personasSistema.find(p => p.id_persona === vehiculoPersonalForm.persona_id);
+      registrarLog('Vehículo Registrado', `Vehículo ${vehiculoPersonalForm.placa.toUpperCase()} registrado a nombre de ${p?.nombre} ${p?.apellido}`);
       setVehiculoPersonalForm({ persona_id: '', placa: '', id_marca: '', id_modelo: '', id_color: '' });
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
@@ -105,8 +132,8 @@ export default function Vehiculos() {
         { count: 'exact' }
       ).eq('id_vehiculo', editandoVehiculo.id_vehiculo);
       if (error) throw error;
-      if (count === 0) throw new Error('No se pudo actualizar (0 filas). Verifica los permisos UPDATE en Supabase.');
-      Swal.fire('Actualizado', 'Vehículo actualizado correctamente.', 'success');
+      Swal.fire('Actualizado', 'Datos actualizados correctamente.', 'success');
+      registrarLog('Cambio de Estado', `Edición de datos para vehículo con placa ${editVehiculoForm.placa}`);
       setEditandoVehiculo(null);
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
@@ -116,17 +143,19 @@ export default function Vehiculos() {
     const { data: ticketsActivos } = await supabase.from('tickets').select('Id_Ticket').eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', 1);
     if (ticketsActivos && ticketsActivos.length > 0) return Swal.fire('No se puede eliminar', `Este vehículo tiene ${ticketsActivos.length} ticket(s) activo(s). Registre la salida primero.`, 'warning');
 
-    const r = await Swal.fire({ title: '¿Eliminar vehículo?', html: `Placa: <b>${vehiculo.placa}</b><br><small>Se eliminarán también sus registros de acceso históricos.</small>`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Sí, eliminar' });
-    if (!r.isConfirmed) return;
-
+    const result = await Swal.fire({ title: '¿Eliminar vehículo?', html: `Placa: <b>${vehiculo.placa}</b><br><small>Se eliminarán también sus registros de acceso históricos.</small>`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Sí, eliminar' });
+    
     try {
-      await supabase.from('registros_acceso').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
-      await supabase.from('tickets').delete().eq('id_vehiculo', vehiculo.id_vehiculo).neq('id_estado', 1);
-      const { error, count } = await supabase.from('vehiculos').delete({ count: 'exact' }).eq('id_vehiculo', vehiculo.id_vehiculo);
-      if (error) throw error;
-      if (count === 0) throw new Error('No se pudo eliminar el vehículo (0 filas). Verifica los permisos en Supabase.');
-      Swal.fire('Eliminado', 'Vehículo eliminado correctamente.', 'success');
-      loadData();
+      if (result.isConfirmed) {
+        const { error } = await supabase.from('vehiculos').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
+        if (error) {
+          Swal.fire('Error', error.message, 'error');
+        } else {
+          Swal.fire('Eliminado', 'Vehículo borrado correctamente.', 'success');
+          registrarLog('Vehículo Eliminado', `Vehículo con placa ${vehiculo.placa} eliminado del sistema.`);
+          loadData();
+        }
+      }
     } catch (err) { Swal.fire('Error al eliminar', err.message, 'error'); }
   };
 

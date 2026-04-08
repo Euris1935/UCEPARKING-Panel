@@ -17,6 +17,7 @@ export default function Asignaciones() {
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [currentPersonaId, setCurrentPersonaId] = useState(null);
 
     // Modo edición
     const [editingAsignacion, setEditingAsignacion] = useState(null); // null = creando, objeto = editando
@@ -42,6 +43,14 @@ export default function Asignaciones() {
     const [formData, setFormData] = useState(initialForm);
 
     useEffect(() => {
+        const init = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+                if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
+            }
+        };
+        init();
         loadData();
     }, []);
 
@@ -136,6 +145,22 @@ export default function Asignaciones() {
             setIsRefreshing(false);
         }
     };
+
+    const registrarLog = async (tipo, descripcion) => {
+        if (!currentPersonaId) return;
+        try {
+          const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+          const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Asignaciones').maybeSingle();
+          await supabase.from('eventos').insert([{ 
+            Fecha_Hora: new Date().toISOString(), 
+            Descripcion: descripcion, 
+            id_persona: currentPersonaId, 
+            id_tipo_evento: te?.id_tipo || null, 
+            id_origen_evento: oe?.id_origen || null,
+            organizacion_id: orgId
+          }]);
+        } catch (e) { console.warn('Log error:', e.message); }
+      };
 
     // Cuando el usuario selecciona un empleado, buscar su vehículo vinculado
     const handleEmpleadoChange = (idEmpleado) => {
@@ -284,6 +309,12 @@ export default function Asignaciones() {
             } else {
                 await handleCreate();
             }
+            const emp = empleadosList.find(e => e.Id_Empleado === parseInt(formData.Id_Empleado));
+            const plz = plazasList.find(p => p.Id_Plaza === parseInt(formData.Id_Plaza));
+            registrarLog(
+                editingAsignacion ? 'Asignación Modificada' : 'Cambio de Estado', 
+                `${editingAsignacion ? 'Edición' : 'Creación'} de asignación de parqueo: Empleado ${emp?.personas?.nombre} ${emp?.personas?.apellido} en Plaza ${plz?.Numero_Plaza}`
+            );
             setFormData(initialForm);
             setVehiculoVinculado(null);
             setIsPermanent(false);
@@ -317,6 +348,7 @@ export default function Asignaciones() {
                 }).eq('Id_Plaza', asignacion.Id_Plaza);
 
                 Swal.fire('Liberado', 'La plaza está disponible nuevamente.', 'success');
+                registrarLog('Vehículo Eliminado', `Eliminación de asignación de parqueo para empleado ${asignacion.empleados?.personas?.nombre} ${asignacion.empleados?.personas?.apellido} en plaza ${asignacion.plazas?.Numero_Plaza}`);
                 loadData();
             } catch (error) {
                 Swal.fire('Error', error.message, 'error');

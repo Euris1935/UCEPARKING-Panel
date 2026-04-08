@@ -17,16 +17,47 @@ export default function Configuracion() {
         alertaCapacidad: 90,
         tiempoMaximoReserva: 4,
     });
+    const [currentPersonaId, setCurrentPersonaId] = useState(null);
+    const [orgId, setOrgId] = useState(null);
 
     useEffect(() => {
+        const init = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+                if (uData?.id_persona) {
+                    setCurrentPersonaId(uData.id_persona);
+                    const { data: empData } = await supabase.from('empleados').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
+                    if (empData?.organizacion_id) setOrgId(empData.organizacion_id);
+                }
+            }
+        };
+        init();
         const saved = localStorage.getItem('appSettings');
         if (saved) setSettings(JSON.parse(saved));
     }, []);
 
     const handleSaveSettings = () => {
         localStorage.setItem('appSettings', JSON.stringify(settings));
+        registrarLog('Configuración Cambiada', `Actualización de parámetros del sistema: Notificaciones=${settings.notificacionesSonoras}, Alerta Capacidad=${settings.alertaCapacidad}%, Max Reserva=${settings.tiempoMaximoReserva}h`);
         Swal.fire({ title: 'Guardado', text: 'Configuración actualizada.', icon: 'success', timer: 1500, showConfirmButton: false });
     };
+
+    const registrarLog = async (tipo, descripcion) => {
+        if (!currentPersonaId) return;
+        try {
+          const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+          const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Configuración').maybeSingle();
+          await supabase.from('eventos').insert([{ 
+            Fecha_Hora: new Date().toISOString(), 
+            Descripcion: descripcion, 
+            id_persona: currentPersonaId, 
+            id_tipo_evento: te?.id_tipo || null, 
+            id_origen_evento: oe?.id_origen || null,
+            organizacion_id: orgId
+          }]);
+        } catch (e) { console.warn('Log error:', e.message); }
+      };
 
     // --- Tab: Cuenta ---
     const [profile, setProfile] = useState(null);
@@ -127,6 +158,7 @@ export default function Configuracion() {
             if (updateError) throw updateError;
 
             Swal.fire('Proceso completado', 'Tu contraseña ha sido actualizada correctamente.', 'success');
+            registrarLog('Cambio de Estado', `Actualización de contraseña de seguridad para usuario ${profile?.email}`);
             setPassData({ currentPassword: '', newPassword: '', confirmPassword: '' });
         } catch (error) {
             Swal.fire('Error', error.message, 'error');

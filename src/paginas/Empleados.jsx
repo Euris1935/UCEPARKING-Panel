@@ -26,6 +26,7 @@ export default function Empleados() {
   const [adminOrgNombre,      setAdminOrgNombre]      = useState('');
   const [searchTerm,          setSearchTerm]          = useState('');
   const [loading,             setLoading]             = useState(false);
+  const [currentPersonaId,    setCurrentPersonaId]    = useState(null);
 
   // ── Panel lateral ───────────────────────────────────────────────────────────
   const [panelOpen,     setPanelOpen]     = useState(false);
@@ -50,6 +51,7 @@ export default function Empleados() {
           .from('usuarios').select('id_persona').eq('id', user.id).single();
 
         if (uRow?.id_persona) {
+          setCurrentPersonaId(uRow.id_persona);
           const { data: empRow } = await supabase
             .from('empleados')
             .select('organizacion_id, organizaciones(Nombre_Organizacion)')
@@ -76,6 +78,22 @@ export default function Empleados() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const registrarLog = async (tipo, descripcion) => {
+    if (!currentPersonaId) return;
+    try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Personal').maybeSingle();
+      await supabase.from('eventos').insert([{ 
+        Fecha_Hora: new Date().toISOString(), 
+        Descripcion: descripcion, 
+        id_persona: currentPersonaId, 
+        id_tipo_evento: te?.id_tipo || null, 
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: adminOrgId
+      }]);
+    } catch (e) { console.warn('Log error:', e.message); }
   };
 
   const cargarEmpleados = async (deptList) => {

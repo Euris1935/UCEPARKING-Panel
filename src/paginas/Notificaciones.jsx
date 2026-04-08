@@ -106,6 +106,22 @@ export default function Notificaciones() {
     }
   };
 
+  const registrarLog = async (tipo, descripcion) => {
+    if (!currentPersonaId) return;
+    try {
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Alertas').maybeSingle();
+      await supabase.from('eventos').insert([{ 
+        Fecha_Hora: new Date().toISOString(), 
+        Descripcion: descripcion, 
+        id_persona: currentPersonaId, 
+        id_tipo_evento: te?.id_tipo || null, 
+        id_origen_evento: oe?.id_origen || null,
+        organizacion_id: orgId
+      }]);
+    } catch (e) { console.warn('Log error:', e.message); }
+  };
+
   /* ── Cuando cambia id_tipo, sincroniza el campo Tipo (texto) ── */
   const handleTipoChange = (idTipo) => {
     const tipo = tiposNotif.find(t => String(t.id_tipo) === String(idTipo));
@@ -134,6 +150,10 @@ export default function Notificaciones() {
       if (error) throw error;
 
       Swal.fire('Enviada', 'Notificación creada correctamente.', 'success');
+      const p = personasList.find(p => p.id_persona === form.id_persona);
+      const t = tiposNotif.find(t => t.id_tipo === parseInt(form.id_tipo));
+      registrarLog('Alerta', `Envío de notificación (${t?.nombre_tipo}): ${form.Contenido.substring(0, 30)}... ${p ? 'a ' + p.nombre : 'a todos'}`);
+      
       setShowModal(false);
       setForm({ Tipo: '', Contenido: '', id_persona: '', id_tipo: '' });
       loadAll();
@@ -148,7 +168,10 @@ export default function Notificaciones() {
       .from('notificaciones')
       .update({ Leida: true })
       .eq('ID_Notificacion', id);
-    if (error) console.error('marcarLeida error:', error.message);
+    if (error) {
+        console.error('marcarLeida error:', error.message);
+        Swal.fire('Error', 'No se pudo marcar como leída: ' + error.message, 'error');
+    }
     loadAll();
   };
 
@@ -160,7 +183,10 @@ export default function Notificaciones() {
       .from('notificaciones')
       .update({ Leida: true })
       .in('ID_Notificacion', ids);
-    if (error) console.error('marcarTodasLeidas error:', error.message);
+    if (error) {
+        console.error('marcarTodasLeidas error:', error.message);
+        Swal.fire('Error', 'No se pudieron actualizar: ' + error.message, 'error');
+    }
     loadAll();
   };
 
@@ -179,8 +205,14 @@ export default function Notificaciones() {
       .from('notificaciones')
       .delete()
       .eq('ID_Notificacion', id);
-    if (error) Swal.fire('Error', error.message, 'error');
-    else loadAll();
+      
+    if (error) {
+        Swal.fire('Error', 'No se pudo eliminar: ' + error.message, 'error');
+    } else {
+        const n = notifs.find(n => n.ID_Notificacion === id);
+        registrarLog('Alerta', `Notificación eliminada: ${n?.Contenido?.substring(0, 30)}...`);
+        loadAll();
+    }
   };
 
   const noLeidas = notifs.filter(n => !n.Leida).length;
