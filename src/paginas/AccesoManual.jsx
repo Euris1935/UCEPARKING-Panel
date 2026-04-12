@@ -41,48 +41,52 @@ export default function AccesoManual() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        const { data } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
         if (data) setCurrentPersonaId(data.id_persona);
       }
     };
     init();
     loadData();
 
-    // Suscripción tiempo real a registros_acceso y plazas
+    // Suscripción tiempo real a acceso y plaza
     const ch = supabase.channel('rt_am')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'registros_acceso' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'plazas' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'acceso' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
 
   const loadData = async () => {
     try {
+      // Obtener estados para plaza
+      const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+      const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
       // Plazas: obtener todas para mapear los nombres, y filtrar las libres para el dropdown
-      const { data: plazas } = await supabase.from('plazas').select('*').order('Numero_Plaza');
+      const { data: plazas } = await supabase.from('plaza').select('*').order('numero_plaza');
       if (plazas) {
         setTodasPlazas(plazas);
-        setPlazasLibres(plazas.filter(p => p.id_estado === 1));
+        setPlazasLibres(plazas.filter(p => p.id_estado === idEstLibrePlaza));
       }
 
       // Vehículos registrados (con dueños)
       const { data: vhs, error: vErr } = await supabase
-        .from('vehiculos')
-        .select('*, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido, telefono)')
-        .order('Fecha_Registro', { ascending: false });
+        .from('vehiculo')
+        .select('*, marca(nombre), modelo(nombre), color(nombre), persona(nombre, apellido, telefono)')
+        .order('created_at', { ascending: false });
       if (vErr) console.error('Error cargando vehiculos:', vErr);
 
       // Visitantes registrados
       const { data: vis, error: visErr } = await supabase
-        .from('visitantes')
-        .select('*, personas(nombre, apellido, telefono)')
+        .from('visitante')
+        .select('*, persona(nombre, apellido, telefono)')
         .order('created_at', { ascending: false });
       if (visErr) console.error('Error cargando visitantes:', visErr);
 
       // Accesos activos (entradas manuales sin salida)
       const { data: activos, error: activosErr } = await supabase
-        .from('registros_acceso')
-        .select('*, vehiculos(placa, id_persona, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido, telefono)), tickets(id_visitante)')
+        .from('acceso')
+        .select('*, vehiculo(placa, id_persona, marca(nombre), modelo(nombre), color(nombre), persona(nombre, apellido, telefono)), ticket(id_visitante)')
         .is('salida_at', null)
         .order('entrada_at', { ascending: false });
 
@@ -95,17 +99,17 @@ export default function AccesoManual() {
     } catch (err) { console.error('Error cargando datos:', err); }
   };
 
-  const registrarLog = async (tipo, descripcion, idPlaza = null) => {
+  const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Acceso Manual').maybeSingle();
-      await supabase.from('eventos').insert([{
-        Fecha_Hora: new Date().toISOString(),
-        Descripcion: descripcion,
-        Id_Plaza: idPlaza,
+      await supabase.from('evento').insert([{
+        fecha_hora: new Date().toISOString(),
+        descripcion: descripcion,
+        id_plaza: idPlaza,
         id_persona: currentPersonaId,
-        id_tipo_evento: te?.id_tipo || null,
+        id_tipo: te?.id || null,
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -131,32 +135,35 @@ export default function AccesoManual() {
         return Swal.fire('Acceso Denegado', 'Este vehículo ya tiene un acceso activo registrado y no ha salido del parqueo.', 'error');
       }
 
-      const plazaSelect = plazasLibres.find(p => p.Id_Plaza === parseInt(entradaForm.id_plaza));
+      const plazaSelect = plazasLibres.find(p => p.id_plaza === parseInt(entradaForm.id_plaza));
 
       // 1. Insertar Registro de Acceso
       const { error: raErr } = await supabase
-        .from('registros_acceso')
+        .from('acceso')
         .insert({
           entrada_at: new Date().toISOString(),
           id_vehiculo: vehiculoSelect.id_vehiculo,
           ticket_id: null,
-          Id_Plaza: plazaSelect.Id_Plaza,
+          id_plaza: plazaSelect.id_plaza,
           id_dispositivo_entrada: null,
           organizacion_id: orgId
         });
       if (raErr) throw raErr;
 
-      // 2. Actualizar Plaza
+      // 2. Actualizar Plaza (Ocupada)
+      const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+      const idEstOcupPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Ocupado')?.id || 2;
+
       playBeep();
-      await supabase.from('plazas').update({
-        id_estado: 2
-      }).eq('Id_Plaza', plazaSelect.Id_Plaza);
+      await supabase.from('plaza').update({
+        id_estado: idEstOcupPlaza
+      }).eq('id_plaza', plazaSelect.id_plaza);
 
       // 3. Log
       await registrarLog(
         'Entrada',
-        `Entrada manual: ${vehiculoSelect.placa} — ${vehiculoSelect.personas?.nombre} ${vehiculoSelect.personas?.apellido} — Plaza ${plazaSelect.Numero_Plaza}.`,
-        plazaSelect.Id_Plaza
+        `Entrada manual: ${vehiculoSelect.placa} — ${vehiculoSelect.persona?.nombre} ${vehiculoSelect.persona?.apellido} — Plaza ${plazaSelect.numero_plaza}.`,
+        plazaSelect.id_plaza
       );
 
       // 4. Abrir Barrera (Principal o VIP)
@@ -182,11 +189,11 @@ export default function AccesoManual() {
     setLoading(false);
   };
 
-  const handleRegistrarSalida = async (acceso) => {
-    const plazaEncontrada = todasPlazas.find(p => p.Id_Plaza === acceso.Id_Plaza);
+  const handleRegistrarSalida = async (acc) => {
+    const plazaEncontrada = todasPlazas.find(p => p.id_plaza === acc.id_plaza);
     const result = await Swal.fire({
       title: '¿Registrar Salida Manual?',
-      html: `Vehículo: <b>${acceso.vehiculos?.placa}</b><br/>Plaza: <b>${plazaEncontrada?.Numero_Plaza || 'No asig.'}</b><br/><br/><span class="text-sm text-gray-500">Seleccione la barrera a abrir:</span>`,
+      html: `Vehículo: <b>${acc.vehiculo?.placa}</b><br/>Plaza: <b>${plazaEncontrada?.numero_plaza || 'No asig.'}</b><br/><br/><span class="text-sm text-gray-500">Seleccione la barrera a abrir:</span>`,
       icon: 'question',
       showCancelButton: true,
       showDenyButton: true,
@@ -203,28 +210,31 @@ export default function AccesoManual() {
     try {
       const ahora = new Date().toISOString();
 
-      // 1. Marcar salida en registros_acceso
+      // 1. Marcar salida en acceso
       const { error: raErr } = await supabase
-        .from('registros_acceso')
+        .from('acceso')
         .update({ salida_at: ahora })
-        .eq('id_registro', acceso.id_registro);
+        .eq('id_registro', acc.id_registro);
       if (raErr) throw raErr;
 
       // 2. Liberar Plaza si existe
-      if (acceso.Id_Plaza) {
-        await supabase.from('plazas').update({
-          id_estado: 1
-        }).eq('Id_Plaza', acceso.Id_Plaza);
+      if (acc.id_plaza) {
+        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
+        await supabase.from('plaza').update({
+          id_estado: idEstLibrePlaza
+        }).eq('id_plaza', acc.id_plaza);
       }
 
 
 
-      // 3. Log — incluye nombre de persona (#16)
-      const nombreSalida = `${acceso.vehiculos?.personas?.nombre || ''} ${acceso.vehiculos?.personas?.apellido || ''}`.trim() || 'Desconocido';
+      // 3. Log 
+      const nombreSalida = `${acc.vehiculo?.persona?.nombre || ''} ${acc.vehiculo?.persona?.apellido || ''}`.trim() || 'Desconocido';
       await registrarLog(
         'Salida',
-        `Salida manual: ${nombreSalida} — ${acceso.vehiculos?.placa} — Plaza ${plazaEncontrada?.Numero_Plaza || 'N/A'}.`,
-        acceso.Id_Plaza
+        `Salida manual: ${nombreSalida} — ${acc.vehiculo?.placa} — Plaza ${plazaEncontrada?.numero_plaza || 'N/A'}.`,
+        acc.id_plaza
       );
 
       // 4. Abrir Barrera
@@ -360,16 +370,16 @@ export default function AccesoManual() {
                         className="p-3 hover:bg-indigo-50 border-b last:border-0 cursor-pointer transition-colors"
                         onMouseDown={() => {
                           setEntradaForm({ ...entradaForm, vehiculo_id: v.id_vehiculo });
-                          setBusquedaVehiculo(`${v.placa} — ${v.personas?.nombre} ${v.personas?.apellido}`);
+                          setBusquedaVehiculo(`${v.placa} — ${v.persona?.nombre} ${v.persona?.apellido}`);
                           setMostrarDropdown(false);
                         }}
                       >
                         <div className="flex justify-between items-center">
                           <span className="font-bold text-indigo-700 text-base font-mono">{v.placa}</span>
-                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">{v.marcas_vehiculo?.nombre} {v.modelos_vehiculo?.nombre}</span>
+                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">{v.marca?.nombre} {v.modelo?.nombre}</span>
                         </div>
                         <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                          <FaUserPlus className="text-[10px]" /> {v.personas?.nombre} {v.personas?.apellido}
+                          <FaUserPlus className="text-[10px]" /> {v.persona?.nombre} {v.persona?.apellido}
                         </div>
                       </li>
                     ))
@@ -382,7 +392,7 @@ export default function AccesoManual() {
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Asignar Plaza *</label>
                 <SearchableSelect
-                  options={plazasLibres.map(p => ({ value: p.Id_Plaza, label: `Plaza ${p.Numero_Plaza}` }))}
+                  options={plazasLibres.map(p => ({ value: p.id_plaza, label: `Plaza ${p.numero_plaza}` }))}
                   value={entradaForm.id_plaza}
                   onChange={(val) => setEntradaForm({ ...entradaForm, id_plaza: val })}
                   placeholder="— Seleccione una plaza libre —"
@@ -454,9 +464,9 @@ export default function AccesoManual() {
                 {(() => {
                   const busq = busquedaActivos.toLowerCase();
                   const filtrados = accesosActivos.filter(acc => {
-                    const placa = acc.vehiculos?.placa?.toLowerCase() || '';
-                    const vOwner = acc.vehiculos?.personas;
-                    const vGuest = acc.tickets?.id_visitante ? visitantes.find(v => v.id_visitante === acc.tickets.id_visitante)?.personas : null;
+                    const placa = acc.vehiculo?.placa?.toLowerCase() || '';
+                    const vOwner = acc.vehiculo?.persona;
+                    const vGuest = acc.ticket?.id_visitante ? visitantes.find(v => v.id_visitante === acc.ticket.id_visitante)?.persona : null;
                     const per = vOwner || vGuest;
 
                     const nombre = `${per?.nombre || ''} ${per?.apellido || ''}`.toLowerCase();
@@ -468,12 +478,12 @@ export default function AccesoManual() {
                   }
                   return filtrados.map((acc) => (
                     <tr key={acc.id_registro} className="hover:bg-gray-50 transition-colors">
-                      <td className="py-3 px-4 font-mono font-bold text-indigo-700 text-base">{acc.vehiculos?.placa}</td>
+                      <td className="py-3 px-4 font-mono font-bold text-indigo-700 text-base">{acc.vehiculo?.placa}</td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-gray-800">
                             {(() => {
-                                const vOwner = acc.vehiculos?.personas;
-                                const guestPersona = acc.tickets?.id_visitante ? visitantes.find(v => v.id_visitante === acc.tickets.id_visitante)?.personas : null;
+                                const vOwner = acc.vehiculo?.persona;
+                                const guestPersona = acc.ticket?.id_visitante ? visitantes.find(v => v.id_visitante === acc.ticket.id_visitante)?.persona : null;
                                 
                                 if (vOwner) return `${vOwner.nombre} ${vOwner.apellido}`;
                                 if (guestPersona) return (
@@ -485,18 +495,18 @@ export default function AccesoManual() {
                                 return 'Visitante';
                             })()}
                         </div>
-                        <div className="text-xs text-gray-500">{acc.vehiculos?.marcas_vehiculo?.nombre} {acc.vehiculos?.modelos_vehiculo?.nombre}</div>
+                        <div className="text-xs text-gray-500">{acc.vehiculo?.marca?.nombre} {acc.vehiculo?.modelo?.nombre}</div>
                       </td>
                       <td className="py-3 px-4 text-gray-600">
                         {(() => {
-                             const vOwner = acc.vehiculos?.personas;
-                             const vGuest = acc.tickets?.id_visitante ? visitantes.find(v => v.id_visitante === acc.tickets.id_visitante)?.personas : null;
+                             const vOwner = acc.vehiculo?.persona;
+                             const vGuest = acc.ticket?.id_visitante ? visitantes.find(v => v.id_visitante === acc.ticket.id_visitante)?.persona : null;
                              return vOwner?.telefono || vGuest?.telefono || <span className="text-gray-300 italic">—</span>;
                         })()}
                       </td>
                       <td className="py-3 px-4">
                         <span className="bg-gray-200 text-gray-800 px-2 py-1 rounded font-bold text-xs">
-                          {todasPlazas.find(p => p.Id_Plaza === acc.Id_Plaza)?.Numero_Plaza || 'N/A'}
+                          {todasPlazas.find(p => p.id_plaza === acc.id_plaza)?.numero_plaza || 'N/A'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-gray-600">{formatearFecha(acc.entrada_at)}</td>

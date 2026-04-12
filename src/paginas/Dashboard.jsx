@@ -28,8 +28,8 @@ export default function Dashboard() {
 
     const channel = supabase
       .channel('dashboard_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'plazas' }, () => loadDashboardData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'RESERVA' }, () => loadDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadDashboardData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reserva' }, () => loadDashboardData())
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -37,46 +37,46 @@ export default function Dashboard() {
 
   const loadDashboardData = async () => {
     try {
-      // 1. Obtener catálogos de estados
-      const { data: estados } = await supabase.from('estado_plaza').select('*');
+      // 1. Obtener catálogos de estados (contexto plaza)
+      const { data: estados } = await supabase.from('estado').select('*').eq('contexto', 'plaza');
 
       // 2. Obtener plazas
-      const { data: plazas } = await supabase.from('plazas').select('id_estado');
+      const { data: plazas } = await supabase.from('plaza').select('id_estado');
 
-      // 3. Obtener Reservas de la tabla RESERVA
+      // 3. Obtener Reservas de la tabla reserva
       const { count: reservasTablaCount } = await supabase
-        .from('RESERVA')
+        .from('reserva')
         .select('*', { count: 'exact', head: true })
-        .eq('id_estado', 1);
+        .eq('id_estado', estados?.find(e => e.nombre === 'Activa')?.id || 0);
 
-      const getId = (name) => estados?.find(e => e.nombre_estado.trim().toUpperCase() === name.toUpperCase())?.id_estado;
+      const getId = (name) => estados?.find(e => e.nombre.trim().toUpperCase() === name.toUpperCase())?.id;
 
-      const idLibre = getId('LIBRE');
-      const idOcupada = getId('OCUPADA');
-      const idReservada = getId('RESERVADA');
-      const idMantenimiento = getId('EN MANTENIMIENTO') || getId('FUERA_DE_SERVICIO');
-      const idAsignada = getId('ASIGNADA');
+      const idLibre = getId('Libre');
+      const idOcupada = getId('Ocupada');
+      const idReservada = getId('Reservada');
+      const idMantenimiento = getId('Mantenimiento') || getId('Fuera de Servicio');
+      const idAsignada = getId('Asignada');
 
       // Cálculos
       const total = plazas?.length || 0;
-      const ocupadas = plazas?.filter(p => p.id_estado === idOcupada).length || 0;
+      const ocupadasNum = plazas?.filter(p => p.id_estado === idOcupada).length || 0;
       const reservadasEnMapa = plazas?.filter(p => p.id_estado === idReservada).length || 0;
-      const mantenimiento = plazas?.filter(p => p.id_estado === idMantenimiento).length || 0;
-      const asignadas = plazas?.filter(p => p.id_estado === idAsignada).length || 0;
-      const libres = plazas?.filter(p => p.id_estado === idLibre || p.id_estado === null).length || 0;
+      const mantenimientoNum = plazas?.filter(p => p.id_estado === idMantenimiento).length || 0;
+      const asignadasNum = plazas?.filter(p => p.id_estado === idAsignada).length || 0;
+      const libresNum = plazas?.filter(p => p.id_estado === idLibre || p.id_estado === null).length || 0;
 
-      const reservasActivas = reservasTablaCount > 0 ? reservasTablaCount : reservadasEnMapa;
-      const personasActivas = ocupadas + asignadas + reservasActivas;
+      const reservasActivasNum = reservasTablaCount > 0 ? reservasTablaCount : reservadasEnMapa;
+      const personasActivasNum = ocupadasNum + asignadasNum + reservasActivasNum;
 
       setStats({
         totalPlazas: total,
-        ocupadas,
+        ocupadas: ocupadasNum,
         reservadas: reservadasEnMapa,
-        libres,
-        mantenimiento,
-        asignadas,
-        reservasActivas,
-        personasActivas
+        libres: libresNum,
+        mantenimiento: mantenimientoNum,
+        asignadas: asignadasNum,
+        reservasActivas: reservasActivasNum,
+        personasActivas: personasActivasNum
       });
 
     } catch (error) {
@@ -98,9 +98,9 @@ export default function Dashboard() {
       // Solo crear notificación una vez por sesión para no saturar la tabla
       if (!alertaYaEnviada.current) {
         alertaYaEnviada.current = true;
-        supabase.from('notificaciones').insert([{
-          Contenido: `Alerta de capacidad: el parqueo está al ${pct}% de ocupación (umbral configurado: ${umbral}%). Plazas libres: ${stats.libres}.`,
-          Leida: false,
+        supabase.from('notificacion').insert([{
+          contenido: `Alerta de capacidad: el parqueo está al ${pct}% de ocupación (umbral configurado: ${umbral}%). Plazas libres: ${stats.libres}.`,
+          leida: false,
           organizacion_id: orgId
         }]).then(({ error }) => { if (error) console.warn('Error alerta RF3:', error.message); });
       }

@@ -26,8 +26,8 @@ export default function RolesPermisosManager() {
         { data: rolesData, error: rolesErr },
         { data: modulosData, error: modulosErr }
       ] = await Promise.all([
-        supabase.from('roles').select('*').order('Id_Rol'),
-        supabase.from('modulos').select('*').order('orden')
+        supabase.from('rol').select('*').order('id_rol'),
+        supabase.from('modulo').select('*').order('id_modulo')
       ]);
 
       if (rolesErr) throw rolesErr;
@@ -58,9 +58,9 @@ export default function RolesPermisosManager() {
   }, []);
 
   const handleSelectRole = (rol) => {
-    setSelectedRoleId(rol.Id_Rol);
-    setSelectedRoleName(rol.Nombre_Rol);
-    loadPermisosDeRol(rol.Id_Rol);
+    setSelectedRoleId(rol.id_rol);
+    setSelectedRoleName(rol.nombre);
+    loadPermisosDeRol(rol.id_rol);
   };
 
   const handleTogglePermiso = async (permiso) => {
@@ -114,8 +114,8 @@ export default function RolesPermisosManager() {
     if (nombreRol?.trim()) {
       try {
         const { data, error } = await supabase
-          .from('roles')
-          .insert([{ Nombre_Rol: nombreRol.trim() }])
+          .from('rol')
+          .insert([{ nombre: nombreRol.trim() }])
           .select()
           .single();
 
@@ -147,11 +147,11 @@ export default function RolesPermisosManager() {
     if (confirm.isConfirmed) {
       try {
         // Primero borrar sus permisos
-        await supabase.from('roles_permisos').delete().eq('id_rol', roleId);
-        const { error } = await supabase.from('roles').delete().eq('Id_Rol', roleId);
+        await supabase.from('rol_permiso').delete().eq('id_rol', roleId);
+        const { error } = await supabase.from('rol').delete().eq('id_rol', roleId);
         if (error) throw error;
 
-        setRoles(prev => prev.filter(r => r.Id_Rol !== roleId));
+        setRoles(prev => prev.filter(r => r.id_rol !== roleId));
         if (selectedRoleId === roleId) {
           setSelectedRoleId(null);
           setSelectedRoleName('');
@@ -215,18 +215,18 @@ export default function RolesPermisosManager() {
         <div className="space-y-2 flex-grow overflow-y-auto">
           {roles.map(r => (
             <div
-              key={r.Id_Rol}
+              key={r.id_rol}
               onClick={() => handleSelectRole(r)}
               className={`flex justify-between items-center p-3 rounded-lg cursor-pointer transition-all border ${
-                selectedRoleId === r.Id_Rol
+                selectedRoleId === r.id_rol
                   ? 'bg-green-600 text-white border-green-700 shadow-md'
                   : 'bg-white hover:bg-gray-100 text-gray-700 border-gray-200'
               }`}
             >
-              <span className="font-medium truncate pr-2 text-sm">{r.Nombre_Rol}</span>
-              {selectedRoleId === r.Id_Rol && !['Administrador', 'Visitante'].includes(r.Nombre_Rol) && (
+              <span className="font-medium truncate pr-2 text-sm">{r.nombre}</span>
+              {selectedRoleId === r.id_rol && !['Administrador', 'Visitante'].includes(r.nombre) && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); handleDeleteRole(r.Id_Rol, r.Nombre_Rol); }}
+                  onClick={(e) => { e.stopPropagation(); handleDeleteRole(r.id_rol, r.nombre); }}
                   className="text-red-300 hover:text-red-100 transition shrink-0"
                   title="Eliminar Rol"
                 >

@@ -1,5 +1,3 @@
-
-
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
@@ -46,7 +44,7 @@ export default function Asignaciones() {
         const init = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-                const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+                const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
                 if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
             }
         };
@@ -60,9 +58,9 @@ export default function Asignaciones() {
         try {
             // 1. Cargar asignaciones
             const { data: asigData, error: asigError } = await supabase
-                .from('asignaciones_parqueo')
+                .from('asignacion')
                 .select('*')
-                .order('Fecha_Inicio', { ascending: false });
+                .order('fecha_inicio', { ascending: false });
 
             if (asigError) {
                 console.error("Error cargando asignaciones:", asigError);
@@ -72,27 +70,27 @@ export default function Asignaciones() {
             }
 
             const { data: todosEmpleados } = await supabase
-                .from('empleados')
-                .select('Id_Empleado, personas(nombre, apellido)');
+                .from('empleado')
+                .select('id_empleado, persona(nombre, apellido)');
             const todosEmpleadosOrdenados = (todosEmpleados || []).sort((a, b) => {
-                const na = `${a.personas?.nombre ?? ''} ${a.personas?.apellido ?? ''}`.toLowerCase();
-                const nb = `${b.personas?.nombre ?? ''} ${b.personas?.apellido ?? ''}`.toLowerCase();
+                const na = `${a.persona?.nombre ?? ''} ${a.persona?.apellido ?? ''}`.toLowerCase();
+                const nb = `${b.persona?.nombre ?? ''} ${b.persona?.apellido ?? ''}`.toLowerCase();
                 return na.localeCompare(nb);
             });
 
             // 3. Cargar todas las plazas (para mostrar en tabla)
             const { data: todasPlazas } = await supabase
-                .from('plazas')
-                .select('Id_Plaza, Numero_Plaza');
+                .from('plaza')
+                .select('id_plaza, numero_plaza');
 
             // 4. Unir datos manualmente
             const asignacionesConDatos = asigData.map(asig => {
-                const empleado = todosEmpleadosOrdenados?.find(e => e.Id_Empleado === asig.Id_Empleado_Asignado);
-                const plaza = todasPlazas?.find(p => p.Id_Plaza === asig.Id_Plaza);
+                const emp = todosEmpleadosOrdenados?.find(e => e.id_empleado === asig.id_empleado_asignado);
+                const plz = todasPlazas?.find(p => p.id_plaza === asig.id_plaza);
                 return {
                     ...asig,
-                    empleados: empleado || null,
-                    plazas: plaza || null
+                    empleado: emp || null,
+                    plaza: plz || null
                 };
             });
 
@@ -101,26 +99,26 @@ export default function Asignaciones() {
             // 4.1. Calcular conjunto de empleados que ya tienen plaza (solo activas)
             const ocupados = new Set(
                 (asigData || [])
-                .filter(a => a.id_estado === 1 && (!a.Fecha_Fin || new Date(a.Fecha_Fin) >= new Date(new Date().setHours(0,0,0,0))))
-                .map(a => a.Id_Empleado_Asignado)
+                .filter(a => a.id_estado === 1 && (!a.fecha_fin || new Date(a.fecha_fin) >= new Date(new Date().setHours(0,0,0,0))))
+                .map(a => a.id_empleado_asignado)
             );
             setEmpleadosConPlaza(ocupados);
 
             // 5. Empleados con persona_id para el selector
             const { data: empData } = await supabase
-                .from('empleados')
-                .select(`Id_Empleado, id_persona, personas ( nombre, apellido )`);
+                .from('empleado')
+                .select(`id_empleado, id_persona, persona ( nombre, apellido )`);
             const sortedEmpData = (empData || []).sort((a, b) => {
-                const na = `${a.personas?.nombre ?? ''} ${a.personas?.apellido ?? ''}`.toLowerCase();
-                const nb = `${b.personas?.nombre ?? ''} ${b.personas?.apellido ?? ''}`.toLowerCase();
+                const na = `${a.persona?.nombre ?? ''} ${a.persona?.apellido ?? ''}`.toLowerCase();
+                const nb = `${b.persona?.nombre ?? ''} ${b.persona?.apellido ?? ''}`.toLowerCase();
                 return na.localeCompare(nb);
             });
             setEmpleadosList(sortedEmpData);
 
             // 6. Mapa de vehículos por persona_id
             const { data: vehData } = await supabase
-                .from('vehiculos')
-                .select('id_vehiculo, id_persona, placa, marcas_vehiculo(nombre), colores_vehiculo(nombre)');
+                .from('vehiculo')
+                .select('id_vehiculo, id_persona, placa, marca(nombre), color(nombre)');
 
             const mapa = {};
             (vehData || []).forEach(v => {
@@ -130,12 +128,15 @@ export default function Asignaciones() {
             });
             setVehiculosMap(mapa);
 
-            // 7. Plazas libres para el selector (al crear, solo libres; al editar se añade la plaza actual)
+            // 7. Plazas libres para el selector
+            const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+            const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
             const { data: plazaData } = await supabase
-                .from('plazas')
-                .select('Id_Plaza, Numero_Plaza')
-                .eq('id_estado', 1)
-                .order('Numero_Plaza');
+                .from('plaza')
+                .select('id_plaza, numero_plaza')
+                .eq('id_estado', idEstLibrePlaza)
+                .order('numero_plaza');
             setPlazasList(plazaData || []);
 
         } catch (error) {
@@ -146,21 +147,21 @@ export default function Asignaciones() {
         }
     };
 
-    const registrarLog = async (tipo, descripcion) => {
+    const registrarLog = async (tipo_nombre, descripcion) => {
         if (!currentPersonaId) return;
         try {
-          const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+          const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
           const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Asignaciones').maybeSingle();
-          await supabase.from('eventos').insert([{ 
-            Fecha_Hora: new Date().toISOString(), 
-            Descripcion: descripcion, 
+          await supabase.from('evento').insert([{ 
+            fecha_hora: new Date().toISOString(), 
+            descripcion: descripcion, 
             id_persona: currentPersonaId, 
-            id_tipo_evento: te?.id_tipo || null, 
+            id_tipo: te?.id || null, 
             id_origen_evento: oe?.id_origen || null,
             organizacion_id: orgId
           }]);
         } catch (e) { console.warn('Log error:', e.message); }
-      };
+    };
 
     // Cuando el usuario selecciona un empleado, buscar su vehículo vinculado
     const handleEmpleadoChange = (idEmpleado) => {
@@ -169,7 +170,7 @@ export default function Asignaciones() {
             setVehiculoVinculado(null);
             return;
         }
-        const empleado = empleadosList.find(e => String(e.Id_Empleado) === String(idEmpleado));
+        const empleado = empleadosList.find(e => String(e.id_empleado) === String(idEmpleado));
         const vehiculo = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || null) : null;
         setVehiculoVinculado(vehiculo);
     };
@@ -184,29 +185,30 @@ export default function Asignaciones() {
     };
 
     // Abrir modal para EDITAR
-    const handleOpenEdit = async (asignacion) => {
-        setEditingAsignacion(asignacion);
+    const handleOpenEdit = async (asig) => {
+        setEditingAsignacion(asig);
 
-        // Buscar el vehículo del empleado actual
-        const empleado = empleadosList.find(e => e.Id_Empleado === asignacion.Id_Empleado_Asignado);
+        const empleado = empleadosList.find(e => e.id_empleado === asig.id_empleado_asignado);
         const vehiculo = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || null) : null;
         setVehiculoVinculado(vehiculo);
 
         setFormData({
-            Id_Empleado: String(asignacion.Id_Empleado_Asignado || ''),
-            Id_Plaza: String(asignacion.Id_Plaza || ''),
-            Fecha_Inicio: asignacion.Fecha_Inicio || new Date().toISOString().split('T')[0],
-            Fecha_Fin: asignacion.Fecha_Fin || '',
-            Notas: asignacion.Notas || ''
+            Id_Empleado: String(asig.id_empleado_asignado || ''),
+            Id_Plaza: String(asig.id_plaza || ''),
+            Fecha_Inicio: asig.fecha_inicio || new Date().toISOString().split('T')[0],
+            Fecha_Fin: asig.fecha_fin || '',
+            Notas: asig.notas || ''
         });
-        setIsPermanent(!asignacion.Fecha_Fin);
+        setIsPermanent(!asig.fecha_fin);
 
-        // Cargar plazas libres + la plaza actual de la asignación
+        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
         const { data: plazaData } = await supabase
-            .from('plazas')
-            .select('Id_Plaza, Numero_Plaza')
-            .or(`id_estado.eq.1,Id_Plaza.eq.${asignacion.Id_Plaza}`)
-            .order('Numero_Plaza');
+            .from('plaza')
+            .select('id_plaza, numero_plaza')
+            .or(`id_estado.eq.${idEstLibrePlaza},id_plaza.eq.${asig.id_plaza}`)
+            .order('numero_plaza');
         setPlazasList(plazaData || []);
 
         setShowModal(true);
@@ -220,7 +222,6 @@ export default function Asignaciones() {
         setIsPermanent(false);
     };
 
-    // CREAR asignación
     const handleCreate = async () => {
         if (!vehiculoVinculado) {
             return Swal.fire({
@@ -231,67 +232,51 @@ export default function Asignaciones() {
             });
         }
 
-        const { data: estadosCat } = await supabase.from('estado_plaza').select('id_estado, nombre_estado');
-        const estadoAsig = (estadosCat || []).find(e => 
-            e.nombre_estado.toUpperCase().includes('ASIGN') || 
-            e.nombre_estado.toUpperCase().includes('FIJA')
-        );
-        const idAsignada = estadoAsig?.id_estado || 2;
+        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+        const idAsignadaPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Asignado')?.id || 2;
 
-        const { error: insertError } = await supabase.from('asignaciones_parqueo').insert([{
-            Id_Empleado_Asignado: parseInt(formData.Id_Empleado),
-            Id_Plaza: parseInt(formData.Id_Plaza),
-            Fecha_Inicio: formData.Fecha_Inicio,
-            Fecha_Fin: isPermanent ? null : (formData.Fecha_Fin || null),
-            Notas: formData.Notas,
-            id_estado: 1,
+        const { error: insertError } = await supabase.from('asignacion').insert([{
+            id_empleado_asignado: parseInt(formData.Id_Empleado),
+            id_plaza: parseInt(formData.Id_Plaza),
+            fecha_inicio: formData.Fecha_Inicio,
+            fecha_fin: isPermanent ? null : (formData.Fecha_Fin || null),
+            notas: formData.Notas,
+            id_estado: 1, 
             organizacion_id: orgId
         }]);
         if (insertError) throw insertError;
 
-        await supabase.from('plazas').update({
-            id_estado: idAsignada
-        }).eq('Id_Plaza', formData.Id_Plaza);
+        await supabase.from('plaza').update({
+            id_estado: idAsignadaPlaza
+        }).eq('id_plaza', formData.Id_Plaza);
 
         Swal.fire('Éxito', 'Plaza asignada correctamente.', 'success');
     };
 
-    // EDITAR asignación
     const handleUpdate = async () => {
-        const plazaAnterior = editingAsignacion.Id_Plaza;
+        const plazaAnterior = editingAsignacion.id_plaza;
         const plazaNueva = parseInt(formData.Id_Plaza);
         const plazaCambia = plazaAnterior !== plazaNueva;
 
-        const { data: estadosCat } = await supabase.from('estado_plaza').select('id_estado, nombre_estado');
-        const estadoAsig = (estadosCat || []).find(e => 
-            e.nombre_estado.toUpperCase().includes('ASIGN') || 
-            e.nombre_estado.toUpperCase().includes('FIJA')
-        );
-        const idAsignada = estadoAsig?.id_estado || 2;
+        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+        const idAsignadaPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Asignado')?.id || 2;
+        const idLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
 
-        // Actualizar la asignación
         const { error: updateError } = await supabase
-            .from('asignaciones_parqueo')
+            .from('asignacion')
             .update({
-                Id_Empleado_Asignado: parseInt(formData.Id_Empleado),
-                Id_Plaza: plazaNueva,
-                Fecha_Inicio: formData.Fecha_Inicio,
-                Fecha_Fin: isPermanent ? null : (formData.Fecha_Fin || null),
-                Notas: formData.Notas,
+                id_empleado_asignado: parseInt(formData.Id_Empleado),
+                id_plaza: plazaNueva,
+                fecha_inicio: formData.Fecha_Inicio,
+                fecha_fin: isPermanent ? null : (formData.Fecha_Fin || null),
+                notas: formData.Notas,
             })
-            .eq('Id_Asignacion', editingAsignacion.Id_Asignacion);
+            .eq('id_asignacion', editingAsignacion.id_asignacion);
         if (updateError) throw updateError;
 
         if (plazaCambia) {
-            // Liberar la plaza anterior
-            await supabase.from('plazas').update({
-                id_estado: 1
-            }).eq('Id_Plaza', plazaAnterior);
-
-            // Asignar la nueva plaza
-            await supabase.from('plazas').update({
-                id_estado: idAsignada
-            }).eq('Id_Plaza', plazaNueva);
+            await supabase.from('plaza').update({ id_estado: idLibrePlaza }).eq('id_plaza', plazaAnterior);
+            await supabase.from('plaza').update({ id_estado: idAsignadaPlaza }).eq('id_plaza', plazaNueva);
         }
 
         Swal.fire('Actualizado', 'Asignación modificada correctamente.', 'success');
@@ -309,17 +294,13 @@ export default function Asignaciones() {
             } else {
                 await handleCreate();
             }
-            const emp = empleadosList.find(e => e.Id_Empleado === parseInt(formData.Id_Empleado));
-            const plz = plazasList.find(p => p.Id_Plaza === parseInt(formData.Id_Plaza));
+            const emp = empleadosList.find(e => e.id_empleado === parseInt(formData.Id_Empleado));
+            const plz = plazasList.find(p => p.id_plaza === parseInt(formData.Id_Plaza));
             registrarLog(
                 editingAsignacion ? 'Asignación Modificada' : 'Cambio de Estado', 
-                `${editingAsignacion ? 'Edición' : 'Creación'} de asignación de parqueo: Empleado ${emp?.personas?.nombre} ${emp?.personas?.apellido} en Plaza ${plz?.Numero_Plaza}`
+                `${editingAsignacion ? 'Edición' : 'Creación'} de asignación de parqueo: Empleado ${emp?.persona?.nombre} ${emp?.persona?.apellido} en Plaza ${plz?.numero_plaza}`
             );
-            setFormData(initialForm);
-            setVehiculoVinculado(null);
-            setIsPermanent(false);
-            setShowModal(false);
-            setEditingAsignacion(null);
+            handleCloseModal();
             loadData();
         } catch (error) {
             Swal.fire('Error', error.message, 'error');
@@ -328,7 +309,7 @@ export default function Asignaciones() {
         }
     };
 
-    const handleLiberar = async (asignacion) => {
+    const handleLiberarAsignacion = async (asig) => {
         const result = await Swal.fire({
             title: '¿Liberar Plaza?',
             text: "Se eliminará la asignación y la plaza quedará libre.",
@@ -340,15 +321,16 @@ export default function Asignaciones() {
 
         if (result.isConfirmed) {
             try {
-                const { error } = await supabase.from('asignaciones_parqueo').delete().eq('Id_Asignacion', asignacion.Id_Asignacion);
+                const { error } = await supabase.from('asignacion').delete().eq('id_asignacion', asig.id_asignacion);
                 if (error) throw error;
 
-                await supabase.from('plazas').update({
-                    id_estado: 1
-                }).eq('Id_Plaza', asignacion.Id_Plaza);
+                const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+                const idLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
+                await supabase.from('plaza').update({ id_estado: idLibrePlaza }).eq('id_plaza', asig.id_plaza);
 
                 Swal.fire('Liberado', 'La plaza está disponible nuevamente.', 'success');
-                registrarLog('Vehículo Eliminado', `Eliminación de asignación de parqueo para empleado ${asignacion.empleados?.personas?.nombre} ${asignacion.empleados?.personas?.apellido} en plaza ${asignacion.plazas?.Numero_Plaza}`);
+                registrarLog('Vehículo Eliminado', `Eliminación de asignación de parqueo para empleado ${asig.empleado?.persona?.nombre} ${asig.empleado?.persona?.apellido} en plaza ${asig.plaza?.numero_plaza}`);
                 loadData();
             } catch (error) {
                 Swal.fire('Error', error.message, 'error');
@@ -357,18 +339,13 @@ export default function Asignaciones() {
     };
 
     const filteredData = asignaciones.filter(item => {
-        const empData = item.empleados;
-        const nombre = empData?.personas?.nombre || empData?.nombre || '';
-        const apellido = empData?.personas?.apellido || empData?.apellido || '';
-        const plaza = item.plazas?.Numero_Plaza || '';
-        const fullString = `${nombre} ${apellido} ${plaza}`.toLowerCase();
+        const empData = item.empleado;
+        const nombre = empData?.persona?.nombre || empData?.nombre || '';
+        const apellido = empData?.persona?.apellido || empData?.apellido || '';
+        const plazaStr = item.plaza?.numero_plaza || '';
+        const fullString = `${nombre} ${apellido} ${plazaStr}`.toLowerCase();
         return fullString.includes(searchTerm.toLowerCase());
     });
-
-    // Plazas disponibles en el modal (incluye la actual si estamos editando)
-    const plazasDisponibles = editingAsignacion
-        ? plazasList  // ya cargadas con OR (libre OR plaza actual)
-        : plazasList;
 
     return (
         <Layout>
@@ -388,7 +365,6 @@ export default function Asignaciones() {
             </header>
 
             <div className="flex flex-col lg:flex-row gap-6">
-
                 <div className="flex-1 min-w-0">
                   <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-100">
                     <div className="flex justify-between items-center mb-4">
@@ -429,43 +405,37 @@ export default function Asignaciones() {
                                     <tr><td colSpan="6" className="text-center py-8 text-gray-500 italic">No hay asignaciones registradas.</td></tr>
                                 ) : (
                                     filteredData.map(item => (
-                                        <tr key={item.Id_Asignacion} className="hover:bg-purple-50/20 transition">
+                                        <tr key={item.id_asignacion} className="hover:bg-purple-50/20 transition">
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center gap-2">
                                                 <div className="bg-purple-100 p-2 rounded-full text-purple-600"><FaUserTie /></div>
-                                                {item.empleados ?
-                                                    `${item.empleados.personas?.nombre || ''} ${item.empleados.personas?.apellido || ''}`.trim()
+                                                {item.empleado ?
+                                                    `${item.empleado.persona?.nombre || ''} ${item.empleado.persona?.apellido || ''}`.trim()
                                                     : <span className="text-gray-400 italic font-normal">Sin datos</span>
                                                 }
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-purple-700">
-                                                {item.plazas?.Numero_Plaza || 'N/A'}
+                                                {item.plaza?.numero_plaza || 'N/A'}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                                 <div className="flex items-center gap-1">
                                                     <FaCalendarAlt className="text-gray-400" />
-                                                    {item.Fecha_Inicio ? new Date(item.Fecha_Inicio).toLocaleDateString() : '-'}
+                                                    {item.fecha_inicio ? new Date(item.fecha_inicio).toLocaleDateString() : '-'}
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {item.Fecha_Fin
-                                                    ? <span className="flex items-center gap-1"><FaCalendarAlt className="text-red-400" />{new Date(item.Fecha_Fin).toLocaleDateString()}</span>
+                                                {item.fecha_fin
+                                                    ? <span className="flex items-center gap-1"><FaCalendarAlt className="text-red-400" />{new Date(item.fecha_fin).toLocaleDateString()}</span>
                                                     : <span className="flex items-center gap-1 font-bold text-green-600"><FaCalendarAlt className="text-green-600"/> Indeterminada</span>}
                                             </td>
                                             <td className="px-6 py-4 text-sm text-gray-500 italic max-w-xs truncate">
-                                                {item.Notas || '-'}
+                                                {item.notes || '-'}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-right">
                                                 <div className="flex items-center justify-end gap-2">
-                                                    <button
-                                                        onClick={() => handleOpenEdit(item)}
-                                                        className="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded border border-blue-200 text-xs font-bold transition"
-                                                    >
+                                                    <button onClick={() => handleOpenEdit(item)} className="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded border border-blue-200 text-xs font-bold transition">
                                                         <FaEdit className="inline mr-1" /> Editar
                                                     </button>
-                                                    <button
-                                                        onClick={() => handleLiberar(item)}
-                                                        className="text-red-600 hover:bg-red-50 px-3 py-1 rounded border border-red-200 text-xs font-bold transition"
-                                                    >
+                                                    <button onClick={() => handleLiberarAsignacion(item)} className="text-red-600 hover:bg-red-50 px-3 py-1 rounded border border-red-200 text-xs font-bold transition">
                                                         <FaTrash className="inline mr-1" /> Liberar
                                                     </button>
                                                 </div>
@@ -476,7 +446,7 @@ export default function Asignaciones() {
                             </tbody>
                         </table>
                     </div>
-                    </div>
+                  </div>
                 </div>
 
                 {showModal && (
@@ -495,11 +465,11 @@ export default function Asignaciones() {
                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Empleado *</label>
                            <SearchableSelect
                              options={empleadosList.filter(emp => {
-                                 const esMismoEmpleado = editingAsignacion && parseInt(formData.Id_Empleado) === emp.Id_Empleado;
-                                 return !empleadosConPlaza.has(emp.Id_Empleado) || esMismoEmpleado;
+                                 const esMismoEmpleado = editingAsignacion && parseInt(formData.Id_Empleado) === emp.id_empleado;
+                                 return !empleadosConPlaza.has(emp.id_empleado) || esMismoEmpleado;
                              }).map(emp => ({
-                                 value: emp.Id_Empleado,
-                                 label: emp.personas ? `${emp.personas.nombre} ${emp.personas.apellido}` : `ID: ${emp.Id_Empleado}`
+                                 value: emp.id_empleado,
+                                 label: emp.persona ? `${emp.persona.nombre} ${emp.persona.apellido}` : `ID: ${emp.id_empleado}`
                              }))}
                              value={formData.Id_Empleado}
                              onChange={(val) => handleEmpleadoChange(val)}
@@ -510,7 +480,6 @@ export default function Asignaciones() {
                            />
                          </div>
 
-                         {/* Vehículo Vinculado (solo lectura) */}
                          {formData.Id_Empleado && (
                              <div className={`rounded-lg p-3 border flex items-start gap-3 ${vehiculoVinculado ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200'}`}>
                                  <div className={`mt-0.5 p-1.5 rounded-full ${vehiculoVinculado ? 'bg-purple-100 text-purple-600' : 'bg-gray-200 text-gray-400'}`}>
@@ -520,9 +489,9 @@ export default function Asignaciones() {
                                      <div>
                                          <p className="text-[10px] font-bold text-purple-700 uppercase tracking-wide mb-0.5">Vehículo Vinculado</p>
                                          <p className="text-sm font-bold text-gray-800 font-mono">{vehiculoVinculado.placa}</p>
-                                         {(vehiculoVinculado.marcas_vehiculo?.nombre || vehiculoVinculado.colores_vehiculo?.nombre) && (
+                                         {(vehiculoVinculado.marca?.nombre || vehiculoVinculado.color?.nombre) && (
                                              <p className="text-xs text-gray-500">
-                                                 {[vehiculoVinculado.marcas_vehiculo?.nombre, vehiculoVinculado.colores_vehiculo?.nombre].filter(Boolean).join(' · ')}
+                                                 {[vehiculoVinculado.marca?.nombre, vehiculoVinculado.color?.nombre].filter(Boolean).join(' · ')}
                                              </p>
                                          )}
                                      </div>
@@ -540,9 +509,9 @@ export default function Asignaciones() {
                                Plaza {editingAsignacion ? '(Disponibles + Actual)' : 'Disponible'} *
                            </label>
                            <SearchableSelect
-                             options={plazasDisponibles.map(p => ({
-                                 value: p.Id_Plaza,
-                                 label: `${p.Numero_Plaza}${editingAsignacion && String(p.Id_Plaza) === String(editingAsignacion.Id_Plaza) ? ' (actual)' : ''}`
+                             options={plazasList.map(p => ({
+                                 value: p.id_plaza,
+                                 label: `${p.numero_plaza}${editingAsignacion && String(p.id_plaza) === String(editingAsignacion.id_plaza) ? ' (actual)' : ''}`
                              }))}
                              value={formData.Id_Plaza}
                              onChange={(val) => setFormData({...formData, Id_Plaza: val})}
@@ -598,7 +567,6 @@ export default function Asignaciones() {
                    </section>
                 </aside>
                 )}
-
             </div>
         </Layout>
     );

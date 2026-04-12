@@ -47,10 +47,10 @@ export default function Sensores() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         // Obtener persona y organización de forma redundante (como en Tickets.jsx)
-        const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
         if (uData?.id_persona) {
           setCurrentPersonaId(uData.id_persona);
-          const { data: empData } = await supabase.from('empleados').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
+          const { data: empData } = await supabase.from('empleado').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
           if (empData?.organizacion_id) setLocalOrgId(empData.organizacion_id);
         }
       }
@@ -63,33 +63,33 @@ export default function Sensores() {
     setIsRefreshing(true);
     try {
       const { data: dispData, error } = await supabase
-        .from('dispositivos')
+        .from('dispositivo')
         .select(`
           *,
-          tipos_dispositivos(id_tipo, nombre_tipo, descripcion),
-          modelos_equipo_cat(id_modelo_equipo, nombre, id_marca, marcas_equipo(nombre)),
-          plazas(Id_Plaza, Numero_Plaza),
-          estado_sensor(id_estado, nombre_estado)
+          tipo:id_tipo(id, nombre, descripcion),
+          modelo:id_modelo_equipo(id, nombre, id_marca, marca(nombre)),
+          plaza:id_plaza(id_plaza, numero_plaza),
+          estado:id_estado(id, nombre)
         `)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setDispositivos(dispData || []);
 
-      const { data: plazaData } = await supabase.from('plazas').select('Id_Plaza, Numero_Plaza').order('Numero_Plaza');
+      const { data: plazaData } = await supabase.from('plaza').select('id_plaza, numero_plaza').order('numero_plaza');
       const plazasAsignadas = new Set((dispData || []).filter(d => d.id_plaza).map(d => d.id_plaza));
-      setPlazas((plazaData || []).filter(p => !plazasAsignadas.has(p.Id_Plaza)));
+      setPlazas((plazaData || []).filter(p => !plazasAsignadas.has(p.id_plaza)));
 
-      const { data: estSensor } = await supabase.from('estado_sensor').select('*').order('nombre_estado');
+      const { data: estSensor } = await supabase.from('estado').select('id, nombre').eq('contexto', 'dispositivo').order('nombre');
       setEstadosSensor(estSensor || []);
 
-      const { data: tTipos } = await supabase.from('tipos_dispositivos').select('*').order('nombre_tipo');
+      const { data: tTipos } = await supabase.from('tipo').select('*').eq('contexto', 'dispositivo').order('nombre');
       setListaTipos(tTipos || []);
 
-      const { data: tMarcas } = await supabase.from('marcas_equipo').select('*').order('nombre');
+      const { data: tMarcas } = await supabase.from('marca').select('*').order('nombre');
       setListaMarcas(tMarcas || []);
 
-      const { data: tModelos } = await supabase.from('modelos_equipo_cat').select('*').order('nombre');
+      const { data: tModelos } = await supabase.from('modelo').select('*').order('nombre');
       setListaModelos(tModelos || []);
       
     } catch (error) {
@@ -99,18 +99,18 @@ export default function Sensores() {
     }
   };
 
-  const registrarLog = async (tipo, descripcion, idPlaza = null, idDisp = null) => {
+  const registrarLog = async (tipo_nombre, descripcion, idPlaza = null, idDisp = null) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Hardware').maybeSingle();
       
-      await supabase.from('eventos').insert([{
-        Fecha_Hora: new Date().toISOString(),
-        Descripcion: descripcion,
-        Id_Plaza: idPlaza,
+      await supabase.from('evento').insert([{
+        fecha_hora: new Date().toISOString(),
+        descripcion: descripcion,
+        id_plaza: idPlaza,
         id_persona: currentPersonaId,
-        id_tipo_evento: te?.id_tipo || null,
+        id_tipo: te?.id || null,
         id_origen_evento: oe?.id_origen || null,
         id_dispositivo: idDisp,
         organizacion_id: orgId
@@ -122,7 +122,7 @@ export default function Sensores() {
     setEditingId(disp.id_dispositivo);
     
     let params = { param_frecuencia: 5, param_umbral: 10, param_timeout: 30 };
-    let descTexto = disp.tipos_dispositivos?.descripcion || '';
+    let descTexto = disp.tipo?.descripcion || '';
     try {
       if (descTexto.startsWith('{')) {
         const parsed = JSON.parse(descTexto);
@@ -137,7 +137,7 @@ export default function Sensores() {
 
     setFormData({
       id_tipo: disp.id_tipo || '',
-      id_marca: disp.modelos_equipo_cat?.id_marca || '',
+      id_marca: disp.modelo?.id_marca || '',
       id_modelo: disp.id_modelo_equipo || '',
       tipo_descripcion: disp.ubicacion || descTexto, // Preferir ubicacion de la tabla dispositivos
       id_plaza: disp.id_plaza || '',
@@ -153,8 +153,8 @@ export default function Sensores() {
     e.preventDefault();
     setLoading(true);
 
-    const tipoObj = listaTipos.find(t => t.id_tipo === parseInt(formData.id_tipo));
-    const esSensor = tipoObj?.nombre_tipo?.toLowerCase().includes('sensor');
+    const tipoObj = listaTipos.find(t => t.id === parseInt(formData.id_tipo));
+    const esSensor = tipoObj?.nombre?.toLowerCase().includes('sensor');
 
     try {
       if (esSensor) {
@@ -164,7 +164,7 @@ export default function Sensores() {
             umbral: parseInt(formData.param_umbral),
             timeout: parseInt(formData.param_timeout)
           });
-          await supabase.from('tipos_dispositivos').update({ descripcion: descripcionFinal }).eq('id_tipo', formData.id_tipo);
+          await supabase.from('tipo').update({ descripcion: descripcionFinal }).eq('id', formData.id_tipo);
       }
 
       const effectiveOrgId = localOrgId || orgId;
@@ -187,32 +187,32 @@ export default function Sensores() {
         const updateData = { ...dispData };
         delete updateData.organizacion_id;
 
-        const { error } = await supabase.from('dispositivos')
+        const { error } = await supabase.from('dispositivo')
           .update(updateData)
           .eq('id_dispositivo', editingId);
           
         if (error) throw error;
         
         // Log de actualización
-        const nuevoEstado = estadosSensor.find(e => e.id_estado === parseInt(formData.id_estado))?.nombre_estado;
+        const nuevoEstado = estadosSensor.find(e => e.id === parseInt(formData.id_estado))?.nombre;
         const tipoLog = parseInt(formData.id_estado) === 1 ? 'Dispositivo Online' : 
                       parseInt(formData.id_estado) === 3 ? 'Mantenimiento En Progreso' : 'Dispositivo Offline';
         
         await registrarLog(
           tipoLog,
-          `Estado actualizado de ${tipoObj?.nombre_tipo || 'Equipo'}: ${nuevoEstado}.`,
+          `Estado actualizado de ${tipoObj?.nombre || 'Equipo'}: ${nuevoEstado}.`,
           formData.id_plaza || null,
           editingId
         );
 
         Swal.fire('Éxito', 'Registro actualizado', 'success');
       } else {
-        const { data: nDisp, error } = await supabase.from('dispositivos').insert([dispData]).select('id_dispositivo').single();
+        const { data: nDisp, error } = await supabase.from('dispositivo').insert([dispData]).select('id_dispositivo').single();
         if (error) throw error;
         
         await registrarLog(
           'Dispositivo Online',
-          `Nuevo dispositivo registrado: ${tipoObj?.nombre_tipo || 'Equipo'}.`,
+          `Nuevo dispositivo registrado: ${tipoObj?.nombre || 'Equipo'}.`,
           formData.id_plaza || null,
           nDisp.id_dispositivo
         );
@@ -252,18 +252,18 @@ export default function Sensores() {
         // 1. Desvincular de Eventos y Mantenimientos para evitar error de Foreign Key
         // Usamos una promesa paralela para que sea más rápido
         await Promise.all([
-          supabase.from('eventos').update({ id_dispositivo: null }).eq('id_dispositivo', disp.id_dispositivo),
-          supabase.from('mantenimientos').update({ id_dispositivo: null }).eq('id_dispositivo', disp.id_dispositivo)
+          supabase.from('evento').update({ id_dispositivo: null }).eq('id_dispositivo', disp.id_dispositivo),
+          supabase.from('mantenimiento').update({ id_dispositivo: null }).eq('id_dispositivo', disp.id_dispositivo)
         ]);
 
         // 2. Ahora sí, borrar el dispositivo
-        const { error } = await supabase.from('dispositivos').delete().eq('id_dispositivo', disp.id_dispositivo);
+        const { error } = await supabase.from('dispositivo').delete().eq('id_dispositivo', disp.id_dispositivo);
         
         if (error) throw error;
 
         await registrarLog(
           'Dispositivo Offline',
-          `Dispositivo eliminado permanentemente: ${disp.tipos_dispositivos?.nombre_tipo || 'Equipo'}.`,
+          `Dispositivo eliminado permanentemente: ${disp.tipo?.nombre || 'Equipo'}.`,
           disp.id_plaza || null,
           null // Ya no existe el ID del dispositivo
         );
@@ -277,13 +277,13 @@ export default function Sensores() {
 
   const filteredDispositivos = dispositivos.filter(d => {
     const busqueda = searchTerm.toLowerCase();
-    const nombreTipo = (d.tipos_dispositivos?.nombre_tipo || "").toLowerCase();
-    const numeroPlaza = (d.plazas?.Numero_Plaza || "").toLowerCase();
+    const nombreTipo = (d.tipo?.nombre || "").toLowerCase();
+    const numeroPlaza = (d.plaza?.numero_plaza || "").toLowerCase();
     return nombreTipo.includes(busqueda) || numeroPlaza.includes(busqueda);
   });
 
-  const tipoActual = listaTipos.find(t => t.id_tipo === parseInt(formData.id_tipo));
-  const esSensor = tipoActual?.nombre_tipo?.toLowerCase().includes('sensor');
+  const tipoActual = listaTipos.find(t => t.id === parseInt(formData.id_tipo));
+  const esSensor = tipoActual?.nombre?.toLowerCase().includes('sensor');
 
   return (
     <Layout>
@@ -340,28 +340,28 @@ export default function Sensores() {
                   {filteredDispositivos.map((disp) => (
                     <tr key={disp.id_dispositivo} className="hover:bg-gray-50/50 transition duration-150 group">
                       <td className="px-6 py-4">
-                        <div className="font-bold text-gray-900 uppercase text-xs">{disp.tipos_dispositivos?.nombre_tipo}</div>
+                        <div className="font-bold text-gray-900 uppercase text-xs">{disp.tipo?.nombre}</div>
                         <div className="text-[10px] text-gray-400 italic font-medium">{disp.ubicacion || '-'}</div>
                       </td>
                       <td className="px-6 py-4 font-medium text-gray-600 text-xs">
-                        {disp.modelos_equipo_cat?.marcas_equipo?.nombre} - {disp.modelos_equipo_cat?.nombre}
+                        {disp.modelo?.marca?.nombre} - {disp.modelo?.nombre}
                       </td>
                       <td className="px-6 py-4">
-                        {disp.plazas && (
+                        {disp.plaza && (
                           <div className="inline-flex items-center gap-1.5 bg-[#2eb17b]/10 border border-[#2eb17b] px-2.5 py-0.5 rounded-md shadow-sm">
                             <span className="text-[9px] font-black text-[#2eb17b] uppercase tracking-tighter">Plaza</span>
-                            <span className="text-sm font-black text-[#2eb17b]">{disp.plazas.Numero_Plaza}</span>
+                            <span className="text-sm font-black text-[#2eb17b]">{disp.plaza.numero_plaza}</span>
                           </div>
                         )}
                       </td>
                       <td className="px-6 py-4">
-                        {disp.estado_sensor ? (
+                        {disp.estado ? (
                           <span className={`px-2 py-0.5 rounded font-bold text-[10px] border uppercase tracking-tighter ${
                             disp.id_estado === 1 ? 'bg-green-50 text-green-700 border-green-200' :
                             disp.id_estado === 3 ? 'bg-orange-50 text-orange-700 border-orange-200' :
                             'bg-red-50 text-red-700 border-red-200'
                           }`}>
-                            {disp.estado_sensor.nombre_estado}
+                            {disp.estado.nombre}
                           </span>
                         ) : <span className="text-gray-300 text-[10px] italic">N/A</span>}
                       </td>
@@ -393,7 +393,7 @@ export default function Sensores() {
               <div>
                 <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo de Equipo *</label>
                 <SearchableSelect 
-                  options={listaTipos.map(t => ({ value: t.id_tipo, label: t.nombre_tipo }))}
+                  options={listaTipos.map(t => ({ value: t.id, label: t.nombre }))}
                   value={formData.id_tipo} 
                   onChange={val => setFormData({ ...formData, id_tipo: val })} 
                   placeholder="— Seleccionar Tipo —"
@@ -418,7 +418,7 @@ export default function Sensores() {
                 <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Marca *</label>
                   <SearchableSelect 
-                    options={listaMarcas.map(m => ({ value: m.id_marca, label: m.nombre }))}
+                    options={listaMarcas.map(m => ({ value: m.id, label: m.nombre }))}
                     value={formData.id_marca} 
                     onChange={val => setFormData({ ...formData, id_marca: val, id_modelo: '' })} 
                     placeholder="— Marca —"
@@ -438,7 +438,7 @@ export default function Sensores() {
                   >
                     <option value="">— Modelo —</option>
                     {listaModelos.filter(m => m.id_marca === parseInt(formData.id_marca)).map(m => (
-                      <option key={m.id_modelo_equipo} value={m.id_modelo_equipo}>{m.nombre}</option>
+                      <option key={m.id} value={m.id}>{m.nombre}</option>
                     ))}
                   </select>
                 </div>
@@ -453,8 +453,8 @@ export default function Sensores() {
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Vincular Plaza</label>
                   <select className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" value={formData.id_plaza} onChange={e => setFormData({ ...formData, id_plaza: e.target.value })}>
                     <option value="">— Ninguna —</option>
-                    {plazas.map(p => <option key={p.Id_Plaza} value={p.Id_Plaza}>{p.Numero_Plaza}</option>)}
-                    {editingId && formData.id_plaza && !plazas.find(p => String(p.Id_Plaza) === String(formData.id_plaza)) && (
+                    {plazas.map(p => <option key={p.id_plaza} value={p.id_plaza}>{p.numero_plaza}</option>)}
+                    {editingId && formData.id_plaza && !plazas.find(p => String(p.id_plaza) === String(formData.id_plaza)) && (
                       <option value={formData.id_plaza}>Plaza asignada</option>
                     )}
                   </select>
@@ -468,7 +468,7 @@ export default function Sensores() {
                       <label className="block text-[10px] font-black text-purple-600 mb-1 uppercase tracking-widest">Estado (Sensor)</label>
                       <select className="border p-2 rounded-lg w-full text-sm bg-purple-50 border-purple-200 outline-none focus:ring-2 focus:ring-purple-200 font-bold" value={formData.id_estado} onChange={e => setFormData({ ...formData, id_estado: e.target.value })} required>
                         <option value="">-- Seleccionar Estado --</option>
-                        {estadosSensor.map(est => <option key={est.id_estado} value={est.id_estado}>{est.nombre_estado}</option>)}
+                        {estadosSensor.map(est => <option key={est.id} value={est.id}>{est.nombre}</option>)}
                       </select>
                     </div>
 
@@ -494,7 +494,7 @@ export default function Sensores() {
                   <div>
                     <label className="block text-[10px] font-black text-blue-600 mb-1 uppercase tracking-widest">Estado Operativo</label>
                     <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-blue-500 bg-white font-bold" value={formData.id_estado} onChange={e => setFormData({ ...formData, id_estado: e.target.value })}>
-                      {estadosSensor.map(est => <option key={est.id_estado} value={est.id_estado}>{est.nombre_estado}</option>)}
+                      {estadosSensor.map(est => <option key={est.id} value={est.id}>{est.nombre}</option>)}
                     </select>
                   </div>
                 )}

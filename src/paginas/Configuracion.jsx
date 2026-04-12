@@ -24,10 +24,10 @@ export default function Configuracion() {
         const init = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-                const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+                const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
                 if (uData?.id_persona) {
                     setCurrentPersonaId(uData.id_persona);
-                    const { data: empData } = await supabase.from('empleados').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
+                    const { data: empData } = await supabase.from('empleado').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
                     if (empData?.organizacion_id) setOrgId(empData.organizacion_id);
                 }
             }
@@ -43,16 +43,16 @@ export default function Configuracion() {
         Swal.fire({ title: 'Guardado', text: 'Configuración actualizada.', icon: 'success', timer: 1500, showConfirmButton: false });
     };
 
-    const registrarLog = async (tipo, descripcion) => {
+    const registrarLog = async (tipo_nombre, descripcion) => {
         if (!currentPersonaId) return;
         try {
-          const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+          const { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
           const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Configuración').maybeSingle();
-          await supabase.from('eventos').insert([{ 
-            Fecha_Hora: new Date().toISOString(), 
-            Descripcion: descripcion, 
+          await supabase.from('evento').insert([{ 
+            fecha_hora: new Date().toISOString(), 
+            descripcion: descripcion, 
             id_persona: currentPersonaId, 
-            id_tipo_evento: te?.id_tipo || null, 
+            id_tipo: te?.id || null, 
             id_origen_evento: oe?.id_origen || null,
             organizacion_id: orgId
           }]);
@@ -79,10 +79,10 @@ export default function Configuracion() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            // 1. Obtener datos base del usuario (id_persona y rol_id)
+            // 1. Obtener datos base del usuario (id_persona y id_rol)
             const { data: uData, error: uErr } = await supabase
-                .from('usuarios')
-                .select('id_persona, rol_id')
+                .from('usuario')
+                .select('id_persona, id_rol')
                 .eq('id', user.id)
                 .maybeSingle();
 
@@ -95,7 +95,7 @@ export default function Configuracion() {
             // 2. Obtener nombre de la persona
             if (uData?.id_persona) {
                 const { data: pData } = await supabase
-                    .from('personas')
+                    .from('persona')
                     .select('nombre, apellido')
                     .eq('id_persona', uData.id_persona)
                     .maybeSingle();
@@ -106,13 +106,13 @@ export default function Configuracion() {
             }
 
             // 3. Obtener nombre del rol
-            if (uData?.rol_id) {
+            if (uData?.id_rol) {
                 const { data: rData } = await supabase
-                    .from('roles')
-                    .select('Nombre_Rol')
-                    .eq('Id_Rol', uData.rol_id)
+                    .from('rol')
+                    .select('nombre_rol')
+                    .eq('id_rol', uData.id_rol)
                     .maybeSingle();
-                if (rData) nombreRol = rData.Nombre_Rol;
+                if (rData) nombreRol = rData.nombre_rol;
             }
 
             // 4. Fallback si no hay nombre en 'personas' (usar metadata de Supabase Auth)

@@ -23,7 +23,7 @@ export function RbacProvider({ children, session }) {
 
       // ── 1. Obtener rol_id del usuario (su propia fila — siempre accesible) ──
       const { data: usuarioData, error: uError } = await supabase
-        .from('usuarios')
+        .from('usuario')
         .select('rol_id')
         .eq('id', session.user.id)
         .single();
@@ -43,14 +43,14 @@ export function RbacProvider({ children, session }) {
 
       // ── 2. Leer nombre del rol por separado (evita el bug de join en PostgREST con RLS) ──
       const { data: rolData, error: rolError } = await supabase
-        .from('roles')
-        .select('"Nombre_Rol"')
-        .eq('"Id_Rol"', rolId)
+        .from('rol')
+        .select('nombre')
+        .eq('id_rol', rolId)
         .maybeSingle();
 
       // Si roles tiene RLS restrictivo y falla, caemos al plan B:
       // comparamos directamente el id con los conocidos (no ideal, pero funciona de emergencia)
-      let nombreRol = rolData?.Nombre_Rol ?? null;
+      let nombreRol = rolData?.nombre ?? null;
 
       if (rolError) {
         console.warn('RbacContext: no se pudo leer roles con RLS, fallback por id:', rolError.message);
@@ -63,7 +63,7 @@ export function RbacProvider({ children, session }) {
       if (_esAdmin) {
         // Cargamos módulos igual para poder mostrar la barra lateral correctamente
         const { data: modulosData } = await supabase
-          .from('modulos')
+          .from('modulo')
           .select('*')
           .eq('activo', true);
         setModulos(modulosData || []);
@@ -78,9 +78,9 @@ export function RbacProvider({ children, session }) {
         { data: permisosData, error: pError },
         { data: modulosData,  error: mError }
       ] = await Promise.all([
-        supabase.from('roles_permisos').select('*').eq('id_rol', rolId),
-        supabase.from('permisos').select('*'),
-        supabase.from('modulos').select('*').eq('activo', true)
+        supabase.from('rol_permiso').select('*').eq('id_rol', rolId),
+        supabase.from('permiso').select('*'),
+        supabase.from('modulo').select('*').eq('activo', true)
       ]);
 
       if (rpError)  console.warn('RbacContext: roles_permisos:', rpError.message);

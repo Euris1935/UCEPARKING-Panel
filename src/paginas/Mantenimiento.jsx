@@ -42,7 +42,7 @@ export default function Mantenimiento() {
         const getPersona = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-                const { data } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+                const { data } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
                 if (data) setCurrentPersonaId(data.id_persona);
             }
         };
@@ -56,56 +56,56 @@ export default function Mantenimiento() {
         try {
 
             const { data: mantData, error } = await supabase
-                .from('mantenimientos')
+                .from('mantenimiento')
                 .select(`
-                Id_Mantenimiento,
-                Fecha_Inicio,
-                Fecha_Fin,
-                Descripcion_Problema,
+                id,
+                fecha_inicio,
+                fecha_fin,
+                descripcion,
                 id_dispositivo,
-                ID_Empleado_Tecnico,
-                id_tipo_mantenimiento,
+                id_tecnico,
+                id_tipo,
                 id_estado,
-                estado_mantenimiento ( nombre_estado ),
-                tipo_mantenimiento ( nombre_tipo ),
-                dispositivos ( 
+                estado ( nombre ),
+                tipo ( nombre ),
+                dispositivo ( 
                     id_dispositivo,
                     id_plaza,
                     ubicacion, 
-                    tipos_dispositivos ( nombre_tipo ) 
+                    tipo ( nombre ) 
                 ),
-                empleados ( 
-                    Id_Empleado,
-                    personas ( nombre, apellido ) 
+                empleado ( 
+                    id_empleado,
+                    persona ( nombre, apellido ) 
                 )
             `)
-                .order('Fecha_Inicio', { ascending: false });
+                .order('fecha_inicio', { ascending: false });
 
             if (error) throw error;
             setMantenimientos(mantData || []);
 
-            // Calcular qué dispositivos tienen un mantenimiento activo (sin Fecha_Fin)
+            // Calcular qué dispositivos tienen un mantenimiento activo (sin fecha_fin)
             const ocupados = new Set(
                 (mantData || [])
-                    .filter(m => !m.Fecha_Fin)
+                    .filter(m => !m.fecha_fin)
                     .map(m => m.id_dispositivo)
             );
             setDispositivosOcupados(ocupados);
 
 
             const { data: dispData, error: dispError } = await supabase
-                .from('dispositivos')
-                .select('id_dispositivo, id_plaza, ubicacion, id_estado, tipos_dispositivos(nombre_tipo), modelos_equipo_cat(nombre, marcas_equipo(nombre))')
+                .from('dispositivo')
+                .select('id_dispositivo, id_plaza, ubicacion, id_estado, tipo(nombre), modelo(nombre, marca(nombre))')
                 .order('ubicacion', { ascending: true });
             if (dispError) console.warn('Error cargando dispositivos:', dispError.message);
-            const { data: empData } = await supabase.from('empleados').select('Id_Empleado, personas(nombre, apellido)');
-            const { data: tipoData } = await supabase.from('tipo_mantenimiento').select('*').order('nombre_tipo');
-            const { data: estData } = await supabase.from('estado_mantenimiento').select('*').order('nombre_estado');
+            const { data: empData } = await supabase.from('empleado').select('id_empleado, persona(nombre, apellido)');
+            const { data: tipoData } = await supabase.from('tipo').select('*').eq('contexto', 'mantenimiento').order('nombre');
+            const { data: estData } = await supabase.from('estado').select('*').eq('contexto', 'mantenimiento').order('nombre');
 
             setDispositivos(dispData || []);
             setTecnicos((empData || []).sort((a, b) => {
-                const na = `${a.personas?.nombre ?? ''} ${a.personas?.apellido ?? ''}`.toLowerCase();
-                const nb = `${b.personas?.nombre ?? ''} ${b.personas?.apellido ?? ''}`.toLowerCase();
+                const na = `${a.persona?.nombre ?? ''} ${a.persona?.apellido ?? ''}`.toLowerCase();
+                const nb = `${b.persona?.nombre ?? ''} ${b.persona?.apellido ?? ''}`.toLowerCase();
                 return na.localeCompare(nb);
             }));
             setTiposMantenimiento(tipoData || []);
@@ -119,38 +119,38 @@ export default function Mantenimiento() {
         }
     };
 
-    const registrarLog = async (tipo, descripcion, idDispositivo = null, idPlaza = null) => {
+    const registrarLog = async (tipo_nombre, descripcion, idDispositivo = null, idPlaza = null) => {
         if (!currentPersonaId) return;
         try {
             // #RF10: Fallback dinámico para evitar N/A en logs
-            let { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+            let { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
             if (!te) {
-                const { data: fallback } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', 'Mantenimiento Iniciado').maybeSingle();
+                const { data: fallback } = await supabase.from('tipo').select('id').eq('nombre', 'Mantenimiento Iniciado').eq('contexto', 'evento').maybeSingle();
                 te = fallback;
             }            const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Mantenimiento').maybeSingle();
-            await supabase.from('eventos').insert([{
-                Fecha_Hora: new Date().toISOString(),
-                Descripcion: descripcion,
+            await supabase.from('evento').insert([{
+                fecha_hora: new Date().toISOString(),
+                descripcion: descripcion,
                 id_persona: currentPersonaId,
-                id_tipo_evento: te?.id_tipo || null,
+                id_tipo: te?.id || null,
                 id_origen_evento: oe?.id_origen || null,
                 id_dispositivo: idDispositivo,
-                Id_Plaza: idPlaza,
+                id_plaza: idPlaza,
                 organizacion_id: orgId
             }]);
         } catch (err) { console.warn('Error log:', err.message); }
     };
 
     const handleEdit = (item) => {
-        setEditingId(item.Id_Mantenimiento);
+        setEditingId(item.id);
         setFormData({
-            descripcion: item.Descripcion_Problema || '',
+            descripcion: item.descripcion || '',
             id_dispositivo: item.id_dispositivo || '',
-            id_tecnico: item.ID_Empleado_Tecnico || '',
-            id_tipo: item.id_tipo_mantenimiento || '',
+            id_tecnico: item.id_tecnico || '',
+            id_tipo: item.id_tipo || '',
             id_estado: item.id_estado || '',
-            fecha_inicio: item.Fecha_Inicio ? item.Fecha_Inicio.split('T')[0] : '',
-            fecha_fin: item.Fecha_Fin ? item.Fecha_Fin.split('T')[0] : ''
+            fecha_inicio: item.fecha_inicio ? item.fecha_inicio.split('T')[0] : '',
+            fecha_fin: item.fecha_fin ? item.fecha_fin.split('T')[0] : ''
         });
         setShowModal(true);
     };
@@ -168,7 +168,7 @@ export default function Mantenimiento() {
 
         if (result.isConfirmed) {
             try {
-                const { error } = await supabase.from('mantenimientos').delete().eq('Id_Mantenimiento', id);
+                const { error } = await supabase.from('mantenimiento').delete().eq('id', id);
                 if (error) throw error;
                 Swal.fire('Eliminado', 'El registro ha sido borrado.', 'success');
                 loadData();
@@ -182,10 +182,10 @@ export default function Mantenimiento() {
         e.preventDefault();
         setLoading(true);
         try {
-            const estadoCompletadoId = estadosMantenimiento.find(e => e.nombre_estado?.toLowerCase().includes('completado'))?.id_estado;
-            const estadoInicialId = estadosMantenimiento.find(e => e.nombre_estado?.toLowerCase().includes('pendiente'))?.id_estado || 1;
+            const estadoCompletadoId = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('completado'))?.id;
+            const estadoInicialId = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('pendiente'))?.id || 1;
             const nuevoEstadoId = parseInt(formData.id_estado);
-            const nombreEstadoActual = estadosMantenimiento.find(e => e.id_estado === nuevoEstadoId)?.nombre_estado || 'Actualizado';
+            const nombreEstadoActual = estadosMantenimiento.find(e => e.id === nuevoEstadoId)?.nombre || 'Actualizado';
 
             // Mapear nombre del estado al tipo de evento correspondiente
             const ESTADO_A_EVENTO = {
@@ -200,23 +200,23 @@ export default function Mantenimiento() {
                 : 'Mantenimiento Iniciado';
 
             const payload = {
-                Descripcion_Problema: formData.descripcion,
-                Fecha_Inicio: formData.fecha_inicio,
+                descripcion: formData.descripcion,
+                fecha_inicio: formData.fecha_inicio,
                 id_dispositivo: parseInt(formData.id_dispositivo),
-                ID_Empleado_Tecnico: parseInt(formData.id_tecnico),
-                id_tipo_mantenimiento: parseInt(formData.id_tipo),
+                id_tecnico: parseInt(formData.id_tecnico),
+                id_tipo: parseInt(formData.id_tipo),
                 id_estado: editingId ? nuevoEstadoId : estadoInicialId,
-                Fecha_Fin: formData.fecha_fin || null,
+                fecha_fin: formData.fecha_fin || null,
                 // RLS Fix: solo enviar orgId si existe y añadir id_persona
                 ...(orgId ? { organizacion_id: orgId } : {})
             };
 
             let error;
             if (editingId) {
-                const { error: updateError } = await supabase.from('mantenimientos').update(payload).eq('Id_Mantenimiento', editingId);
+                const { error: updateError } = await supabase.from('mantenimiento').update(payload).eq('id', editingId);
                 error = updateError;
             } else {
-                const { error: insertError } = await supabase.from('mantenimientos').insert([payload]);
+                const { error: insertError } = await supabase.from('mantenimiento').insert([payload]);
                 error = insertError;
             }
 
@@ -227,7 +227,7 @@ export default function Mantenimiento() {
             const idPlazaLog = disp?.id_plaza || null;
             await registrarLog(
                 nombreEventoLog,
-                `${editingId ? 'Actualización' : 'Nueva solicitud'} de mantenimiento (Estado: ${nombreEstadoActual}): "${formData.descripcion}" en dispositivo ${disp?.tipos_dispositivos?.nombre_tipo || 'desconocido'}.`,
+                `${editingId ? 'Actualización' : 'Nueva solicitud'} de mantenimiento (Estado: ${nombreEstadoActual}): "${formData.descripcion}" en dispositivo ${disp?.tipo?.nombre || 'desconocido'}.`,
                 parseInt(formData.id_dispositivo),
                 idPlazaLog
             );
@@ -268,30 +268,30 @@ export default function Mantenimiento() {
 
         if (confirm) {
             // Buscar ID de estado Completado (con fallback)
-            const idCompletado = estadosMantenimiento.find(e => e.nombre_estado?.toLowerCase().includes('completado'))?.id_estado || null;
+            const idCompletado = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('completado'))?.id || null;
             const fechaFin = new Date().toISOString();
 
             const updatePayload = { 
-                Fecha_Fin: fechaFin
+                fecha_fin: fechaFin
             };
             if (idCompletado) updatePayload.id_estado = idCompletado;
 
-            const { error } = await supabase.from('mantenimientos').update(updatePayload).eq('Id_Mantenimiento', id);
+            const { error } = await supabase.from('mantenimiento').update(updatePayload).eq('id', id);
 
             if (!error) {
                 // Actualizar UI inmediatamente sin esperar reload
                 setResueltosIds(prev => new Set([...prev, id]));
                 setMantenimientos(prev => prev.map(m => 
-                    m.Id_Mantenimiento === id ? { ...m, Fecha_Fin: fechaFin, id_estado: idCompletado || m.id_estado } : m
+                    m.id === id ? { ...m, fecha_fin: fechaFin, id_estado: idCompletado || m.id_estado } : m
                 ));
                 
                 // Log automático (RF10)
-                const mant = mantenimientos.find(m => m.Id_Mantenimiento === id);
-                const idDisp = mant?.dispositivos?.id_dispositivo || mant?.id_dispositivo || null;
-                const idPlaza = mant?.dispositivos?.id_plaza || null;
+                const mant = mantenimientos.find(m => m.id === id);
+                const idDisp = mant?.dispositivo?.id_dispositivo || mant?.id_dispositivo || null;
+                const idPlaza = mant?.dispositivo?.id_plaza || null;
                 await registrarLog(
                     'Mantenimiento Completado',
-                    `Mantenimiento ID-${id} marcado como COMPLETADO. Dispositivo: ${mant?.dispositivos?.tipos_dispositivos?.nombre_tipo || 'N/A'}.`,
+                    `Mantenimiento ID-${id} marcado como COMPLETADO. Dispositivo: ${mant?.dispositivo?.tipo?.nombre || 'N/A'}.`,
                     idDisp,
                     idPlaza
                 );
@@ -303,9 +303,9 @@ export default function Mantenimiento() {
 
     // Filtrado
     const filteredItems = mantenimientos.filter(m =>
-        m.Descripcion_Problema.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (m.empleados?.personas?.nombre + ' ' + m.empleados?.personas?.apellido).toLowerCase().includes(searchTerm.toLowerCase()) ||
-        m.dispositivos?.tipos_dispositivos?.nombre_tipo.toLowerCase().includes(searchTerm.toLowerCase())
+        m.descripcion.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (m.empleado?.persona?.nombre + ' ' + m.empleado?.persona?.apellido).toLowerCase().includes(searchTerm.toLowerCase()) ||
+        m.dispositivo?.tipo?.nombre.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     return (
@@ -370,32 +370,32 @@ export default function Mantenimiento() {
                                         <tr><td colSpan="7" className="text-center py-8 text-sm italic text-gray-500">No hay mantenimientos registrados.</td></tr>
                                     ) : (
                                         filteredItems.map((item) => {
-                                            const isResuelto = !!item.Fecha_Fin || resueltosIds.has(item.Id_Mantenimiento);
+                                            const isResuelto = !!item.fecha_fin || resueltosIds.has(item.id);
                                             
                                             return (
-                                                <tr key={item.Id_Mantenimiento} className={`transition duration-150 ${isResuelto ? 'bg-gray-50 text-gray-400 opacity-75' : 'hover:bg-blue-50/20 group'}`}>
+                                                <tr key={item.id} className={`transition duration-150 ${isResuelto ? 'bg-gray-50 text-gray-400 opacity-75' : 'hover:bg-blue-50/20 group'}`}>
                                                     <td className="px-6 py-4">
-                                                        <div className="text-xs font-bold text-gray-900 uppercase">{item.dispositivos?.tipos_dispositivos?.nombre_tipo || 'Dispositivo Desconocido'}</div>
-                                                        <div className="text-[10px] text-gray-500 italic mt-0.5">{item.dispositivos?.ubicacion || 'Sin ubicación'}</div>
+                                                        <div className="text-xs font-bold text-gray-900 uppercase">{item.dispositivo?.tipo?.nombre || 'Dispositivo Desconocido'}</div>
+                                                        <div className="text-[10px] text-gray-500 italic mt-0.5">{item.dispositivo?.ubicacion || 'Sin ubicación'}</div>
                                                     </td>
-                                                    <td className="px-6 py-4 text-xs font-medium text-gray-600 max-w-xs truncate" title={item.Descripcion_Problema}>
-                                                        {item.Descripcion_Problema}
+                                                    <td className="px-6 py-4 text-xs font-medium text-gray-600 max-w-xs truncate" title={item.descripcion}>
+                                                        {item.descripcion}
                                                     </td>
                                                     <td className="px-6 py-4">
-                                                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${item.tipo_mantenimiento?.nombre_tipo === 'Preventivo'
+                                                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${item.tipo?.nombre === 'Preventivo'
                                                             ? 'bg-blue-50 text-blue-700 border-blue-200'
                                                             : 'bg-orange-50 text-orange-700 border-orange-200'
                                                             }`}>
-                                                            {item.tipo_mantenimiento?.nombre_tipo || 'N/A'}
+                                                            {item.tipo?.nombre || 'N/A'}
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 text-xs font-bold text-gray-700 uppercase">
-                                                        {item.empleados?.personas?.nombre} {item.empleados?.personas?.apellido}
+                                                        {item.empleado?.persona?.nombre} {item.empleado?.persona?.apellido}
                                                     </td>
                                                     <td className="px-6 py-4 text-xs font-medium text-gray-500">
                                                         <div className="flex items-center gap-1.5">
                                                             <FaCalendarAlt className="text-gray-400" />
-                                                            {new Date(item.Fecha_Inicio).toLocaleDateString()}
+                                                            {new Date(item.fecha_inicio).toLocaleDateString()}
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4">
@@ -403,7 +403,7 @@ export default function Mantenimiento() {
                                                             ? 'bg-green-50 text-green-700 border-green-200'
                                                             : 'bg-yellow-50 text-yellow-700 border-yellow-200'
                                                             }`}>
-                                                            {item.estado_mantenimiento?.nombre_estado || 'N/A'}
+                                                            {item.estado?.nombre || 'N/A'}
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 text-center">
@@ -411,7 +411,7 @@ export default function Mantenimiento() {
                                                             {!isResuelto ? (
                                                                 <>
                                                                     <button
-                                                                        onClick={() => handleResolve(item.Id_Mantenimiento)}
+                                                                        onClick={() => handleResolve(item.id)}
                                                                         className="text-green-500 hover:text-green-700 transition"
                                                                         title="Marcar como Resuelto"
                                                                     >
@@ -425,7 +425,7 @@ export default function Mantenimiento() {
                                                                         <FaEdit size={17} />
                                                                     </button>
                                                                     <button
-                                                                        onClick={() => handleDelete(item.Id_Mantenimiento)}
+                                                                        onClick={() => handleDelete(item.id)}
                                                                         className="text-red-400 hover:text-red-600 transition"
                                                                         title="Eliminar"
                                                                     >
@@ -468,7 +468,7 @@ export default function Mantenimiento() {
                                         const ocupado = dispositivosOcupados.has(d.id_dispositivo) && !esMismoDispositivo;
                                         return {
                                             value: d.id_dispositivo,
-                                            label: `${d.tipos_dispositivos?.nombre_tipo || 'Disp.'} — ${d.ubicacion || 'Sin ubicación'} ${d.modelos_equipo_cat ? `(${d.modelos_equipo_cat.marcas_equipo?.nombre} ${d.modelos_equipo_cat.nombre})` : ''} ${ocupado ? '[OCUPADO]' : ''}`,
+                                            label: `${d.tipo?.nombre || 'Disp.'} — ${d.ubicacion || 'Sin ubicación'} ${d.modelo ? `(${d.modelo.marca?.nombre} ${d.modelo.nombre})` : ''} ${ocupado ? '[OCUPADO]' : ''}`,
                                             disabled: ocupado
                                         };
                                     })}
@@ -485,7 +485,7 @@ export default function Mantenimiento() {
                                 <div>
                                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo Mantenimiento *</label>
                                     <SearchableSelect
-                                        options={tiposMantenimiento.map(t => ({ value: t.id_tipo, label: t.nombre_tipo }))}
+                                        options={tiposMantenimiento.map(t => ({ value: t.id, label: t.nombre }))}
                                         value={formData.id_tipo}
                                         onChange={val => setFormData({ ...formData, id_tipo: val })}
                                         placeholder="— Tipo —"
@@ -497,7 +497,7 @@ export default function Mantenimiento() {
                                 <div>
                                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Técnico Asignado *</label>
                                     <SearchableSelect
-                                        options={tecnicos.map(t => ({ value: t.Id_Empleado, label: `${t.personas?.nombre} ${t.personas?.apellido}` }))}
+                                        options={tecnicos.map(t => ({ value: t.id_empleado, label: `${t.persona?.nombre} ${t.persona?.apellido}` }))}
                                         value={formData.id_tecnico}
                                         onChange={val => setFormData({ ...formData, id_tecnico: val })}
                                         placeholder="— Técnico —"
@@ -543,7 +543,7 @@ export default function Mantenimiento() {
                                     >
                                         <option value="">— Estado —</option>
                                         {estadosMantenimiento.map(est => (
-                                            <option key={est.id_estado} value={est.id_estado}>{est.nombre_estado}</option>
+                                            <option key={est.id} value={est.id}>{est.nombre}</option>
                                         ))}
                                     </select>
                                 </div>

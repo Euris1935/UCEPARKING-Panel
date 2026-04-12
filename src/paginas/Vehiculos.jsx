@@ -35,14 +35,14 @@ export default function Vehiculos() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
         if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
       }
     };
     init();
     loadData();
     const ch = supabase.channel('rt_vehiculos')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculos' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculo' }, loadData)
       .subscribe();
     return () => supabase.removeChannel(ch);
   }, []);
@@ -51,24 +51,24 @@ export default function Vehiculos() {
     setIsRefreshing(true);
     try {
       const { data: vhs } = await supabase
-        .from('vehiculos')
-        .select('*, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido)')
-        .order('Fecha_Registro', { ascending: false });
+        .from('vehiculo')
+        .select('*, marca(nombre), modelo(nombre), color(nombre), persona(nombre, apellido)')
+        .order('created_at', { ascending: false });
 
-      const { data: catMarcas } = await supabase.from('marcas_vehiculo').select('id_marca, nombre').order('nombre');
-      const { data: catModelos } = await supabase.from('modelos_vehiculo').select('id_modelo, nombre, id_marca').order('nombre');
-      const { data: catColores } = await supabase.from('colores_vehiculo').select('id_color, nombre').order('nombre');
+      const { data: catMarcas } = await supabase.from('marca').select('id_marca, nombre').eq('tipo', 'vehiculo').order('nombre');
+      const { data: catModelos } = await supabase.from('modelo').select('id_modelo, nombre, id_marca').eq('tipo', 'vehiculo').order('nombre');
+      const { data: catColores } = await supabase.from('color').select('id_color, nombre').order('nombre');
 
       // Personal del sistema
-      const { data: usuariosRaw } = await supabase.from('usuarios').select('id_persona');
+      const { data: usuariosRaw } = await supabase.from('usuario').select('id_persona');
       const personaIds = (usuariosRaw || []).filter(u => u.id_persona).map(u => u.id_persona);
       let personasDeUsuarios = [];
       if (personaIds.length > 0) {
-        const { data: pData } = await supabase.from('personas').select('id_persona, nombre, apellido').in('id_persona', personaIds);
+        const { data: pData } = await supabase.from('persona').select('id_persona, nombre, apellido').in('id_persona', personaIds);
         personasDeUsuarios = (pData || []).map(p => ({ ...p, rol: 'Usuario' }));
       }
-      const { data: empleadosData } = await supabase.from('empleados').select('id_persona, personas(id_persona, nombre, apellido)');
-      const personalEmpleados = (empleadosData || []).filter(e => e.personas).map(e => ({ ...e.personas, rol: 'Empleado' }));
+      const { data: empleadosData } = await supabase.from('empleado').select('id_persona', 'persona(id_persona, nombre, apellido)');
+      const personalEmpleados = (empleadosData || []).filter(e => e.persona).map(e => ({ ...e.persona, rol: 'Empleado' }));
       const mapa = new Map();
       personasDeUsuarios.forEach(p => { if (p.id_persona) mapa.set(p.id_persona, p); });
       personalEmpleados.forEach(p => { if (p.id_persona) mapa.set(p.id_persona, p); });
@@ -83,16 +83,16 @@ export default function Vehiculos() {
     } catch (err) { console.error('Error cargando datos:', err); } finally { setIsRefreshing(false); }
   };
 
-  const registrarLog = async (tipo, descripcion) => {
+  const registrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Vehículos').maybeSingle();
-      await supabase.from('eventos').insert([{ 
-        Fecha_Hora: new Date().toISOString(), 
-        Descripcion: descripcion, 
+      await supabase.from('evento').insert([{ 
+        fecha_hora: new Date().toISOString(), 
+        descripcion: descripcion, 
         id_persona: currentPersonaId, 
-        id_tipo_evento: te?.id_tipo || null, 
+        id_tipo: te?.id || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -106,7 +106,7 @@ export default function Vehiculos() {
     if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres.', 'warning');
     setLoading(true);
     try {
-      const { error } = await supabase.from('vehiculos').insert([{
+      const { error } = await supabase.from('vehiculo').insert([{
         id_persona: vehiculoPersonalForm.persona_id,
         placa: vehiculoPersonalForm.placa.toUpperCase(),
         id_marca: vehiculoPersonalForm.id_marca ? parseInt(vehiculoPersonalForm.id_marca) : null,
@@ -127,7 +127,7 @@ export default function Vehiculos() {
   const handleEditarVehiculo = async (e) => {
     e.preventDefault();
     try {
-      const { error, count } = await supabase.from('vehiculos').update(
+      const { error, count } = await supabase.from('vehiculo').update(
         { placa: editVehiculoForm.placa.toUpperCase(), id_marca: editVehiculoForm.id_marca ? parseInt(editVehiculoForm.id_marca) : null, id_modelo: editVehiculoForm.id_modelo ? parseInt(editVehiculoForm.id_modelo) : null, id_color: editVehiculoForm.id_color ? parseInt(editVehiculoForm.id_color) : null },
         { count: 'exact' }
       ).eq('id_vehiculo', editandoVehiculo.id_vehiculo);
@@ -140,14 +140,18 @@ export default function Vehiculos() {
   };
 
   const handleEliminarVehiculo = async (vehiculo) => {
-    const { data: ticketsActivos } = await supabase.from('tickets').select('Id_Ticket').eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', 1);
+    // Buscar si tiene un ticket activo. id_estado para Ticket 'Activo' ahora depende del contexto en tabla estado.
+    // Buscamos el ID del estado 'Activo' para 'ticket'.
+    const { data: estActivo } = await supabase.from('estado').select('id').eq('contexto', 'ticket').eq('nombre', 'Activo').maybeSingle();
+    
+    const { data: ticketsActivos } = await supabase.from('ticket').select('id_ticket').eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', estActivo?.id || 1);
     if (ticketsActivos && ticketsActivos.length > 0) return Swal.fire('No se puede eliminar', `Este vehículo tiene ${ticketsActivos.length} ticket(s) activo(s). Registre la salida primero.`, 'warning');
 
     const result = await Swal.fire({ title: '¿Eliminar vehículo?', html: `Placa: <b>${vehiculo.placa}</b><br><small>Se eliminarán también sus registros de acceso históricos.</small>`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Sí, eliminar' });
     
     try {
       if (result.isConfirmed) {
-        const { error } = await supabase.from('vehiculos').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
+        const { error } = await supabase.from('vehiculo').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
         if (error) {
           Swal.fire('Error', error.message, 'error');
         } else {
@@ -265,21 +269,21 @@ export default function Vehiculos() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {vehiculos.filter(v => {
-                    const matchName = `${v.personas?.nombre || ''} ${v.personas?.apellido || ''}`.toLowerCase().includes(searchFlota.toLowerCase());
+                    const matchName = `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`.toLowerCase().includes(searchFlota.toLowerCase());
                     const matchPlaca = (v.placa || '').toLowerCase().includes(searchFlota.toLowerCase());
                     return matchName || matchPlaca;
                 }).length === 0
                   ? <tr><td colSpan="5" className="text-center py-10 text-gray-400">No hay vehículos que coincidan.</td></tr>
                   : vehiculos.filter(v => {
-                        const matchName = `${v.personas?.nombre || ''} ${v.personas?.apellido || ''}`.toLowerCase().includes(searchFlota.toLowerCase());
+                        const matchName = `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`.toLowerCase().includes(searchFlota.toLowerCase());
                         const matchPlaca = (v.placa || '').toLowerCase().includes(searchFlota.toLowerCase());
                         return matchName || matchPlaca;
                     }).map(v => (
                     <tr key={v.id_vehiculo} className="hover:bg-gray-50 transition-all">
-                      <td className="px-5 py-4 font-medium text-gray-800">{v.personas?.nombre} {v.personas?.apellido}</td>
+                      <td className="px-5 py-4 font-medium text-gray-800">{v.persona?.nombre} {v.persona?.apellido}</td>
                       <td className="px-5 py-4"><span className="font-mono font-bold bg-gray-900 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span></td>
-                      <td className="px-5 py-4 text-gray-500 text-xs">{[v.marcas_vehiculo?.nombre, v.modelos_vehiculo?.nombre, v.colores_vehiculo?.nombre].filter(Boolean).join(' · ') || '—'}</td>
-                      <td className="px-5 py-4 text-xs text-gray-400">{new Date(v.Fecha_Registro).toLocaleDateString('es-DO')}</td>
+                      <td className="px-5 py-4 text-gray-500 text-xs">{[v.marca?.nombre, v.modelo?.nombre, v.color?.nombre].filter(Boolean).join(' · ') || '—'}</td>
+                      <td className="px-5 py-4 text-xs text-gray-400">{new Date(v.created_at).toLocaleDateString('es-DO')}</td>
                       <td className="px-5 py-4 text-center">
                         <div className="flex gap-1 justify-center">
                           {canEdit && <button onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, id_marca: v.id_marca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); }} className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition" title="Editar"><FaEdit size={14} /></button>}

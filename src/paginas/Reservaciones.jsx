@@ -46,7 +46,7 @@ export default function Reservaciones() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
         if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
       }
     };
@@ -67,14 +67,14 @@ export default function Reservaciones() {
     setIsRefreshing(true);
     try {
         const { data, error } = await supabase
-          .from('RESERVA')
+          .from('reserva')
           .select(`
             *,
-            personas (id_persona, nombre, apellido),
-            plazas (Id_Plaza, Numero_Plaza),
-            estado_reserva ( nombre_estado ) 
+            persona (id_persona, nombre, apellido),
+            plaza (id_plaza, numero_plaza),
+            estado ( nombre ) 
           `)
-          .order('Fecha_Hora_Inicio', { ascending: false });
+          .order('fecha_hora_inicio', { ascending: false });
 
         if (error) throw error;
         setReservas(data || []);
@@ -84,24 +84,28 @@ export default function Reservaciones() {
 
   const loadAuxData = async () => {
     try {
-        const { data: personas } = await supabase.from('personas').select('id_persona, nombre, apellido').order('nombre');
-        const { data: plazas } = await supabase.from('plazas').select('Id_Plaza, Numero_Plaza').eq('id_estado', 1).order('Numero_Plaza');
+        // Obtener estado 'Libre' para plaza
+        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
+        const { data: personas } = await supabase.from('persona').select('id_persona, nombre, apellido').order('nombre');
+        const { data: plazas } = await supabase.from('plaza').select('id_plaza, numero_plaza').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
         setPersonasList(personas || []);
         setPlazasList(plazas || []);
     } catch (error) { console.error("Error aux:", error); }
   };
 
-  const registrarLog = async (tipo, descripcion, idPlaza = null) => {
+  const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Reservas').maybeSingle();
-      await supabase.from('eventos').insert([{ 
-        Fecha_Hora: new Date().toISOString(), 
-        Descripcion: descripcion, 
-        Id_Plaza: idPlaza, 
+      await supabase.from('evento').insert([{ 
+        fecha_hora: new Date().toISOString(), 
+        descripcion: descripcion, 
+        id_plaza: idPlaza, 
         id_persona: currentPersonaId, 
-        id_tipo_evento: te?.id_tipo || null, 
+        id_tipo: te?.id || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -117,16 +121,16 @@ export default function Reservaciones() {
     const ahoraString = new Date(ahora - tzOffset).toISOString().slice(0, 16);
 
     const vencidas = reservas.filter(r => {
-      const nombreEstado = r.estado_reserva?.nombre_estado?.trim();
+      const nombreEstado = r.estado?.nombre?.trim();
       const esActiva = nombreEstado === 'Activa' || r.id_estado === 1;
       if (!esActiva) return false;
 
-      const fechaFinDB = r.Fecha_Hora_Fin ? r.Fecha_Hora_Fin.replace(' ', 'T').slice(0, 16) : '';
+      const fechaFinDB = r.fecha_hora_fin ? r.fecha_hora_fin.replace(' ', 'T').slice(0, 16) : '';
       return fechaFinDB !== '' && ahoraString >= fechaFinDB;
     });
 
     for (const res of vencidas) {
-      await handleMarkCompleted(res.Id_Reserva, res.Id_Plaza, true);
+      await handleMarkCompleted(res.id_reserva, res.id_plaza, true);
     }
   };
 
@@ -134,36 +138,46 @@ export default function Reservaciones() {
 
   const handleMarkCompleted = async (id, idPlaza, isAuto = false) => {
     try {
-        await supabase.from('RESERVA').update({ id_estado: 3 }).eq('Id_Reserva', id);
-        if (idPlaza) await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
+        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+        const idEstCompletadoRes = estadosCat?.find(e => e.contexto === 'reserva' && e.nombre === 'Completada')?.id || 3;
+        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
+        await supabase.from('reserva').update({ id_estado: idEstCompletadoRes }).eq('id_reserva', id);
+        if (idPlaza) await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', idPlaza);
         if (!isAuto) {
             Swal.fire('Éxito', 'Reserva completada.', 'success');
-            const p = plazasList.find(p => p.Id_Plaza === idPlaza);
-            registrarLog('Ticket Cerrado', `Reserva completada para plaza ${p?.Numero_Plaza || idPlaza}`, idPlaza);
+            const p = plazasList.find(p => p.id_plaza === idPlaza);
+            registrarLog('Ticket Cerrado', `Reserva completada para plaza ${p?.numero_plaza || idPlaza}`, idPlaza);
         }
         loadReservas();
         loadAuxData(); 
     } catch (e) { console.error(e); }
   };
 
-  const handleCancel = async (idReserva, idPlaza) => {
+  const handleCancelReserva = async (idReserva, idPlaza) => {
     const result = await Swal.fire({ title: '¿Cancelar?', text: "La plaza se liberará.", icon: 'warning', showCancelButton: true, confirmButtonColor: '#f59e0b' });
     if (result.isConfirmed) {
-        await supabase.from('RESERVA').update({ id_estado: 2 }).eq('Id_Reserva', idReserva);
-        if (idPlaza) await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
-        const p = plazasList.find(p => p.Id_Plaza === idPlaza);
-        registrarLog('Reserva Cancelada', `Reserva cancelada para plaza ${p?.Numero_Plaza || idPlaza}`, idPlaza);
+        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+        const idEstCanceladaRes = estadosCat?.find(e => e.contexto === 'reserva' && e.nombre === 'Cancelada')?.id || 2;
+        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
+        await supabase.from('reserva').update({ id_estado: idEstCanceladaRes }).eq('id_reserva', idReserva);
+        if (idPlaza) await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', idPlaza);
+        const p = plazasList.find(p => p.id_plaza === idPlaza);
+        registrarLog('Reserva Cancelada', `Reserva cancelada para plaza ${p?.numero_plaza || idPlaza}`, idPlaza);
         loadReservas();
         loadAuxData();
     }
   };
 
-  const handleDelete = async (idReserva, idPlaza, estado) => {
+  const handleDelete = async (idReserva, idPlaza, estadoNombre) => {
     const result = await Swal.fire({ title: '¿Eliminar?', text: "Se borrará definitivamente.", icon: 'error', showCancelButton: true });
     if (result.isConfirmed) {
-        await supabase.from('RESERVA').delete().eq('Id_Reserva', idReserva);
-        if (estado === 'Activa' && idPlaza) {
-            await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', idPlaza);
+        await supabase.from('reserva').delete().eq('id_reserva', idReserva);
+        if (estadoNombre === 'Activa' && idPlaza) {
+             const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+             const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+             await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', idPlaza);
         }
         loadReservas();
         loadAuxData();
@@ -192,38 +206,43 @@ export default function Reservaciones() {
             }
         }
 
+        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+        const idEstActivaRes = estadosCat?.find(e => e.contexto === 'reserva' && e.nombre === 'Activa')?.id || 1;
+        const idEstReservPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Reservado')?.id || 3;
+        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
         const payload = {
             id_persona: formData.id_persona,
-            Id_Plaza: parseInt(formData.Id_Plaza),
-            Fecha_Hora_Inicio: formData.Fecha_Hora_Inicio,
-            Fecha_Hora_Fin: formData.Fecha_Hora_Fin,
-            id_estado: 1,
+            id_plaza: parseInt(formData.Id_Plaza),
+            fecha_hora_inicio: formData.Fecha_Hora_Inicio,
+            fecha_hora_fin: formData.Fecha_Hora_Fin,
+            id_estado: idEstActivaRes,
             organizacion_id: orgId
         };
 
         let error;
         if (isUpdating) {
-            const { error: updateError } = await supabase.from('RESERVA').update(payload).eq('Id_Reserva', editingReservaId);
+            const { error: updateError } = await supabase.from('reserva').update(payload).eq('id_reserva', editingReservaId);
             error = updateError;
             if (!error && parseInt(formData.Id_Plaza) !== originalPlazaId) {
-                await supabase.from('plazas').update({ id_estado: 1 }).eq('Id_Plaza', originalPlazaId);
-                await supabase.from('plazas').update({ id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
+                await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', originalPlazaId);
+                await supabase.from('plaza').update({ id_estado: idEstReservPlaza }).eq('id_plaza', parseInt(formData.Id_Plaza));
             }
         } else {
-            const { error: insertError } = await supabase.from('RESERVA').insert([payload]);
+            const { error: insertError } = await supabase.from('reserva').insert([payload]);
             error = insertError;
             if (!error) {
-                await supabase.from('plazas').update({ id_estado: 3 }).eq('Id_Plaza', parseInt(formData.Id_Plaza));
+                await supabase.from('plaza').update({ id_estado: idEstReservPlaza }).eq('id_plaza', parseInt(formData.Id_Plaza));
             }
         }
         
         if (error) throw error;
         
-        const plazaSelect = plazasList.find(p => p.Id_Plaza === parseInt(formData.Id_Plaza));
+        const plazaSelect = plazasList.find(p => p.id_plaza === parseInt(formData.Id_Plaza));
         const personaSelect = personasList.find(p => p.id_persona === formData.id_persona);
         registrarLog(
             isUpdating ? 'Cambio de Estado' : 'Reserva Creada',
-            `${isUpdating ? 'Edición' : 'Creación'} de reserva: ${personaSelect?.nombre} ${personaSelect?.apellido} en Plaza ${plazaSelect?.Numero_Plaza || formData.Id_Plaza}`, 
+            `${isUpdating ? 'Edición' : 'Creación'} de reserva: ${personaSelect?.nombre} ${personaSelect?.apellido} en Plaza ${plazaSelect?.numero_plaza || formData.Id_Plaza}`, 
             parseInt(formData.Id_Plaza)
         );
 
@@ -234,15 +253,15 @@ export default function Reservaciones() {
     finally { setLoading(false); }
   };
 
-  const handleEdit = (reserva) => {
-    setEditingReservaId(reserva.Id_Reserva);
-    setOriginalPlazaId(reserva.Id_Plaza);
+  const handleEdit = (res) => {
+    setEditingReservaId(res.id_reserva);
+    setOriginalPlazaId(res.id_plaza);
     const format = (str) => str ? str.replace(' ', 'T').slice(0, 16) : '';
     setFormData({
-      id_persona: reserva.id_persona,
-      Id_Plaza: reserva.Id_Plaza,
-      Fecha_Hora_Inicio: format(reserva.Fecha_Hora_Inicio),
-      Fecha_Hora_Fin: format(reserva.Fecha_Hora_Fin)
+      id_persona: res.id_persona,
+      Id_Plaza: res.id_plaza,
+      Fecha_Hora_Inicio: format(res.fecha_hora_inicio),
+      Fecha_Hora_Fin: format(res.fecha_hora_fin)
     });
     setShowModal(true);
   };
@@ -310,15 +329,15 @@ export default function Reservaciones() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-50">
-                  {reservas.filter(r => `${r.personas?.nombre} ${r.personas?.apellido} ${r.plazas?.Numero_Plaza}`.toLowerCase().includes(searchTerm.toLowerCase())).map(r => {
-                    const nombreEstado = r.estado_reserva?.nombre_estado;
+                  {reservas.filter(r => `${r.persona?.nombre} ${r.persona?.apellido} ${r.plaza?.numero_plaza}`.toLowerCase().includes(searchTerm.toLowerCase())).map(r => {
+                    const nombreEstado = r.estado?.nombre;
                     const isActive = nombreEstado === 'Activa' || r.id_estado === 1;
                     return (
-                      <tr key={r.Id_Reserva} className="hover:bg-gray-50/50 transition-all text-sm">
-                        <td className="px-6 py-4 font-bold text-gray-700">{r.personas?.nombre} {r.personas?.apellido}</td>
-                        <td className="px-6 py-4"><span className="bg-blue-50 text-blue-600 px-2 py-1 rounded-lg font-black text-xs">#{r.plazas?.Numero_Plaza}</span></td>
-                        <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Inicio)}</td>
-                        <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.Fecha_Hora_Fin)}</td>
+                      <tr key={r.id_reserva} className="hover:bg-gray-50/50 transition-all text-sm">
+                        <td className="px-6 py-4 font-bold text-gray-700">{r.persona?.nombre} {r.persona?.apellido}</td>
+                        <td className="px-6 py-4"><span className="bg-blue-50 text-blue-600 px-2 py-1 rounded-lg font-black text-xs">#{r.plaza?.numero_plaza}</span></td>
+                        <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.fecha_hora_inicio)}</td>
+                        <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.fecha_hora_fin)}</td>
                         <td className="px-6 py-4">
                             <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${isActive ? 'bg-green-100 text-green-800' : nombreEstado === 'Cancelada' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
                                 {nombreEstado || 'Activa'}
@@ -327,14 +346,14 @@ export default function Reservaciones() {
                         <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
                           {isActive ? (
                             <>
-                              {canEdit && <button onClick={() => handleMarkCompleted(r.Id_Reserva, r.Id_Plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>}
-                              {canEdit && <button onClick={() => handleCancel(r.Id_Reserva, r.Id_Plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>}
+                              {canEdit && <button onClick={() => handleMarkCompleted(r.id_reserva, r.id_plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>}
+                              {canEdit && <button onClick={() => handleCancelReserva(r.id_reserva, r.id_plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>}
                               {canEdit && <button onClick={() => handleEdit(r)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>}
                             </>
                           ) : (
                             <div className="text-gray-300 italic text-xs flex items-center gap-1"><FaLock size={12} /> Cerrada</div>
                           )}
-                          {canDelete && <button onClick={() => handleDelete(r.Id_Reserva, r.Id_Plaza, nombreEstado)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>}
+                          {canDelete && <button onClick={() => handleDelete(r.id_reserva, r.id_plaza, nombreEstado)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>}
                         </td>
                       </tr>
                     );
@@ -369,18 +388,18 @@ export default function Reservaciones() {
                      className="bg-gray-50/50"
                    />
                  </div>
-                 <div>
-                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Plaza *</label>
-                   <SearchableSelect
-                     options={plazasList.map(p => ({ value: p.Id_Plaza, label: p.Numero_Plaza }))}
-                     value={formData.Id_Plaza}
-                     onChange={(val) => setFormData({...formData, Id_Plaza: val})}
-                     placeholder="— Seleccionar Plaza —"
-                     focusRingClass="focus:ring-blue-500"
-                     selectedItemClass="bg-blue-100 text-blue-800"
-                     className="bg-gray-50/50"
-                   />
-                 </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Plaza *</label>
+                    <SearchableSelect
+                      options={plazasList.map(p => ({ value: p.id_plaza, label: p.numero_plaza }))}
+                      value={formData.Id_Plaza}
+                      onChange={(val) => setFormData({...formData, Id_Plaza: val})}
+                      placeholder="— Seleccionar Plaza —"
+                      focusRingClass="focus:ring-blue-500"
+                      selectedItemClass="bg-blue-100 text-blue-800"
+                      className="bg-gray-50/50"
+                    />
+                  </div>
                  <div className="grid grid-cols-2 gap-3">
                    <div>
                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Inicio *</label>

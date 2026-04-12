@@ -50,7 +50,7 @@ export default function Logs() {
         // Suscripción en tiempo real
         const channel = supabase
             .channel('realtime_eventos')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'eventos' }, () => loadEventos())
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'evento' }, () => loadEventos())
             .subscribe();
         return () => supabase.removeChannel(channel);
     }, []);
@@ -59,18 +59,18 @@ export default function Logs() {
         setLoading(true);
         try {
             const { data, error } = await supabase
-                .from('eventos')
+                .from('evento')
                 .select(`
-          *,
-          personas ( nombre, apellido ),
-          tipo_evento ( nombre_tipo ),
-          origen_evento ( nombre ),
-          dispositivos (
-            ubicacion,
-            tipos_dispositivos ( nombre_tipo )
-          )
-        `)
-                .order('Fecha_Hora', { ascending: false })
+                    *,
+                    persona ( nombre, apellido ),
+                    tipo ( nombre ),
+                    origen_evento ( nombre ),
+                    dispositivo (
+                        ubicacion,
+                        tipo ( nombre )
+                    )
+                `)
+                .order('fecha_hora', { ascending: false })
                 .limit(200);
 
             if (error) throw error;
@@ -85,11 +85,11 @@ export default function Logs() {
     const tiposUnicos = ['TODOS', ...Object.keys(TIPO_COLORES)];
 
     const filtered = eventos.filter(e => {
-        const matchTipo = filtroTipo === 'TODOS' || e.tipo_evento?.nombre_tipo === filtroTipo;
+        const matchTipo = filtroTipo === 'TODOS' || e.tipo?.nombre === filtroTipo;
         const matchSearch = searchTerm === '' ||
-            e.Descripcion?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            e.tipo_evento?.nombre_tipo?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            `${e.personas?.nombre} ${e.personas?.apellido}`.toLowerCase().includes(searchTerm.toLowerCase());
+            e.descripcion?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            e.tipo?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            `${e.persona?.nombre} ${e.persona?.apellido}`.toLowerCase().includes(searchTerm.toLowerCase());
         return matchTipo && matchSearch;
     });
 
@@ -161,41 +161,41 @@ export default function Logs() {
                                 <tr><td colSpan="6" className="text-center py-10 text-gray-400">No hay logs registrados aún.</td></tr>
                             ) : (
                                 filtered.map(ev => {
-                                    const config = TIPO_COLORES[ev.tipo_evento?.nombre_tipo] || TIPO_DEFAULT;
+                                    const config = TIPO_COLORES[ev.tipo?.nombre] || TIPO_DEFAULT;
                                     const Icon = config.icon;
                                     return (
-                                        <tr key={ev.Id_Log} className="hover:bg-gray-50 transition-all">
+                                        <tr key={ev.id_log} className="hover:bg-gray-50 transition-all">
                                             <td className="px-6 py-4 whitespace-nowrap text-gray-500 font-mono text-xs">
-                                                {formatFecha(ev.Fecha_Hora)}
+                                                {formatFecha(ev.fecha_hora)}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border ${config.bg} ${config.text} ${config.border}`}>
                                                     <Icon size={10} />
-                                                    {ev.tipo_evento?.nombre_tipo || 'N/A'}
+                                                    {ev.tipo?.nombre || 'N/A'}
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 max-w-xs">
-                                                <p className="text-gray-700 line-clamp-2" title={ev.Descripcion}>
-                                                    {ev.Descripcion}
+                                                <p className="text-gray-700 line-clamp-2" title={ev.descripcion}>
+                                                    {ev.descripcion}
                                                 </p>
                                             </td>
                                             <td className="px-6 py-4 text-gray-500">
-                                                {ev.Id_Plaza ? (
-                                                    <span className="font-bold text-blue-600">#{ev.Id_Plaza}</span>
+                                                {ev.id_plaza ? (
+                                                    <span className="font-bold text-blue-600">#{ev.id_plaza}</span>
                                                 ) : <span className="text-gray-300">—</span>}
                                             </td>
                                             <td className="px-6 py-4 text-xs text-gray-500">
-                                                {ev.dispositivos ? (
+                                                {ev.dispositivo ? (
                                                     <span>
-                                                        <span className="font-semibold">{ev.dispositivos.tipos_dispositivos?.nombre_tipo}</span>
-                                                        <span className="block text-gray-400">{ev.dispositivos.ubicacion}</span>
+                                                        <span className="font-semibold">{ev.dispositivo.tipo?.nombre}</span>
+                                                        <span className="block text-gray-400">{ev.dispositivo.ubicacion}</span>
                                                     </span>
                                                 ) : (
                                                     <span className="text-gray-300">—</span>
                                                 )}
                                             </td>
                                             <td className="px-6 py-4 text-xs text-gray-600">
-                                                <span className="block font-medium">{ev.personas ? `${ev.personas.nombre} ${ev.personas.apellido}` : 'Sistema'}</span>
+                                                <span className="block font-medium">{ev.persona ? `${ev.persona.nombre} ${ev.persona.apellido}` : 'Sistema'}</span>
                                                 {ev.origen_evento?.nombre && <span className="text-gray-400 italic">{ev.origen_evento.nombre}</span>}
                                             </td>
                                         </tr>

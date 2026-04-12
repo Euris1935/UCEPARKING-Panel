@@ -48,18 +48,18 @@ export default function Empleados() {
 
       if (user) {
         const { data: uRow } = await supabase
-          .from('usuarios').select('id_persona').eq('id', user.id).single();
+          .from('usuario').select('id_persona').eq('id', user.id).single();
 
         if (uRow?.id_persona) {
           setCurrentPersonaId(uRow.id_persona);
           const { data: empRow } = await supabase
-            .from('empleados')
-            .select('organizacion_id, organizaciones(Nombre_Organizacion)')
+            .from('empleado')
+            .select('organizacion_id, organizacion(nombre_organizacion)')
             .eq('id_persona', uRow.id_persona)
             .maybeSingle();
 
           orgId  = empRow?.organizacion_id   || null;
-          orgNom = empRow?.organizaciones?.Nombre_Organizacion || '';
+          orgNom = empRow?.organizacion?.nombre_organizacion || '';
         }
       }
 
@@ -67,7 +67,7 @@ export default function Empleados() {
       setAdminOrgNombre(orgNom);
 
       // 2. Catálogos
-      const { data: deptData } = await supabase.from('departamentos').select('*');
+      const { data: deptData } = await supabase.from('departamento').select('*');
       setDepartamentos(deptData || []);
 
       // 3. Empleados + datos de persona
@@ -80,16 +80,16 @@ export default function Empleados() {
     }
   };
 
-  const registrarLog = async (tipo, descripcion) => {
+  const registrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Personal').maybeSingle();
-      await supabase.from('eventos').insert([{ 
-        Fecha_Hora: new Date().toISOString(), 
-        Descripcion: descripcion, 
+      await supabase.from('evento').insert([{ 
+        fecha_hora: new Date().toISOString(), 
+        descripcion: descripcion, 
         id_persona: currentPersonaId, 
-        id_tipo_evento: te?.id_tipo || null, 
+        id_tipo: te?.id || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: adminOrgId
       }]);
@@ -97,7 +97,7 @@ export default function Empleados() {
   };
 
   const cargarEmpleados = async (deptList) => {
-    const { data: emps } = await supabase.from('empleados').select('*').order('Id_Empleado');
+    const { data: emps } = await supabase.from('empleado').select('*').order('id_empleado');
 
     const { data: orgUsers, error: rpcErr } = await supabase.rpc('get_usuarios_org');
     if (rpcErr) console.warn('get_usuarios_org error:', rpcErr.message);
@@ -105,16 +105,16 @@ export default function Empleados() {
 
     const lista = (emps || []).map(emp => {
       const uRow  = todosLosUsuarios.find(u => u.id_persona === emp.id_persona);
-      const depto = deptList.find(d => d.Id_Departamento === emp.departamento_id);
+      const depto = deptList.find(d => d.id_departamento === emp.departamento_id);
       return {
-        Id_Empleado:     emp.Id_Empleado,
+        id_empleado:     emp.id_empleado,
         persona_id:      emp.id_persona,
         departamento_id: emp.departamento_id,
         organizacion_id: emp.organizacion_id,
         nombre:          uRow?.nombre   || 'Sin Nombre',
         apellido:        uRow?.apellido || '',
         email:           uRow?.email    || '',
-        nombre_depto:    depto?.Nombre_Departamento || 'Sin Depto',
+        nombre_depto:    depto?.nombre_departamento || 'Sin Depto',
       };
     });
     setEmpleados(lista);
@@ -176,14 +176,14 @@ export default function Empleados() {
 
       if (isUpdating) {
         const { error } = await supabase
-          .from('empleados')
+          .from('empleado')
           .update(payload)
-          .eq('Id_Empleado', editingEmp.Id_Empleado);
+          .eq('id_empleado', editingEmp.id_empleado);
         if (error) throw error;
         Swal.fire('Actualizado', 'Datos laborales actualizados.', 'success');
       } else {
         const { error } = await supabase
-          .from('empleados')
+          .from('empleado')
           .insert([{ id_persona, ...payload }]);
         if (error) throw error;
         Swal.fire('¡Asignado!', 'El usuario fue registrado como empleado.', 'success');
@@ -209,7 +209,7 @@ export default function Empleados() {
       cancelButtonText: 'Cancelar',
     });
     if (!r.isConfirmed) return;
-    const { error } = await supabase.from('empleados').delete().eq('Id_Empleado', emp.Id_Empleado);
+    const { error } = await supabase.from('empleado').delete().eq('id_empleado', emp.id_empleado);
     if (error) return Swal.fire('Error', error.message, 'error');
     Swal.fire('Eliminado', 'Ficha de empleado eliminada. El usuario del sistema sigue activo.', 'success');
     await cargarEmpleados(departamentos);
@@ -313,8 +313,8 @@ export default function Empleados() {
                   <tbody className="bg-white divide-y divide-gray-50">
                     {filtrados.map(emp => (
                       <tr
-                        key={emp.Id_Empleado}
-                        className={`hover:bg-purple-50 transition-all cursor-pointer ${editingEmp?.Id_Empleado === emp.Id_Empleado ? 'bg-purple-50 ring-1 ring-inset ring-purple-300' : ''}`}
+                        key={emp.id_empleado}
+                        className={`hover:bg-purple-50 transition-all cursor-pointer ${editingEmp?.id_empleado === emp.id_empleado ? 'bg-purple-50 ring-1 ring-inset ring-purple-300' : ''}`}
                         onClick={() => canEdit && abrirEditar(emp)}
                       >
                         <td className="px-5 py-4">
@@ -446,8 +446,8 @@ export default function Empleados() {
                   >
                     <option value="">— Seleccionar departamento —</option>
                     {departamentos.map(d => (
-                      <option key={d.Id_Departamento} value={d.Id_Departamento}>
-                        {d.Nombre_Departamento}
+                      <option key={d.id_departamento} value={d.id_departamento}>
+                        {d.nombre_departamento}
                       </option>
                     ))}
                   </select>

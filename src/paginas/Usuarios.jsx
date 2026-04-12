@@ -58,7 +58,7 @@ export default function Usuarios() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data: uData } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
+        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
         if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
       }
     };
@@ -74,7 +74,7 @@ export default function Usuarios() {
         { data: rolesData },
         { data: orgUsers, error: orgErr }
       ] = await Promise.all([
-        supabase.from('roles').select('*').order('Nombre_Rol'),
+        supabase.from('rol').select('*').order('nombre_rol'),
         supabase.rpc('get_usuarios_org')
       ]);
 
@@ -100,17 +100,17 @@ export default function Usuarios() {
   const loadUsuariosFallback = async (rolesDisponibles) => {
     try {
       const [{ data: usrs }, { data: pers }] = await Promise.all([
-        supabase.from('usuarios').select('id, id_persona, rol_id'),
-        supabase.from('personas').select('id_persona, nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion')
+        supabase.from('usuario').select('id, id_persona, id_rol'),
+        supabase.from('persona').select('id_persona, nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion')
       ]);
       if (!usrs || usrs.length === 0) return;
       const lista = usrs.map(u => {
         const persona = (pers || []).find(p => p.id_persona === u.id_persona);
-        const rol = rolesDisponibles.find(r => r.Id_Rol === u.rol_id);
+        const rol = rolesDisponibles.find(r => r.id_rol === u.id_rol);
         return {
           id_usuario: u.id,
           id_persona: u.id_persona,
-          id_rol:     u.rol_id,
+          id_rol:     u.id_rol,
           nombre:     persona?.nombre          || 'Sin Nombre',
           apellido:   persona?.apellido        || '',
           email:      persona?.email           || '',
@@ -118,7 +118,7 @@ export default function Usuarios() {
           sexo:       persona?.sexo            || 'M',
           fecha_nacimiento: persona?.fecha_nacimiento || '',
           direccion:  persona?.direccion       || '',
-          nombre_rol: rol?.Nombre_Rol          || 'Sin Rol'
+          nombre_rol: rol?.nombre_rol          || 'Sin Rol'
         };
       }).filter(u => u.nombre_rol.toLowerCase() !== 'visitante');
 
@@ -126,16 +126,16 @@ export default function Usuarios() {
     } catch (err) { console.error('Fallback error:', err); }
   };
 
-  const registrarLog = async (tipo, descripcion) => {
+  const registrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Usuarios').maybeSingle();
-      await supabase.from('eventos').insert([{ 
-        Fecha_Hora: new Date().toISOString(), 
-        Descripcion: descripcion, 
+      await supabase.from('evento').insert([{ 
+        fecha_hora: new Date().toISOString(), 
+        descripcion: descripcion, 
         id_persona: currentPersonaId, 
-        id_tipo_evento: te?.id_tipo || null, 
+        id_tipo: te?.id || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -182,10 +182,10 @@ export default function Usuarios() {
 
         if (isUpdating) {
           if (editingUser.id_persona) {
-            const { error: pErr } = await supabase.from('personas')
+            const { error: pErr } = await supabase.from('persona')
               .update({ nombre, apellido, telefono, email, sexo, fecha_nacimiento: fecha_nacimiento || null, direccion })
               .eq('id_persona', editingUser.id_persona);
-            if (pErr) console.warn('personas update:', pErr.message);
+            if (pErr) console.warn('persona update:', pErr.message);
           }
 
           if (parseInt(rol_id) !== editingUser.id_rol) {
@@ -264,8 +264,8 @@ export default function Usuarios() {
 
       Swal.fire('Éxito', 'Rol actualizado.', 'success');
       const u = usuarios.find(u => u.id_usuario === changingRolFor);
-      const r = rolesList.find(r => r.Id_Rol === parseInt(newRolId));
-      registrarLog('Asignación Modificada', `Cambio de rol para ${u?.nombre} ${u?.apellido}: ahora es ${r?.Nombre_Rol}`);
+      const r = rolesList.find(r => r.id_rol === parseInt(newRolId));
+      registrarLog('Asignación Modificada', `Cambio de rol para ${u?.nombre} ${u?.apellido}: ahora es ${r?.nombre_rol}`);
       setChangingRolFor(null);
       setNewRolId('');
       loadData();
@@ -411,9 +411,9 @@ export default function Usuarios() {
                                 >
                                   <option value="">-- Seleccionar --</option>
                                   {rolesList
-                                    .filter(r => r.Nombre_Rol.toLowerCase() !== 'visitante')
+                                    .filter(r => r.nombre_rol.toLowerCase() !== 'visitante')
                                     .map(r => (
-                                      <option key={r.Id_Rol} value={r.Id_Rol}>{r.Nombre_Rol}</option>
+                                      <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>
                                     ))
                                   }
                                 </select>
@@ -548,8 +548,8 @@ export default function Usuarios() {
                     className="w-full border border-gray-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none mt-0.5">
                     <option value="">Selecciona un rol</option>
                     {rolesList
-                      .filter(r => r.Nombre_Rol.toLowerCase() !== 'visitante')
-                      .map(r => <option key={r.Id_Rol} value={r.Id_Rol}>{r.Nombre_Rol}</option>)
+                      .filter(r => r.nombre_rol.toLowerCase() !== 'visitante')
+                      .map(r => <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>)
                     }
                   </select>
                 </div>

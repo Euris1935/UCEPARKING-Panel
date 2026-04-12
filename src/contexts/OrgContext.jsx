@@ -15,7 +15,7 @@ export function OrgProvider({ children }) {
 
       // 1. Fetch user to id_persona mapping
       const { data: usr } = await supabase
-        .from('usuarios')
+        .from('usuario')
         .select('id_persona')
         .eq('id', user.id)
         .single();
@@ -30,7 +30,7 @@ export function OrgProvider({ children }) {
 
       // 2. Fetch the actual organization for that persona
       const { data: emp } = await supabase
-        .from('empleados')
+        .from('empleado')
         .select('organizacion_id')
         .eq('id_persona', usr.id_persona)
         .single();
@@ -39,14 +39,14 @@ export function OrgProvider({ children }) {
         console.log('OrgContext: Org found', emp.organizacion_id);
         setOrgId(emp.organizacion_id);
         const { data: sus } = await supabase
-          .from('suscripciones')
-          .select('*, planes(*)')
+          .from('suscripcion')
+          .select('*, plan(*)')
           .eq('organizacion_id', emp.organizacion_id)
           .in('estado', ['Activa','Trial'])
           .maybeSingle();
-        // sus.planes corresponds to the joined table
-        if (sus && sus.planes) {
-          setPlan(sus.planes);
+        // sus.plan corresponds to the joined table
+        if (sus && sus.plan) {
+          setPlan(sus.plan);
         }
       }
       setLoading(false);

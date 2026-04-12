@@ -43,7 +43,7 @@ export default function Notificaciones() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data } = await supabase
-          .from('usuarios').select('id_persona').eq('id', user.id).single();
+          .from('usuario').select('id_persona').eq('id', user.id).single();
         if (data) setCurrentPersonaId(data.id_persona);
       }
     };
@@ -52,7 +52,7 @@ export default function Notificaciones() {
 
     const channel = supabase
       .channel('rt_notifs')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notificaciones' }, loadAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notificacion' }, loadAll)
       .subscribe();
 
     return () => supabase.removeChannel(channel);
@@ -64,16 +64,16 @@ export default function Notificaciones() {
     try {
       /* Notificaciones: join personas (destinatario) y tipo_notificacion */
       const { data: nData, error: nErr } = await supabase
-        .from('notificaciones')
+        .from('notificacion')
         .select(`
-          ID_Notificacion,
-          Contenido,
-          Leida,
+          id_notificacion,
+          contenido,
+          leida,
           created_at,
           id_persona,
           id_tipo,
-          personas ( nombre, apellido ),
-          tipo_notificacion ( id_tipo, nombre_tipo )
+          persona ( nombre, apellido ),
+          tipo ( id, nombre )
         `)
         .order('created_at', { ascending: false });
 
@@ -83,16 +83,17 @@ export default function Notificaciones() {
       }
       setNotifs(nData || []);
 
-      /* Tipos de notificación desde la BD */
+      /* Tipos de notificación desde la BD (Catálogo unificado) */
       const { data: tData } = await supabase
-        .from('tipo_notificacion')
-        .select('id_tipo, nombre_tipo')
-        .order('nombre_tipo');
+        .from('tipo')
+        .select('id, nombre')
+        .eq('contexto', 'notificacion')
+        .order('nombre');
       setTiposNotif(tData || []);
 
       /* Personas disponibles como destinatarios */
       const { data: pData } = await supabase
-        .from('personas')
+        .from('persona')
         .select('id_persona, nombre, apellido')
         .order('nombre');
       setPersonasList(pData || []);
@@ -106,16 +107,16 @@ export default function Notificaciones() {
     }
   };
 
-  const registrarLog = async (tipo, descripcion) => {
+  const registrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
+      const { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Alertas').maybeSingle();
-      await supabase.from('eventos').insert([{ 
-        Fecha_Hora: new Date().toISOString(), 
-        Descripcion: descripcion, 
+      await supabase.from('evento').insert([{ 
+        fecha_hora: new Date().toISOString(), 
+        descripcion: descripcion, 
         id_persona: currentPersonaId, 
-        id_tipo_evento: te?.id_tipo || null, 
+        id_tipo: te?.id || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -124,11 +125,11 @@ export default function Notificaciones() {
 
   /* ── Cuando cambia id_tipo, sincroniza el campo Tipo (texto) ── */
   const handleTipoChange = (idTipo) => {
-    const tipo = tiposNotif.find(t => String(t.id_tipo) === String(idTipo));
+    const tipo = tiposNotif.find(t => String(t.id) === String(idTipo));
     setForm(f => ({
       ...f,
       id_tipo: idTipo,
-      Tipo: tipo?.nombre_tipo || '',
+      Tipo: tipo?.nombre || '',
     }));
   };
 
@@ -139,20 +140,20 @@ export default function Notificaciones() {
 
     try {
       const payload = {
-        Contenido:  form.Contenido.trim(),
-        Leida:      false,
-        id_persona: form.id_persona || null,
-        id_tipo:    parseInt(form.id_tipo),
+        contenido:       form.Contenido.trim(),
+        leida:           false,
+        id_persona:      form.id_persona || null,
+        id_tipo:         parseInt(form.id_tipo),
         organizacion_id: orgId
       };
 
-      const { error } = await supabase.from('notificaciones').insert([payload]);
+      const { error } = await supabase.from('notificacion').insert([payload]);
       if (error) throw error;
 
       Swal.fire('Enviada', 'Notificación creada correctamente.', 'success');
       const p = personasList.find(p => p.id_persona === form.id_persona);
-      const t = tiposNotif.find(t => t.id_tipo === parseInt(form.id_tipo));
-      registrarLog('Alerta', `Envío de notificación (${t?.nombre_tipo}): ${form.Contenido.substring(0, 30)}... ${p ? 'a ' + p.nombre : 'a todos'}`);
+      const t = tiposNotif.find(t => t.id === parseInt(form.id_tipo));
+      registrarLog('Alerta', `Envío de notificación (${t?.nombre}): ${form.Contenido.substring(0, 30)}... ${p ? 'a ' + p.nombre : 'a todos'}`);
       
       setShowModal(false);
       setForm({ Tipo: '', Contenido: '', id_persona: '', id_tipo: '' });
@@ -165,9 +166,9 @@ export default function Notificaciones() {
   /* ── Marcar una como leída ── */
   const marcarLeida = async (id) => {
     const { error } = await supabase
-      .from('notificaciones')
-      .update({ Leida: true })
-      .eq('ID_Notificacion', id);
+      .from('notificacion')
+      .update({ leida: true })
+      .eq('id_notificacion', id);
     if (error) {
         console.error('marcarLeida error:', error.message);
         Swal.fire('Error', 'No se pudo marcar como leída: ' + error.message, 'error');
@@ -177,12 +178,12 @@ export default function Notificaciones() {
 
   /* ── Marcar todas las no leídas como leídas ── */
   const marcarTodasLeidas = async () => {
-    const ids = notifs.filter(n => !n.Leida).map(n => n.ID_Notificacion);
+    const ids = notifs.filter(n => !n.leida).map(n => n.id_notificacion);
     if (ids.length === 0) return;
     const { error } = await supabase
-      .from('notificaciones')
-      .update({ Leida: true })
-      .in('ID_Notificacion', ids);
+      .from('notificacion')
+      .update({ leida: true })
+      .in('id_notificacion', ids);
     if (error) {
         console.error('marcarTodasLeidas error:', error.message);
         Swal.fire('Error', 'No se pudieron actualizar: ' + error.message, 'error');
@@ -202,66 +203,57 @@ export default function Notificaciones() {
     });
     if (!r.isConfirmed) return;
     const { error } = await supabase
-      .from('notificaciones')
+      .from('notificacion')
       .delete()
-      .eq('ID_Notificacion', id);
+      .eq('id_notificacion', id);
       
     if (error) {
         Swal.fire('Error', 'No se pudo eliminar: ' + error.message, 'error');
     } else {
-        const n = notifs.find(n => n.ID_Notificacion === id);
-        registrarLog('Alerta', `Notificación eliminada: ${n?.Contenido?.substring(0, 30)}...`);
+        const n = notifs.find(n => n.id_notificacion === id);
+        registrarLog('Alerta', `Notificación eliminada: ${n?.contenido?.substring(0, 30)}...`);
         loadAll();
     }
   };
 
-  const noLeidas = notifs.filter(n => !n.Leida).length;
+  const noLeidas = notifs.filter(n => !n.leida).length;
 
   /* ════════════════════════════════ RENDER ════════════════════════════════ */
   const filteredNotifs = notifs.filter(n => {
     const text = searchTerm.toLowerCase();
-    const dest = n.personas ? `${n.personas.nombre} ${n.personas.apellido}`.toLowerCase() : '';
-    return n.Contenido?.toLowerCase().includes(text) || n.tipo_notificacion?.nombre_tipo?.toLowerCase().includes(text) || dest.includes(text);
+    const dest = n.persona ? `${n.persona.nombre} ${n.persona.apellido}`.toLowerCase() : '';
+    return n.mensaje?.toLowerCase().includes(text) || n.tipo?.nombre?.toLowerCase().includes(text) || dest.includes(text);
   });
 
   /* ════════════════════════════════ RENDER ════════════════════════════════ */
   return (
     <Layout>
-      {/* Header */}
       <header className="mb-8 flex justify-between items-center">
         <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Notificaciones</h2>
-            {noLeidas > 0 && (
-              <span className="bg-red-500 text-white text-xs font-bold px-2.5 py-1 rounded-full animate-pulse shadow-sm">
-                {noLeidas} nueva{noLeidas > 1 ? 's' : ''}
-              </span>
-            )}
-          </div>
-          <p className="text-gray-500 font-medium mt-1">Centro de alertas y mensajes del sistema.</p>
+          <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Centro de Notificaciones</h2>
+          <p className="text-gray-500 font-medium">Gestión de alertas y comunicados para usuarios.</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           {noLeidas > 0 && (
             <button
               onClick={marcarTodasLeidas}
-              className="flex items-center gap-2 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 px-4 py-2.5 rounded-lg font-bold text-[10px] uppercase tracking-wide shadow-sm transition"
+              className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2.5 rounded-lg font-bold transition"
             >
               <FaCheckDouble size={14}/> Marcar todas leídas
             </button>
           )}
           {!showModal && (
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-bold shadow-md transition duration-150"
-          >
-            <FaPlus /> Nueva Notificación
-          </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-bold shadow-md transition duration-150"
+            >
+              <FaPlus /> Nueva Notificación
+            </button>
           )}
         </div>
       </header>
 
       <div className="flex flex-col lg:flex-row gap-6">
-
         {/* ── Lista de notificaciones ── */}
         <div className="flex-1 min-w-0">
           <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
@@ -297,55 +289,45 @@ export default function Notificaciones() {
                 </div>
               ) : (
                 filteredNotifs.map(n => (
-                  <div
-                    key={n.ID_Notificacion}
-                    className={`flex items-start gap-4 p-4 rounded-xl border transition-all duration-200 group ${
-                      n.Leida ? 'bg-gray-50 border-gray-100 opacity-75' : 'bg-white border-blue-100 shadow'
-                    }`}
-                  >
-                    {/* Indicador no leída */}
-                    <div className={`mt-1.5 w-2.5 h-2.5 rounded-full shrink-0 ${n.Leida ? 'bg-gray-200' : 'bg-blue-500'}`} />
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        {/* Badge de tipo */}
-                        <span className={`px-2 py-0.5 rounded border uppercase tracking-tighter text-[10px] font-bold ${getBadgeColor(n.Tipo || n.tipo_notificacion?.nombre_tipo)}`}>
-                          {n.tipo_notificacion?.nombre_tipo || n.Tipo || 'Sin tipo'}
-                        </span>
-
-                        {/* Destinatario */}
-                        {n.personas && (
-                          <span className="text-[10px] text-gray-400 italic">
-                            → {n.personas.nombre} {n.personas.apellido}
+                  <div key={n.id_notificacion} className={`p-4 transition hover:bg-gray-50/50 ${!n.leida ? 'bg-blue-50/30 border-l-4 border-blue-500' : ''}`}>
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="flex-grow">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getBadgeColor(n.tipo?.nombre)}`}>
+                            {n.tipo?.nombre}
                           </span>
-                        )}
-
-                        {/* Fecha */}
-                        <span className="text-[10px] font-bold text-gray-400 ml-auto uppercase tracking-wide">
-                          {new Date(n.created_at).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })}
-                        </span>
+                          {!n.leida && (
+                            <span className="flex h-2 w-2 rounded-full bg-blue-600 animate-pulse" />
+                          )}
+                        </div>
+                        <p className={`text-sm leading-relaxed ${!n.leida ? 'text-gray-900 font-semibold' : 'text-gray-600'}`}>
+                          {n.contenido}
+                        </p>
+                        <div className="flex items-center gap-3 mt-3 text-[11px] text-gray-400">
+                          <span className="font-mono">{new Date(n.created_at).toLocaleString('es-DO')}</span>
+                          <span className="flex items-center gap-1 font-medium bg-gray-100 text-gray-500 px-2 py-0.5 rounded">
+                            Destinatario: {n.persona ? `${n.persona.nombre} ${n.persona.apellido}` : 'Todos'}
+                          </span>
+                        </div>
                       </div>
-                      <p className={`text-sm ${n.Leida ? 'text-gray-500 font-medium' : 'text-gray-800 font-bold'}`}>{n.Contenido}</p>
-                    </div>
-
-                    {/* Acciones */}
-                    <div className="flex gap-2 items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {!n.Leida && (
+                      <div className="flex gap-1 shrink-0">
+                        {!n.leida && (
+                          <button
+                            onClick={() => marcarLeida(n.id_notificacion)}
+                            className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition"
+                            title="Marcar leída"
+                          >
+                            <FaCheckDouble size={14} />
+                          </button>
+                        )}
                         <button
-                          onClick={() => marcarLeida(n.ID_Notificacion)}
-                          title="Marcar como leída"
-                          className="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition border border-transparent hover:border-blue-200"
+                          onClick={() => eliminar(n.id_notificacion)}
+                          className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition"
+                          title="Eliminar"
                         >
-                          <FaCheckDouble size={14} />
+                          <FaTrash size={14} />
                         </button>
-                      )}
-                      <button
-                        onClick={() => eliminar(n.ID_Notificacion)}
-                        title="Eliminar"
-                        className="text-red-400 hover:text-red-600 p-2 rounded-lg hover:bg-red-50 transition border border-transparent hover:border-red-200"
-                      >
-                        <FaTrash size={14} />
-                      </button>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -356,7 +338,7 @@ export default function Notificaciones() {
 
         {/* ── Panel lateral (Formulario) ── */}
         {showModal && (
-        <aside className="w-full lg:w-[400px] flex-shrink-0">
+          <aside className="w-full lg:w-[400px] flex-shrink-0">
             <section className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100 sticky top-6">
                 <div className="flex items-center justify-between mb-5">
                     <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
@@ -368,14 +350,13 @@ export default function Notificaciones() {
                 </div>
 
                 <div className="space-y-4">
-
                     {/* Tipo desde la BD */}
                     <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">
                             Tipo de Notificación *
                         </label>
                         <SearchableSelect
-                            options={tiposNotif.map(t => ({ value: t.id_tipo, label: t.nombre_tipo }))}
+                            options={tiposNotif.map(t => ({ value: t.id, label: t.nombre }))}
                             value={form.id_tipo}
                             onChange={(val) => handleTipoChange(val)}
                             placeholder="— Tipo —"
@@ -428,9 +409,8 @@ export default function Notificaciones() {
                     </div>
                 </div>
             </section>
-        </aside>
+          </aside>
         )}
-
       </div>
     </Layout>
   );

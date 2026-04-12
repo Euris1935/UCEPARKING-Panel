@@ -30,10 +30,10 @@ export default function Reportes() {
     setIsRefreshing(true);
     try {
         const { data, error } = await supabase
-          .from('reportes')
+          .from('reporte')
           .select(`
             *,
-            personas (nombre, apellido)
+            persona (nombre, apellido)
           `)
           .order('created_at', { ascending: false });
 
@@ -159,25 +159,26 @@ export default function Reportes() {
     }
   };
 
-  const handleDelete = async (id) => {
-      const result = await Swal.fire({
-          title: '¿Eliminar reporte?',
-          text: "Se borrará del historial permanentemente.",
-          icon: 'warning',
-          showCancelButton: true,
-          confirmButtonColor: '#d33',
-          confirmButtonText: 'Sí, eliminar'
-      });
+  const handleEliminarReporte = async (reporteId) => {
+    const confirm = await Swal.fire({
+        title: '¿Eliminar reporte?',
+        text: "Esta acción no se puede deshacer.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+    });
 
-      if (result.isConfirmed) {
-          const { error } = await supabase.from('reportes').delete().eq('Id_Reporte', id);
-          
-          if (error) Swal.fire('Error', error.message, 'error');
-          else {
-              Swal.fire('Eliminado', 'El reporte ha sido eliminado.', 'success');
-              loadReportes();
-          }
-      }
+    if (confirm.isConfirmed) {
+        const { error } = await supabase.from('reporte').delete().eq('id_reporte', reporteId);
+        if (error) {
+            Swal.fire('Error', 'No se pudo eliminar el reporte.', 'error');
+        } else {
+            Swal.fire('Eliminado', 'El reporte ha sido eliminado.', 'success');
+            loadReportes();
+        }
+    }
   };
 
   const handleDownloadExcel = async (id, title) => {
@@ -214,8 +215,8 @@ export default function Reportes() {
   };
 
   const filteredReportes = reportes.filter(r => 
-    r.Tipo_Reporte.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (r.personas?.nombre + ' ' + r.personas?.apellido).toLowerCase().includes(searchTerm.toLowerCase())
+    (r.tipo || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (`${r.persona?.nombre || ""} ${r.persona?.apellido || ""}`).toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -273,16 +274,16 @@ export default function Reportes() {
                     <tr><td colSpan="4" className="p-8 text-center text-gray-500 italic text-sm">No hay reportes generados aún.</td></tr>
                   ) : (
                     filteredReportes.map(r => (
-                    <tr key={r.Id_Reporte} className="hover:bg-blue-50/20 transition group">
+                    <tr key={r.id_reporte} className="hover:bg-blue-50/20 transition group">
                       <td className="px-6 py-4">
                         <div className="flex items-center">
                             <div className="bg-blue-50 p-2 text-blue-600 rounded-lg mr-3 shadow-sm border border-blue-100">
                                 <FaFileAlt className='text-lg'/> 
                             </div>
                             <div>
-                                <p className="font-bold text-gray-900 text-xs uppercase">{r.Tipo_Reporte}</p>
-                                <p className="text-[10px] italic font-medium text-gray-400 max-w-xs truncate mt-0.5" title={r.Descripcion}>
-                                    {r.Descripcion || "Sin descripción"}
+                                <p className="font-bold text-gray-900 text-xs uppercase">{r.tipo_reporte}</p>
+                                <p className="text-[10px] italic font-medium text-gray-400 max-w-xs truncate mt-0.5" title={r.descripcion}>
+                                    {r.descripcion || "Sin descripción"}
                                 </p>
                             </div>
                         </div>
@@ -296,27 +297,27 @@ export default function Reportes() {
                                 <FaUser className="text-[10px]"/>
                             </div>
                             <span className="text-xs font-bold text-gray-700 uppercase">
-                                {r.personas ? `${r.personas.nombre} ${r.personas.apellido}` : 'Sistema / Desconocido'}
+                                {r.persona ? `${r.persona.nombre} ${r.persona.apellido}` : 'Sistema / Desconocido'}
                             </span>
                         </div>
                       </td>
                       <td className="px-6 py-4 flex gap-2 justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                         <button 
-                            onClick={() => handlePreviewExistingReport(r.Id_Reporte)} 
+                            onClick={() => handlePreviewExistingReport(r.id_reporte)} 
                             className="text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 p-2 rounded transition" 
                             title="Previsualizar"
                         >
                             <FaSearch size={16}/>
                         </button>
                         <button 
-                            onClick={() => handleDownloadExcel(r.Id_Reporte, r.Tipo_Reporte)} 
+                            onClick={() => handleDownloadExcel(r.id_reporte, r.tipo_reporte)} 
                             className="text-green-500 hover:text-green-700 hover:bg-green-50 p-2 rounded transition" 
                             title="Descargar Excel"
                         >
                             <FaDownload size={16}/>
                         </button>
                         <button 
-                            onClick={() => handleDelete(r.Id_Reporte)} 
+                            onClick={() => handleEliminarReporte(r.id_reporte)} 
                             className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded transition" 
                             title="Eliminar"
                         >
