@@ -5,8 +5,9 @@ import Swal from 'sweetalert2';
 import { 
     FaClock, FaSave, FaShieldAlt, FaLock, FaBell, FaUser,
     FaEnvelope, FaIdBadge, FaKey, FaCheckCircle, FaCog,
-    FaEye, FaEyeSlash
+    FaEye, FaEyeSlash, FaVolumeUp
 } from 'react-icons/fa';
+import { playBeep } from '../utils/audio';
 
 export default function Configuracion() {
     const [activeTab, setActiveTab] = useState('sistema');
@@ -223,7 +224,16 @@ export default function Configuracion() {
                             <div className="flex items-center gap-3">
                                 <FaBell className={settings.notificacionesSonoras ? 'text-blue-500' : 'text-gray-400'} size={18} />
                                 <div>
-                                    <p className="font-medium text-gray-800">Alertas Sonoras</p>
+                                    <div className="flex items-center gap-2">
+                                        <p className="font-medium text-gray-800">Alertas Sonoras</p>
+                                        <button 
+                                            onClick={() => playBeep(true)}
+                                            className="text-[10px] bg-white text-blue-600 px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-50 transition flex items-center gap-1 font-bold"
+                                            title="Probar sonido"
+                                        >
+                                            <FaVolumeUp size={10} /> PROBAR
+                                        </button>
+                                    </div>
                                     <p className="text-xs text-gray-500">Suena un beep cuando una plaza se ocupa</p>
                                 </div>
                             </div>
@@ -232,7 +242,11 @@ export default function Configuracion() {
                                     type="checkbox"
                                     className="sr-only peer"
                                     checked={settings.notificacionesSonoras}
-                                    onChange={e => setSettings({ ...settings, notificacionesSonoras: e.target.checked })}
+                                    onChange={e => {
+                                        const val = e.target.checked;
+                                        setSettings({ ...settings, notificacionesSonoras: val });
+                                        if (val) playBeep(true);
+                                    }}
                                 />
                                 <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                             </label>

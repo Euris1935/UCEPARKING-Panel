@@ -4,7 +4,6 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaCar } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
-import { playBeep } from '../utils/audio';
 import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function AccesoManual() {
@@ -163,7 +162,6 @@ export default function AccesoManual() {
       const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
       const idEstOcupPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Ocupado')?.id || 2;
 
-      playBeep();
       await supabase.from('plaza').update({
         id_estado: idEstOcupPlaza
       }).eq('id_plaza', plazaSelect.id_plaza);

@@ -10,6 +10,7 @@ export default function Sensores() {
   const { orgId } = useOrg();
   const [dispositivos, setDispositivos] = useState([]);
   const [plazas, setPlazas] = useState([]);
+  const [estadosEquipo, setEstadosEquipo] = useState([]);
   const [estadosSensor, setEstadosSensor] = useState([]);
   
   // Catálogos nuevos v2.0
@@ -29,7 +30,8 @@ export default function Sensores() {
     id_modelo: '',
     tipo_descripcion: '',
     id_plaza: '',
-    id_estado: 1, // 1 = Activo (Default)
+    id_estado: '',       // Estado Operativo (contexto equipo)
+    id_estado_sensor: '', // Estado del Sensor (contexto sensor)
     fecha_instalacion: new Date().toISOString().split('T')[0],
     ultimo_mantenimiento: '',
     // RF4: Parámetros IoT configurables
@@ -69,12 +71,14 @@ export default function Sensores() {
           tipo:id_tipo(id, nombre),
           modelo:id_modelo(id_modelo, nombre, id_marca, marca(id_marca, nombre)),
           plaza:id_plaza(id_plaza, numero_plaza),
-          estado:id_estado(id, nombre)
+          estado:id_estado(id, nombre),
+          estado_sensor:id_estado_sensor(id, nombre)
         `)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setDispositivos(dispData || []);
+      console.log("Lista de Dispositivos recuperada:", dispData);
 
       // 2. Carga paralela de catálogos para mayor velocidad y blindaje
       const [
@@ -82,22 +86,35 @@ export default function Sensores() {
         { data: tMarcas }, 
         { data: tModelos }, 
         { data: pData }, 
+        { data: eEquipo },
         { data: eSensor }
       ] = await Promise.all([
-        supabase.from('tipo').select('*').order('nombre'),
-        supabase.from('marca').select('*').order('nombre'),
-        supabase.from('modelo').select('*').order('nombre'),
+        supabase.from('tipo').select('*').eq('contexto', 'dispositivo').order('nombre'),
+        supabase.from('marca').select('*').eq('tipo', 'equipo').order('nombre'),
+        supabase.from('modelo').select('*').eq('tipo', 'equipo').order('nombre'),
         supabase.from('plaza').select('*').order('numero_plaza'),
-        supabase.from('estado').select('*').eq('contexto', 'dispositivo').order('nombre')
+        supabase.from('estado').select('*').eq('contexto', 'equipo').order('nombre'),
+        supabase.from('estado').select('*').eq('contexto', 'sensor').order('nombre')
       ]);
 
       setListaTipos(tTipos || []);
       setListaMarcas(tMarcas || []);
       setListaModelos(tModelos || []);
       setPlazas(pData || []);
+      setEstadosEquipo(eEquipo || []);
       setEstadosSensor(eSensor || []);
 
-      if ((tMarcas || []).length === 0) console.warn("Marcas vacías en BD");
+      // Valores por defecto para nuevos registros
+      if (!editingId && !formData.id_estado) {
+        const estOperativo = (eEquipo || []).find(e => e.nombre.toLowerCase().includes('operativo'));
+        const estActivo = (eSensor || []).find(e => e.nombre.toLowerCase().includes('activo'));
+        
+        setFormData(prev => ({ 
+          ...prev, 
+          id_estado: estOperativo?.id || prev.id_estado,
+          id_estado_sensor: estActivo?.id || prev.id_estado_sensor
+        }));
+      }
       
     } catch (error) {
       console.error("Error crítico en loadData:", error.message);
@@ -144,9 +161,10 @@ export default function Sensores() {
       id_tipo: disp.id_tipo || '',
       id_marca: disp.modelo?.id_marca || '',
       id_modelo: disp.id_modelo || '',
-      tipo_descripcion: disp.ubicacion || descTexto, // Preferir ubicacion de la tabla dispositivos
-      id_plaza: disp.id_plaza || '',
-      id_estado: disp.id_estado || 1,
+      tipo_descripcion: disp.ubicacion || descTexto,
+      id_plaza: disp.id_plaza ? String(disp.id_plaza) : '',
+      id_estado: disp.id_estado ? String(disp.id_estado) : '',
+      id_estado_sensor: disp.id_estado_sensor ? String(disp.id_estado_sensor) : '',
       fecha_instalacion: disp.fecha_instalacion ? disp.fecha_instalacion.split('T')[0] : '',
       ultimo_mantenimiento: disp.ultimo_mantenimiento || '',
       ...params
@@ -178,7 +196,8 @@ export default function Sensores() {
         id_tipo: parseInt(formData.id_tipo),
         id_modelo: parseInt(formData.id_modelo),
         id_plaza: formData.id_plaza || null,
-        id_estado: parseInt(formData.id_estado),
+        id_estado: parseInt(formData.id_estado) || null,
+        id_estado_sensor: parseInt(formData.id_estado_sensor) || null,
         fecha_instalacion: formData.fecha_instalacion,
         ultimo_mantenimiento: formData.ultimo_mantenimiento || null,
         ubicacion: formData.tipo_descripcion,
@@ -198,14 +217,21 @@ export default function Sensores() {
           
         if (error) throw error;
         
-        // Log de actualización
-        const nuevoEstado = estadosSensor.find(e => e.id === parseInt(formData.id_estado))?.nombre;
-        const tipoLog = parseInt(formData.id_estado) === 1 ? 'Dispositivo Online' : 
-                      parseInt(formData.id_estado) === 3 ? 'Mantenimiento En Progreso' : 'Dispositivo Offline';
+        // Log de actualización inteligente
+        const nombreEstadoOp = estadosEquipo.find(e => String(e.id) === String(formData.id_estado))?.nombre || 'N/A';
+        const nombreEstadoSen = esSensor ? (estadosSensor.find(e => String(e.id) === String(formData.id_estado_sensor))?.nombre || 'N/A') : null;
         
+        const tipoLog = nombreEstadoOp.toLowerCase().includes('operativo') ? 'Dispositivo Online' : 
+                       nombreEstadoOp.toLowerCase().includes('mantenimiento') ? 'Mantenimiento En Progreso' : 'Dispositivo Offline';
+        
+        let descLog = `Actualización de ${tipoObj?.nombre || 'Dispositivo'}: Estado Operativo a ${nombreEstadoOp}.`;
+        if (esSensor && nombreEstadoSen) {
+          descLog += ` Estado técnico del sensor: ${nombreEstadoSen}.`;
+        }
+
         await registrarLog(
           tipoLog,
-          `Estado actualizado de ${tipoObj?.nombre || 'Equipo'}: ${nuevoEstado}.`,
+          descLog,
           formData.id_plaza || null,
           editingId
         );
@@ -234,6 +260,19 @@ export default function Sensores() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleNew = () => {
+    setEditingId(null);
+    const estOperativo = estadosEquipo.find(e => e.nombre.toLowerCase().includes('operativo'));
+    const estActivo = estadosSensor.find(e => e.nombre.toLowerCase().includes('activo'));
+    
+    setFormData({
+      ...initialForm,
+      id_estado: estOperativo?.id || '',
+      id_estado_sensor: estActivo?.id || ''
+    });
+    setShowModal(true);
   };
 
   const closeModal = () => {
@@ -299,7 +338,7 @@ export default function Sensores() {
         </div>
         {!showModal && (
           <button
-            onClick={() => { setEditingId(null); setFormData(initialForm); setShowModal(true); }}
+            onClick={handleNew}
             className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-6 rounded-lg font-bold shadow flex items-center gap-2 transition duration-150"
           >
             <FaPlus /> Nuevo Registro
@@ -360,15 +399,28 @@ export default function Sensores() {
                         )}
                       </td>
                       <td className="px-6 py-4">
-                        {disp.estado ? (
-                          <span className={`px-2 py-0.5 rounded font-bold text-[10px] border uppercase tracking-tighter ${
-                            disp.id_estado === 1 ? 'bg-green-50 text-green-700 border-green-200' :
-                            disp.id_estado === 3 ? 'bg-orange-50 text-orange-700 border-orange-200' :
-                            'bg-red-50 text-red-700 border-red-200'
-                          }`}>
-                            {disp.estado.nombre}
-                          </span>
-                        ) : <span className="text-gray-300 text-[10px] italic">N/A</span>}
+                        <div className="flex flex-col gap-1">
+                          {disp.estado ? (
+                            <span className={`px-2 py-0.5 rounded font-bold text-[10px] border uppercase tracking-tighter w-fit ${
+                              disp.estado.nombre.toLowerCase().includes('operativo') ? 'bg-green-50 text-green-700 border-green-200' :
+                              disp.estado.nombre.toLowerCase().includes('mantenimiento') || disp.estado.nombre.toLowerCase().includes('fuera') ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                              'bg-red-50 text-red-700 border-red-200'
+                            }`}>
+                              {disp.estado.nombre}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300 text-[10px] italic">Estado N/A</span>
+                          )}
+                          
+                          {disp.id_estado_sensor && disp.estado_sensor && disp.tipo?.nombre?.toLowerCase().includes('sensor') && (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border uppercase tracking-tighter w-fit ${
+                              disp.estado_sensor.nombre.toLowerCase().includes('activo') ? 'bg-purple-50 text-purple-600 border-purple-100' :
+                              'bg-gray-50 text-gray-500 border-gray-200'
+                            }`}>
+                              Sensor: {disp.estado_sensor.nombre}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-right flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                         <button onClick={() => handleEdit(disp)} className="text-blue-500 hover:text-blue-700"><FaEdit size={17} /></button>
@@ -423,7 +475,7 @@ export default function Sensores() {
                 <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Marca *</label>
                   <SearchableSelect 
-                    options={listaMarcas.map(m => ({ value: m.id, label: m.nombre }))}
+                    options={listaMarcas.map(m => ({ value: m.id_marca, label: m.nombre }))}
                     value={formData.id_marca} 
                     onChange={val => setFormData({ ...formData, id_marca: val, id_modelo: '' })} 
                     placeholder="— Marca —"
@@ -442,8 +494,8 @@ export default function Sensores() {
                     disabled={!formData.id_marca}
                   >
                     <option value="">— Modelo —</option>
-                    {listaModelos.filter(m => m.id_marca === parseInt(formData.id_marca)).map(m => (
-                      <option key={m.id} value={m.id}>{m.nombre}</option>
+                    {listaModelos.filter(m => String(m.id_marca) === String(formData.id_marca)).map(m => (
+                      <option key={m.id_modelo} value={m.id_modelo}>{m.nombre}</option>
                     ))}
                   </select>
                 </div>
@@ -456,9 +508,22 @@ export default function Sensores() {
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Vincular Plaza</label>
-                  <select className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" value={formData.id_plaza} onChange={e => setFormData({ ...formData, id_plaza: e.target.value })}>
+                  <select 
+                    className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" 
+                    value={formData.id_plaza} 
+                    onChange={e => setFormData({ ...formData, id_plaza: e.target.value })}
+                  >
                     <option value="">— Ninguna —</option>
-                    {plazas.map(p => <option key={p.id_plaza} value={p.id_plaza}>{p.numero_plaza}</option>)}
+                    {plazas.filter(p => {
+                      // Mostrar si la plaza está libre O si es la plaza del dispositivo que estamos editando
+                      const estaOcupada = dispositivos.some(d => 
+                        String(d.id_plaza) === String(p.id_plaza) && 
+                        d.id_dispositivo !== editingId
+                      );
+                      return !estaOcupada;
+                    }).map(p => (
+                      <option key={p.id_plaza} value={p.id_plaza}>{p.numero_plaza}</option>
+                    ))}
                     {editingId && formData.id_plaza && !plazas.find(p => String(p.id_plaza) === String(formData.id_plaza)) && (
                       <option value={formData.id_plaza}>Plaza asignada</option>
                     )}
@@ -466,13 +531,35 @@ export default function Sensores() {
                 </div>
               </div>
 
-              <div className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                {esSensor ? (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-[10px] font-black text-purple-600 mb-1 uppercase tracking-widest">Estado (Sensor)</label>
-                      <select className="border p-2 rounded-lg w-full text-sm bg-purple-50 border-purple-200 outline-none focus:ring-2 focus:ring-purple-200 font-bold" value={formData.id_estado} onChange={e => setFormData({ ...formData, id_estado: e.target.value })} required>
-                        <option value="">-- Seleccionar Estado --</option>
+              <div className="p-4 bg-gray-50 rounded-xl border border-gray-100 space-y-4">
+                {/* SIEMPRE MOSTRAR ESTADO OPERATIVO */}
+                <div>
+                  <label className="block text-[10px] font-black text-blue-600 mb-1 uppercase tracking-widest">Estado Operativo</label>
+                  <select 
+                    className={`border p-2 rounded-lg w-full text-sm outline-none focus:ring-blue-500 bg-white font-bold ${!editingId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                    value={formData.id_estado} 
+                    onChange={e => setFormData({ ...formData, id_estado: e.target.value })}
+                    required
+                    disabled={!editingId}
+                  >
+                    {!editingId && <option value="">Auto: Operativo</option>}
+                    {estadosEquipo.map(est => <option key={est.id} value={est.id}>{est.nombre}</option>)}
+                  </select>
+                </div>
+
+                {/* MOSTRAR ESTADO SENSOR E IOT SOLO SI ES SENSOR */}
+                {esSensor && (
+                  <>
+                    <div className="border-t border-gray-200 pt-3">
+                      <label className="block text-[10px] font-black text-purple-600 mb-1 uppercase tracking-widest">Estado del Sensor</label>
+                      <select 
+                        className={`border p-2 rounded-lg w-full text-sm bg-purple-50 border-purple-200 outline-none focus:ring-2 focus:ring-purple-200 font-bold ${!editingId ? 'bg-gray-100 cursor-not-allowed opacity-75' : ''}`}
+                        value={formData.id_estado_sensor} 
+                        onChange={e => setFormData({ ...formData, id_estado_sensor: e.target.value })}
+                        required
+                        disabled={!editingId}
+                      >
+                        {!editingId && <option value="">Auto: Activo</option>}
                         {estadosSensor.map(est => <option key={est.id} value={est.id}>{est.nombre}</option>)}
                       </select>
                     </div>
@@ -494,14 +581,7 @@ export default function Sensores() {
                         </div>
                       </div>
                     </div>
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-[10px] font-black text-blue-600 mb-1 uppercase tracking-widest">Estado Operativo</label>
-                    <select className="border p-2 rounded-lg w-full text-sm outline-none focus:ring-blue-500 bg-white font-bold" value={formData.id_estado} onChange={e => setFormData({ ...formData, id_estado: e.target.value })}>
-                      {estadosSensor.map(est => <option key={est.id} value={est.id}>{est.nombre}</option>)}
-                    </select>
-                  </div>
+                  </>
                 )}
               </div>
 

@@ -3,11 +3,11 @@
  * Uses Web Audio API to generate sounds without external assets.
  */
 
-export const playBeep = () => {
+export const playBeep = (force = false) => {
   try {
     const cfg = JSON.parse(localStorage.getItem('appSettings') || '{}');
     // If not set, default to true, but explicitly check for false
-    if (cfg.notificacionesSonoras === false) return;
+    if (!force && cfg.notificacionesSonoras === false) return;
 
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();

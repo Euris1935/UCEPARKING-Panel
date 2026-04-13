@@ -4,7 +4,6 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaSearch, FaClock, FaExclamationTriangle, FaMapMarkerAlt, FaSync } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
-import { playBeep } from '../utils/audio';
 
 export default function Ocupacion() {
   const { orgId } = useOrg();
@@ -164,8 +163,6 @@ export default function Ocupacion() {
 
     const plazaActual = plazas.find(p => p.id_plaza === idPlaza);
     const estadoAnterior = plazaActual?.Nombre_Estado_Rel || 'DESCONOCIDO';
-
-    if (nombreNuevoEstado.toUpperCase() === 'OCUPADA') playBeep();
 
     setPlazas(prev => prev.map(p => p.id_plaza === idPlaza ? { ...p, Nombre_Estado_Rel: nombreNuevoEstado.toUpperCase(), id_estado: idNuevoEstado } : p));
 

@@ -29,7 +29,7 @@ export default function Mantenimiento() {
     const [formData, setFormData] = useState({
         descripcion: '',
         id_dispositivo: '',
-        id_tecnico: '',
+        id_empleado: '',
         id_tipo: '',
         id_estado: '',
         fecha_inicio: new Date().toISOString().split('T')[0],
@@ -58,33 +58,33 @@ export default function Mantenimiento() {
             const { data: mantData, error } = await supabase
                 .from('mantenimiento')
                 .select(`
-                id,
+                id_mantenimiento,
                 fecha_inicio,
                 fecha_fin,
                 descripcion,
                 id_dispositivo,
-                id_tecnico,
+                id_empleado,
                 id_tipo,
                 id_estado,
-                estado ( nombre ),
-                tipo ( nombre ),
-                dispositivo ( 
+                estado:id_estado ( nombre ),
+                tipo:id_tipo ( nombre ),
+                dispositivo:id_dispositivo ( 
                     id_dispositivo,
                     id_plaza,
                     ubicacion, 
-                    tipo ( nombre ) 
+                    tipo:id_tipo ( nombre ) 
                 ),
-                empleado ( 
+                empleado:id_empleado ( 
                     id_empleado,
-                    persona ( nombre, apellido ) 
+                    persona:id_persona ( nombre, apellido ) 
                 )
             `)
+                .eq('organizacion_id', orgId)
                 .order('fecha_inicio', { ascending: false });
 
             if (error) throw error;
             setMantenimientos(mantData || []);
 
-            // Calcular qué dispositivos tienen un mantenimiento activo (sin fecha_fin)
             const ocupados = new Set(
                 (mantData || [])
                     .filter(m => !m.fecha_fin)
@@ -92,13 +92,14 @@ export default function Mantenimiento() {
             );
             setDispositivosOcupados(ocupados);
 
-
             const { data: dispData, error: dispError } = await supabase
                 .from('dispositivo')
-                .select('id_dispositivo, id_plaza, ubicacion, id_estado, tipo(nombre), modelo(nombre, marca(nombre))')
+                .select('id_dispositivo, id_plaza, ubicacion, id_estado, tipo:id_tipo(nombre), modelo:id_modelo(nombre, marca:id_marca(nombre))')
+                .eq('organizacion_id', orgId)
                 .order('ubicacion', { ascending: true });
+
             if (dispError) console.warn('Error cargando dispositivos:', dispError.message);
-            const { data: empData } = await supabase.from('empleado').select('id_empleado, persona(nombre, apellido)');
+            const { data: empData } = await supabase.from('empleado').select('id_empleado, persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId);
             const { data: tipoData } = await supabase.from('tipo').select('*').eq('contexto', 'mantenimiento').order('nombre');
             const { data: estData } = await supabase.from('estado').select('*').eq('contexto', 'mantenimiento').order('nombre');
 
@@ -142,11 +143,11 @@ export default function Mantenimiento() {
     };
 
     const handleEdit = (item) => {
-        setEditingId(item.id);
+        setEditingId(item.id_mantenimiento);
         setFormData({
             descripcion: item.descripcion || '',
             id_dispositivo: item.id_dispositivo || '',
-            id_tecnico: item.id_tecnico || '',
+            id_empleado: item.id_empleado || '',
             id_tipo: item.id_tipo || '',
             id_estado: item.id_estado || '',
             fecha_inicio: item.fecha_inicio ? item.fecha_inicio.split('T')[0] : '',
@@ -168,7 +169,7 @@ export default function Mantenimiento() {
 
         if (result.isConfirmed) {
             try {
-                const { error } = await supabase.from('mantenimiento').delete().eq('id', id);
+                const { error } = await supabase.from('mantenimiento').delete().eq('id_mantenimiento', id);
                 if (error) throw error;
                 Swal.fire('Eliminado', 'El registro ha sido borrado.', 'success');
                 loadData();
@@ -203,17 +204,16 @@ export default function Mantenimiento() {
                 descripcion: formData.descripcion,
                 fecha_inicio: formData.fecha_inicio,
                 id_dispositivo: parseInt(formData.id_dispositivo),
-                id_tecnico: parseInt(formData.id_tecnico),
+                id_empleado: parseInt(formData.id_empleado),
                 id_tipo: parseInt(formData.id_tipo),
                 id_estado: editingId ? nuevoEstadoId : estadoInicialId,
                 fecha_fin: formData.fecha_fin || null,
-                // RLS Fix: solo enviar orgId si existe y añadir id_persona
-                ...(orgId ? { organizacion_id: orgId } : {})
+                organizacion_id: orgId
             };
 
             let error;
             if (editingId) {
-                const { error: updateError } = await supabase.from('mantenimiento').update(payload).eq('id', editingId);
+                const { error: updateError } = await supabase.from('mantenimiento').update(payload).eq('id_mantenimiento', editingId);
                 error = updateError;
             } else {
                 const { error: insertError } = await supabase.from('mantenimiento').insert([payload]);
@@ -249,7 +249,7 @@ export default function Mantenimiento() {
         setFormData({
             descripcion: '',
             id_dispositivo: '',
-            id_tecnico: '',
+            id_empleado: '',
             id_tipo: '',
             id_estado: '',
             fecha_inicio: new Date().toISOString().split('T')[0],
@@ -276,7 +276,7 @@ export default function Mantenimiento() {
             };
             if (idCompletado) updatePayload.id_estado = idCompletado;
 
-            const { error } = await supabase.from('mantenimiento').update(updatePayload).eq('id', id);
+            const { error } = await supabase.from('mantenimiento').update(updatePayload).eq('id_mantenimiento', id);
 
             if (!error) {
                 // Actualizar UI inmediatamente sin esperar reload
@@ -303,7 +303,7 @@ export default function Mantenimiento() {
 
     // Filtrado
     const filteredItems = mantenimientos.filter(m =>
-        m.descripcion.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        m.descripcion?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (m.empleado?.persona?.nombre + ' ' + m.empleado?.persona?.apellido).toLowerCase().includes(searchTerm.toLowerCase()) ||
         m.dispositivo?.tipo?.nombre.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -370,10 +370,10 @@ export default function Mantenimiento() {
                                         <tr><td colSpan="7" className="text-center py-8 text-sm italic text-gray-500">No hay mantenimientos registrados.</td></tr>
                                     ) : (
                                         filteredItems.map((item) => {
-                                            const isResuelto = !!item.fecha_fin || resueltosIds.has(item.id);
+                                            const isResuelto = !!item.fecha_fin || resueltosIds.has(item.id_mantenimiento);
                                             
                                             return (
-                                                <tr key={item.id} className={`transition duration-150 ${isResuelto ? 'bg-gray-50 text-gray-400 opacity-75' : 'hover:bg-blue-50/20 group'}`}>
+                                                <tr key={item.id_mantenimiento} className={`transition duration-150 ${isResuelto ? 'bg-gray-50 text-gray-400 opacity-75' : 'hover:bg-blue-50/20 group'}`}>
                                                     <td className="px-6 py-4">
                                                         <div className="text-xs font-bold text-gray-900 uppercase">{item.dispositivo?.tipo?.nombre || 'Dispositivo Desconocido'}</div>
                                                         <div className="text-[10px] text-gray-500 italic mt-0.5">{item.dispositivo?.ubicacion || 'Sin ubicación'}</div>
@@ -411,7 +411,7 @@ export default function Mantenimiento() {
                                                             {!isResuelto ? (
                                                                 <>
                                                                     <button
-                                                                        onClick={() => handleResolve(item.id)}
+                                                                        onClick={() => handleResolve(item.id_mantenimiento)}
                                                                         className="text-green-500 hover:text-green-700 transition"
                                                                         title="Marcar como Resuelto"
                                                                     >
@@ -425,7 +425,7 @@ export default function Mantenimiento() {
                                                                         <FaEdit size={17} />
                                                                     </button>
                                                                     <button
-                                                                        onClick={() => handleDelete(item.id)}
+                                                                        onClick={() => handleDelete(item.id_mantenimiento)}
                                                                         className="text-red-400 hover:text-red-600 transition"
                                                                         title="Eliminar"
                                                                     >
@@ -498,8 +498,8 @@ export default function Mantenimiento() {
                                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Técnico Asignado *</label>
                                     <SearchableSelect
                                         options={tecnicos.map(t => ({ value: t.id_empleado, label: `${t.persona?.nombre} ${t.persona?.apellido}` }))}
-                                        value={formData.id_tecnico}
-                                        onChange={val => setFormData({ ...formData, id_tecnico: val })}
+                                        value={formData.id_empleado}
+                                        onChange={val => setFormData({ ...formData, id_empleado: val })}
                                         placeholder="— Técnico —"
                                         focusRingClass="focus:ring-blue-500"
                                         selectedItemClass="bg-blue-100 text-blue-800"
