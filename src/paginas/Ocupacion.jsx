@@ -84,46 +84,71 @@ export default function Ocupacion() {
         }
       });
 
-      // 2. RESERVAS (Activas)
-      const nowISO = new Date().toISOString();
-      const { data: reservasActivas } = await supabase
-        .from('reserva')
-        .select('id_plaza, persona ( nombre, apellido )')
-        .lte('fecha_hora_inicio', nowISO)
-        .gte('fecha_hora_fin', nowISO);
+      // 2. RESERVAS (Activas y Autocaducidad Global)
+      const { data: todosEstados } = await supabase.from('estado').select('id, nombre, contexto');
+      const idResActiva = (todosEstados || []).find(e => e.contexto === 'reserva' && e.nombre === 'Activa')?.id || 1;
+      const idEstCompletadoRes = (todosEstados || []).find(e => e.contexto === 'reserva' && e.nombre === 'Completada')?.id || 3;
+      const idEstLibrePlaza = (todosEstados || []).find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+
+      const ahora = new Date();
+      const tzOffset = ahora.getTimezoneOffset() * 60000;
+      const ahoraString = new Date(ahora - tzOffset).toISOString().slice(0, 16);
+
+      const { data: todasActivas } = await supabase.from('reserva').select('id_reserva, id_plaza, fecha_hora_inicio, fecha_hora_fin, id_persona').eq('id_estado', idResActiva);
       
-      (reservasActivas || []).forEach(res => {
-        if (res.id_plaza && res.persona) {
-          mapaOcupacion[res.id_plaza] = {
-            ...mapaOcupacion[res.id_plaza],
-            nombre: `${res.persona.nombre} ${res.persona.apellido}`.trim()
-          };
-        }
+      let resData = (todasActivas || []);
+
+      const vencidas = resData.filter(r => {
+        const fechaFinDB = r.fecha_hora_fin ? r.fecha_hora_fin.replace(' ', 'T').slice(0, 16) : '';
+        return fechaFinDB !== '' && ahoraString >= fechaFinDB;
       });
+
+      if (vencidas.length > 0) {
+          for (const rv of vencidas) {
+              await supabase.from('reserva').update({ id_estado: idEstCompletadoRes }).eq('id_reserva', rv.id_reserva);
+              if (rv.id_plaza) {
+                  await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', rv.id_plaza);
+              }
+          }
+          // Quitar vencidas de resData vivo para no sobreescribir mapas
+          resData = resData.filter(r => !vencidas.find(v => v.id_reserva === r.id_reserva));
+      }
+
+      if (resData.length > 0) {
+          const pIdsRes = resData.map(r => r.id_persona).filter(Boolean);
+          const { data: resPersonas } = await supabase.from('persona').select('id_persona, nombre, apellido').in('id_persona', pIdsRes);
+          
+          resData.forEach(res => {
+             const p = resPersonas?.find(x => String(x.id_persona) === String(res.id_persona));
+             if (p && res.id_plaza) {
+                mapaOcupacion[res.id_plaza] = {
+                   ...mapaOcupacion[res.id_plaza],
+                   nombre: `${p.nombre} ${p.apellido}`.trim()
+                };
+             }
+          });
+      }
 
       // 3. ASIGNACIONES (Fijas)
-      // Buscamos estados relacionados con asignaciones (Activa, Vigente, etc)
-      const idEstadoAsig = estData?.find(e => (e.nombre === 'Activa' || e.nombre === 'Vigente') && (e.contexto === 'asignacion' || e.contexto === 'asignaciones'))?.id;
-
-      const { data: asignacionesActivas } = await supabase
-        .from('asignacion')
-        .select(`
-          id_plaza,
-          empleado (
-            persona ( nombre, apellido )
-          )
-        `)
-        .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
-      
-      (asignacionesActivas || []).forEach(asig => {
-        if (asig.id_plaza) {
-          mapaOcupacion[asig.id_plaza] = {
-            ...mapaOcupacion[asig.id_plaza],
-            type: 'asignacion',
-            nombre: `${asig.empleado?.persona?.nombre || ''} ${asig.empleado?.persona?.apellido || ''}`.trim()
-          };
-        }
-      });
+      const { data: asigData } = await supabase.from('asignacion')
+         .select('id_plaza, id_empleado')
+         .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
+         
+      if (asigData && asigData.length > 0) {
+          const empIds = asigData.map(a => a.id_empleado);
+          const { data: empPersonas } = await supabase.from('empleado').select('id_empleado, persona(nombre, apellido)').in('id_empleado', empIds);
+          
+          asigData.forEach(asig => {
+             const emp = empPersonas?.find(x => x.id_empleado === asig.id_empleado);
+             if (emp?.persona && asig.id_plaza) {
+                mapaOcupacion[asig.id_plaza] = {
+                   ...mapaOcupacion[asig.id_plaza],
+                   type: 'asignacion',
+                   nombre: `${emp.persona.nombre} ${emp.persona.apellido}`.trim()
+                };
+             }
+          });
+      }
 
       setOcupacionInfo(mapaOcupacion);
     } catch (error) { console.error("Error cargando datos:", error); } finally { setLoading(false); setIsRefreshing(false); }
@@ -373,7 +398,7 @@ export default function Ocupacion() {
                       <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel, plaza.id_plaza)}`}>
                         {ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' ? 'ASIGNADA' : plaza.Nombre_Estado_Rel}
                       </span>
-                      {['OCUPADA', 'RESERVADA', 'ASIGNADA'].includes(plaza.Nombre_Estado_Rel) && ocupacionInfo[plaza.id_plaza] && (
+                      {(['OCUPADA', 'RESERVADA', 'RESERVADO', 'ASIGNADA', 'ASIGNADO'].includes(plaza.Nombre_Estado_Rel) || ocupacionInfo[plaza.id_plaza]) && ocupacionInfo[plaza.id_plaza] && (
                         <div className={`mt-1 text-[9px] leading-tight ${
                           plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-red-700' : 
                           plaza.Nombre_Estado_Rel === 'RESERVADA' ? 'text-yellow-800' : 'text-purple-800'

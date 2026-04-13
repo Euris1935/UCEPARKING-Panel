@@ -266,10 +266,21 @@ export default function Reservaciones() {
     setShowModal(true);
   };
 
-  const resetForm = () => {
+  const resetForm = async () => {
     setFormData(initialForm);
     setEditingReservaId(null);
     setShowModal(false);
+  };
+
+  const handleOpenCreate = async () => {
+    await resetForm();
+    // Recargar plazas libres al instante
+    const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+    const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+    const { data: plazaData } = await supabase.from('plaza').select('id_plaza, numero_plaza').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
+    setPlazasList(plazaData || []);
+
+    setShowModal(true);
   };
 
   const formatDisplayDate = (dateStr) => {
@@ -285,7 +296,7 @@ export default function Reservaciones() {
             <p className="text-gray-500 font-medium">Gestión de tiempos y plazas reservadas.</p>
         </div>
         {canCreate && !showModal && (
-        <button onClick={() => { resetForm(); setShowModal(true); }} className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-6 rounded-xl font-bold shadow-md flex items-center gap-2">
+        <button onClick={handleOpenCreate} className="bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-6 rounded-xl font-bold shadow-md flex items-center gap-2">
             <FaPlus /> Nueva Reserva
         </button>
         )}
@@ -322,6 +333,7 @@ export default function Reservaciones() {
                   <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
                     <th className="px-6 py-4 text-left">Persona</th>
                     <th className="px-6 py-4 text-left">Plaza</th>
+                    <th className="px-6 py-4 text-left">Fecha Creación</th>
                     <th className="px-6 py-4 text-left">Inicio</th>
                     <th className="px-6 py-4 text-left">Fin</th>
                     <th className="px-6 py-4 text-left">Estado</th>
@@ -336,6 +348,9 @@ export default function Reservaciones() {
                       <tr key={r.id_reserva} className="hover:bg-gray-50/50 transition-all text-sm">
                         <td className="px-6 py-4 font-bold text-gray-700">{r.persona?.nombre} {r.persona?.apellido}</td>
                         <td className="px-6 py-4"><span className="bg-blue-50 text-blue-600 px-2 py-1 rounded-lg font-black text-xs">#{r.plaza?.numero_plaza}</span></td>
+                        <td className="px-6 py-4 text-gray-500 font-medium">
+                          {r.created_at ? new Date(r.created_at).toLocaleString('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '-'}
+                        </td>
                         <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.fecha_hora_inicio)}</td>
                         <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(r.fecha_hora_fin)}</td>
                         <td className="px-6 py-4">
@@ -379,7 +394,11 @@ export default function Reservaciones() {
                  <div>
                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Persona *</label>
                    <SearchableSelect
-                     options={personasList.map(p => ({ value: p.id_persona, label: `${p.nombre} ${p.apellido}` }))}
+                     options={personasList.filter(p => {
+                        if (isUpdating && p.id_persona === formData.id_persona) return true;
+                        const tieneActiva = reservas.some(r => r.id_persona === p.id_persona && (r.estado?.nombre === 'Activa' || r.id_estado === 1));
+                        return !tieneActiva;
+                     }).map(p => ({ value: p.id_persona, label: `${p.nombre} ${p.apellido}` }))}
                      value={formData.id_persona}
                      onChange={(val) => setFormData({...formData, id_persona: val})}
                      placeholder="— Seleccionar Persona —"

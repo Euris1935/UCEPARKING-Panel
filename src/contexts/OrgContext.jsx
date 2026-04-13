@@ -48,6 +48,12 @@ export function OrgProvider({ children }) {
         if (sus && sus.plan) {
           setPlan(sus.plan);
         }
+      } else {
+        console.warn('OrgContext: No empleado record found for Persona. Using fallback organization.');
+        const { data: fallbackOrg } = await supabase.from('organizacion').select('id_organizacion').limit(1).single();
+        if (fallbackOrg && fallbackOrg.id_organizacion) {
+           setOrgId(fallbackOrg.id_organizacion);
+        }
       }
       setLoading(false);
     }

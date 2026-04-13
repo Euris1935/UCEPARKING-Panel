@@ -84,7 +84,11 @@ export default function AccesoManual() {
         nombre: `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`,
         marca: v.marca?.nombre, 
         modelo: v.modelo?.nombre
-      }));
+      }))
+      .sort((a, b) => {
+        const cmp = a.nombre.localeCompare(b.nombre);
+        return cmp !== 0 ? cmp : a.placa.localeCompare(b.placa);
+      });
       setSearchOptions(options);
 
       // 5. Accesos activos
@@ -348,7 +352,7 @@ export default function AccesoManual() {
           </h3>
           <form onSubmit={handleRegistrarEntrada} className="space-y-4">
             <div className="relative">
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar Vehículo o Persona (Jarol, Placa, etc.) *</label>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar Vehículo o Persona *</label>
               <input
                 type="text"
                 className="w-full border rounded-lg p-3 text-sm focus:ring-2 focus:ring-indigo-500 bg-gray-50 outline-none transition-all"
@@ -465,10 +469,10 @@ export default function AccesoManual() {
             <div className="pt-4">
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || loadingOrg}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-bold tracking-wide transition-all shadow-md disabled:opacity-50 flex justify-center items-center gap-2"
               >
-                {loading ? 'Procesando...' : <><FaDoorOpen /> Registrar Entrada y Abrir Barrera</>}
+                {loading || loadingOrg ? 'Procesando Perfil...' : <><FaDoorOpen /> Registrar Entrada y Abrir Barrera</>}
               </button>
             </div>
           </form>

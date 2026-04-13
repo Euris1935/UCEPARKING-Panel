@@ -181,6 +181,13 @@ export default function Asignaciones() {
         setFormData(initialForm);
         setVehiculoVinculado(null);
         setIsPermanent(false);
+        
+        // Recargar plazas libres al instante
+        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
+        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+        const { data: plazaData } = await supabase.from('plaza').select('id_plaza, numero_plaza').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
+        setPlazasList(plazaData || []);
+        
         setShowModal(true);
     };
 
@@ -394,6 +401,7 @@ export default function Asignaciones() {
                                 <tr>
                                     <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Empleado</th>
                                     <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Plaza</th>
+                                    <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Creación</th>
                                     <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Inicio</th>
                                     <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Fin</th>
                                     <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Notas</th>
@@ -402,7 +410,7 @@ export default function Asignaciones() {
                             </thead>
                             <tbody className="divide-y divide-gray-200">
                                 {filteredData.length === 0 ? (
-                                    <tr><td colSpan="6" className="text-center py-8 text-gray-500 italic">No hay asignaciones registradas.</td></tr>
+                                    <tr><td colSpan="7" className="text-center py-8 text-gray-500 italic">No hay asignaciones registradas.</td></tr>
                                 ) : (
                                     filteredData.map(item => (
                                         <tr key={item.id_asignacion} className="hover:bg-purple-50/20 transition">
@@ -415,6 +423,15 @@ export default function Asignaciones() {
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-purple-700">
                                                 {item.plaza?.numero_plaza || 'N/A'}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                <div className="flex items-center gap-1">
+                                                    <FaCalendarAlt className="text-gray-400" />
+                                                    {item.created_at ? new Date(item.created_at).toLocaleString('es-DO', { 
+                                                      day: '2-digit', month: '2-digit', year: 'numeric', 
+                                                      hour: '2-digit', minute: '2-digit', hour12: true 
+                                                    }) : '-'}
+                                                </div>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                                 <div className="flex items-center gap-1">

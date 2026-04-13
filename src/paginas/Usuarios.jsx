@@ -83,9 +83,27 @@ export default function Usuarios() {
         await loadUsuariosFallback(rolesData || []);
       } else {
         const filtrados = (orgUsers || []).filter(u => {
-          const rol = u.nombre?.toLowerCase();
+          const rol = u.nombre_rol?.toLowerCase() || u.nombre?.toLowerCase();
           return rol !== 'visitante';
         });
+
+        // Obtener `created_at` de respaldo desde tabla usuario o persona
+        const userIds = filtrados.map(u => u.id_usuario || u.id).filter(Boolean);
+        const personaIds = filtrados.map(u => u.id_persona || u.persona_id).filter(Boolean);
+        
+        const [ { data: fUsr }, { data: fPer } ] = await Promise.all([
+            userIds.length > 0 ? supabase.from('usuario').select('id, created_at').in('id', userIds) : { data: [] },
+            personaIds.length > 0 ? supabase.from('persona').select('id_persona, created_at').in('id_persona', personaIds) : { data: [] }
+        ]);
+
+        filtrados.forEach(u => {
+            const uid = u.id_usuario || u.id;
+            const pid = u.id_persona || u.persona_id;
+            const fu = fUsr?.find(x => String(x.id) === String(uid));
+            const fp = fPer?.find(x => String(x.id_persona) === String(pid));
+            u.created_at = fu?.created_at || fp?.created_at || u.created_at;
+        });
+        
         setUsuarios(filtrados);
       }
 
@@ -100,7 +118,7 @@ export default function Usuarios() {
   const loadUsuariosFallback = async (rolesDisponibles) => {
     try {
       const [{ data: usrs }, { data: pers }] = await Promise.all([
-        supabase.from('usuario').select('id, id_persona, id_rol'),
+        supabase.from('usuario').select('id, id_persona, id_rol, created_at'),
         supabase.from('persona').select('id_persona, nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion')
       ]);
       if (!usrs || usrs.length === 0) return;
@@ -118,7 +136,8 @@ export default function Usuarios() {
           sexo:       persona?.sexo            || 'M',
           fecha_nacimiento: persona?.fecha_nacimiento || '',
           direccion:  persona?.direccion       || '',
-          nombre_rol: rol?.nombre              || 'Sin Rol'
+          nombre_rol: rol?.nombre              || 'Sin Rol',
+          created_at: u.created_at
         };
       }).filter(u => u.nombre_rol.toLowerCase() !== 'visitante');
 
@@ -202,8 +221,6 @@ export default function Usuarios() {
         } else {
           if (!email || !contrasena)
             return Swal.fire('Error', 'Email y contraseña son requeridos.', 'error');
-
-          alert(`DEBUG - Enviando email: "${email}" (Longitud: ${email.length})`);
 
           const { data: resultado, error: rpcError } = await supabase.rpc('crear_usuario_admin', {
             p_email:    email,
@@ -381,13 +398,14 @@ export default function Usuarios() {
                     <tr>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Usuario</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Rol</th>
+                      <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Fecha Creación</th>
                       <th className="px-5 py-3 text-right text-xs font-bold text-gray-500 uppercase">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-50">
                     {filteredUsers.length === 0 ? (
                       <tr>
-                        <td colSpan="3" className="text-center py-12 text-gray-400 italic">
+                        <td colSpan="4" className="text-center py-12 text-gray-400 italic">
                           No se encontraron usuarios.
                         </td>
                       </tr>
@@ -443,6 +461,14 @@ export default function Usuarios() {
                             ) : (
                               <RoleBadge roleName={u.nombre_rol} />
                             )}
+                          </td>
+
+                          {/* Columna: Fecha Creación */}
+                          <td className="px-5 py-3.5 text-xs text-gray-500 font-medium">
+                            {u.created_at ? new Date(u.created_at).toLocaleString('es-DO', { 
+                               day: '2-digit', month: '2-digit', year: 'numeric', 
+                               hour: '2-digit', minute: '2-digit', hour12: true 
+                            }) : '-'}
                           </td>
 
                           {/* Columna: Acciones */}

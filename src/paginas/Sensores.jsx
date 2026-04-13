@@ -376,6 +376,7 @@ export default function Sensores() {
                     <th className="px-6 py-4 text-left">Hardware</th>
                     <th className="px-6 py-4 text-left">Marca - Modelo</th>
                     <th className="px-6 py-4 text-left">Plaza</th>
+                    <th className="px-6 py-4 text-left">Fecha Creación</th>
                     <th className="px-6 py-4 text-left">Estado</th>
                     <th className="px-6 py-4 text-right">Acciones</th>
                   </tr>
@@ -397,6 +398,12 @@ export default function Sensores() {
                             <span className="text-sm font-black text-[#2eb17b]">{disp.plaza.numero_plaza}</span>
                           </div>
                         )}
+                      </td>
+                      <td className="px-6 py-4 text-xs font-medium text-gray-500">
+                        {disp.created_at ? new Date(disp.created_at).toLocaleString('es-DO', { 
+                          day: '2-digit', month: '2-digit', year: 'numeric', 
+                          hour: '2-digit', minute: '2-digit', hour12: true 
+                        }) : '-'}
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col gap-1">
