@@ -203,6 +203,8 @@ export default function Usuarios() {
           if (!email || !contrasena)
             return Swal.fire('Error', 'Email y contraseña son requeridos.', 'error');
 
+          alert(`DEBUG - Enviando email: "${email}" (Longitud: ${email.length})`);
+
           const { data: resultado, error: rpcError } = await supabase.rpc('crear_usuario_admin', {
             p_email:    email,
             p_password: contrasena,
@@ -226,6 +228,11 @@ export default function Usuarios() {
               });
             }
             throw new Error(rpcError.message);
+          }
+
+          // Validación del resultado interno de la función
+          if (resultado && resultado.success === false) {
+            throw new Error(resultado.error || 'Error desconocido en la base de datos');
           }
 
           registrarLog('Usuario Creado', `Creación de usuario: ${nombre} ${apellido} (${email})`);
