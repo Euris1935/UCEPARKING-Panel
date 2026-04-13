@@ -54,12 +54,12 @@ export default function Empleados() {
           setCurrentPersonaId(uRow.id_persona);
           const { data: empRow } = await supabase
             .from('empleado')
-            .select('organizacion_id, organizacion(nombre_organizacion)')
+            .select('organizacion_id, organizacion(nombre)')
             .eq('id_persona', uRow.id_persona)
             .maybeSingle();
 
           orgId  = empRow?.organizacion_id   || null;
-          orgNom = empRow?.organizacion?.nombre_organizacion || '';
+          orgNom = empRow?.organizacion?.nombre || '';
         }
       }
 
@@ -114,7 +114,7 @@ export default function Empleados() {
         nombre:          uRow?.nombre   || 'Sin Nombre',
         apellido:        uRow?.apellido || '',
         email:           uRow?.email    || '',
-        nombre_depto:    depto?.nombre_departamento || 'Sin Depto',
+        nombre_depto:    depto?.nombre || 'Sin Depto',
       };
     });
     setEmpleados(lista);
@@ -447,7 +447,7 @@ export default function Empleados() {
                     <option value="">— Seleccionar departamento —</option>
                     {departamentos.map(d => (
                       <option key={d.id_departamento} value={d.id_departamento}>
-                        {d.nombre_departamento}
+                        {d.nombre}
                       </option>
                     ))}
                   </select>

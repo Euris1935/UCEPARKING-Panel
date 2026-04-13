@@ -6,7 +6,7 @@ import Swal from 'sweetalert2';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   FaTicketAlt, FaUserPlus, FaPrint, FaSignOutAlt,
-  FaClipboardCheck, FaSyncAlt, FaBan
+  FaClipboardCheck, FaSyncAlt, FaBan, FaTimes, FaUserTag
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import SearchableSelect from '../componentes/SearchableSelect';
@@ -34,7 +34,7 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
           <Row label="N° Ticket" value={`#${String(ticket.id_ticket).padStart(6, '0')}`} bold />
           {esReimpresion && <p className="text-center text-[10px] font-bold text-yellow-600 bg-yellow-50 border border-yellow-200 rounded px-2 py-1">⚠ COPIA — TICKET REIMPRESO</p>}
           <hr />
-          <Row label="Visitante" value={`${ticket._visitanteNombre ?? ticket.visitante?.persona?.nombre ?? ticket.persona?.nombre ?? '—'} ${ticket._visitanteApellido ?? ticket.visitante?.persona?.apellido ?? ticket.persona?.apellido ?? ''}`} />
+          <Row label="Visitante" value={ticket._personaNombre || 'V. General'} />
           {(ticket._visitanteCedula || ticket.visitante?.persona?.cedula || ticket.persona?.cedula || ticket._cedula) && (
             <Row label="Cédula" value={ticket._visitanteCedula || ticket.visitante?.persona?.cedula || ticket.persona?.cedula || ticket._cedula} />
           )}
@@ -43,12 +43,17 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
           <Row label="Modelo" value={ticket._modelo || ticket.vehiculo?.modelo?.nombre || '—'} />
           <Row label="Color" value={ticket._color || ticket.vehiculo?.color?.nombre || '—'} />
           <hr />
-          <Row label="Plaza Asignada" value={ticket.plaza?.numero_plaza || `#${ticket.id_plaza_asignada}`} bold />
-          <Row label="Hora de Entrada" value={new Date(ticket.fecha_hora_emision).toLocaleString('es-DO')} />
-          {(ticket.estado?.nombre === 'Cerrado' || ticket.Estado === 'Cerrado') && ticket._horaSalida && (
-            <><Row label="Hora de Salida" value={new Date(ticket._horaSalida).toLocaleString('es-DO')} />{tiempoEstancia && <Row label="Duración" value={tiempoEstancia} bold />}</>
+          <Row label="Entrada" value={new Date(ticket.fecha_hora_emision).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })} />
+          {ticket._horaSalida && (
+            <Row 
+              label="Salida" 
+              value={new Date(ticket._horaSalida).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })} 
+              labelClass="text-red-600"
+              valueClass="text-red-600 font-mono"
+            />
           )}
-          <Row label="Estado" value={ticket.Estado || ticket.estado?.nombre || '—'} />
+          <Row label="Plaza" value={ticket.plaza?.numero_plaza || `#${ticket.id_plaza_asignada}`} bold />
+          <Row label="Estado" value={ticket._statusName || '—'} />
           {ticket.Descripcion && ticket.Descripcion.trim() && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
               <p className="text-[10px] text-gray-400 font-bold uppercase mb-0.5">Observaciones</p>
@@ -89,9 +94,10 @@ export default function Tickets() {
 
   const [loading,                 setLoading]                 = useState(false);
   const [isRefreshing,            setIsRefreshing]            = useState(false);
-  const [orgId,                   setOrgId]                   = useState(null); // organizacion_id del usuario activo
+  const [orgId,                   setOrgId]                   = useState(null);
   const [activeTab,               setActiveTab]               = useState(canCreate ? 'entrada' : 'activos');
   const [tickets,                 setTickets]                 = useState([]);
+  const [searchTerm,              setSearchTerm]              = useState('');
   const [ticketsActivos,          setTicketsActivos]          = useState(0);
   const [visitantesRegistrados,   setVisitantesRegistrados]   = useState([]);
   const [plazasLibres,            setPlazasLibres]            = useState([]);
@@ -133,48 +139,74 @@ export default function Tickets() {
   const loadData = async () => {
     setIsRefreshing(true);
     try {
-      // Obtener estados relevantes
       const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
       const getEstadoId = (ctx, nom) => estadosCat?.find(e => e.contexto === ctx && e.nombre === nom)?.id;
       
       const idEstLibrePlaza = getEstadoId('plaza', 'Libre') || 1;
-      const idEstActivoTicket = getEstadoId('ticket', 'Activo') || 1;
+
+      const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
 
       const { data: plazas } = await supabase.from('plaza').select('*').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
-      const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-      
-      const { data: tks, error: tksErr } = await supabase
+
+      const { data: stCat } = await supabase.from('estado').select('id, nombre').eq('contexto', 'ticket');
+      const stMap = {}; (stCat || []).forEach(s => { stMap[s.id] = s.nombre; });
+
+      const { data: vhData } = await supabase.from('vehiculo').select('id_vehiculo, placa, id_marca, id_modelo, id_color, marca(nombre), modelo(nombre), color(nombre)');
+      const vhMap = {}; 
+      (vhData || []).forEach(v => {
+        vhMap[v.id_vehiculo] = {
+          marca: v.marca?.nombre,
+          modelo: v.modelo?.nombre,
+          color: v.color?.nombre
+        };
+      });
+
+      const { data: vRaw } = await supabase.from('visitante').select('id_visitante, id_persona, created_at');
+      let vMap = {};
+      if (vRaw && vRaw.length > 0) {
+        const pIds = vRaw.map(v => v.id_persona).filter(Boolean);
+        const { data: pData } = await supabase.from('persona').select('*').in('id_persona', pIds);
+        const pMap = {}; (pData || []).forEach(p => { pMap[p.id_persona] = p; });
+        vRaw.forEach(v => {
+          vMap[v.id_visitante] = { ...v, persona: pMap[v.id_persona] };
+        });
+      }
+
+      const { data: tks } = await supabase
         .from('ticket')
-        .select('*, estado(nombre), persona(nombre, apellido), plaza(numero_plaza), vehiculo(marca(nombre), color(nombre), modelo(nombre))')
+        .select('*, plaza:id_plaza_asignada(numero_plaza)')
         .gte('fecha_hora_emision', hoy.toISOString())
         .order('fecha_hora_emision', { ascending: false });
-      if (tksErr) console.error('[Tickets] Error cargando tickets:', tksErr.message, tksErr.code);
 
-      const { data: visitantesData, error: visErr } = await supabase
-        .from('visitante')
-        .select('id_visitante, created_at, persona(id_persona, nombre, apellido, cedula, telefono, sexo)')
-        .order('created_at', { ascending: false });
-      if (visErr) console.error('[Tickets] Error cargando visitantes:', visErr.message, visErr.code);
+      const closedIds = (tks || []).filter(t => stMap[t.id_estado]?.toLowerCase() === 'cerrado').map(t => t.id_ticket);
+      let exitMap = {};
+      if (closedIds.length > 0) {
+        const { data: exits } = await supabase.from('acceso').select('ticket_id, salida_at').in('ticket_id', closedIds).not('salida_at', 'is', null);
+        (exits || []).forEach(e => { exitMap[e.ticket_id] = e.salida_at; });
+      }
+
+      const ticketsEnriquecidos = (tks || []).map(t => {
+        const vInfo = vMap[t.id_visitante];
+        const vhInfo = vhMap[t.id_vehiculo] || {};
+        return {
+          ...t,
+          _statusName: stMap[t.id_estado] || '—',
+          _personaNombre: vInfo ? `${vInfo.persona?.nombre || ''} ${vInfo.persona?.apellido || ''}` : '—',
+          _marca: vhInfo.marca || null,
+          _modelo: vhInfo.modelo || null,
+          _color: vhInfo.color || null,
+          _horaSalida: exitMap[t.id_ticket] || null
+        };
+      });
 
       const { data: catMarcas } = await supabase.from('marca').select('id_marca, nombre').eq('tipo', 'vehiculo').order('nombre');
       const { data: catModelos } = await supabase.from('modelo').select('id_modelo, nombre, id_marca').eq('tipo', 'vehiculo').order('nombre');
       const { data: catColores } = await supabase.from('color').select('id_color, nombre').order('nombre');
 
-      const { count: countActivos } = await supabase
-        .from('ticket')
-        .select('*', { count: 'exact', head: true })
-        .eq('id_estado', idEstActivoTicket);
-      
       setPlazasLibres(plazas || []);
-      setTickets(tks || []);
-      setTicketsActivos(countActivos || 0);
-      setVisitantesRegistrados(
-        (visitantesData || []).sort((a, b) => {
-          const na = `${a.personas?.nombre ?? ''} ${a.personas?.apellido ?? ''}`.toLowerCase();
-          const nb = `${b.personas?.nombre ?? ''} ${b.personas?.apellido ?? ''}`.toLowerCase();
-          return na.localeCompare(nb);
-        })
-      );
+      setTickets(ticketsEnriquecidos);
+      setTicketsActivos(ticketsEnriquecidos.filter(t => t._statusName?.toLowerCase() === 'activo').length);
+      setVisitantesRegistrados(Object.values(vMap).sort((a,b) => (a.persona?.nombre || '').localeCompare(b.persona?.nombre || '')));
       setListaMarcas(catMarcas || []);
       setListaModelos(catModelos || []);
       setListaColores(catColores || []);
@@ -234,33 +266,28 @@ export default function Tickets() {
           setLoading(false);
           return Swal.fire('Atención', 'Nombre y Apellido son obligatorios.', 'warning');
         }
-        // RPC SECURITY DEFINER — bypasea la política WITH CHECK en 'personas'
-        // La política RLS impide INSERT directo desde el cliente
-        const { data: rpcResult, error: rpcErr } = await supabase.rpc('crear_visitante', {
-          p_nombre:   visitanteForm.nombre.trim(),
-          p_apellido: visitanteForm.apellido.trim(),
-          p_cedula:   visitanteForm.cedula   || null,
-          p_telefono: visitanteForm.telefono || null,
-          p_sexo:     visitanteForm.sexo     || 'M',
-        });
-        if (rpcErr) {
-          // Si la RPC aún no existe en la BD, mostrar el SQL a ejecutar
-          if (rpcErr.code === 'PGRST202' || rpcErr.message?.includes('function')) {
-            setLoading(false);
-            return Swal.fire({
-              title: 'SQL requerido en Supabase',
-              html: `La función <code>crear_visitante</code> no existe.<br><br>
-                     Ejecuta el script <b>Bloque 4</b> del artifact SQL en el editor de Supabase.`,
-              icon: 'warning'
-            });
-          }
-          throw rpcErr;
-        }
-        visitanteId = rpcResult; // la RPC retorna el id_visitante directamente
+        
+        const { data: newP, error: pErr } = await supabase
+          .from('persona')
+          .insert([{
+            nombre: visitanteForm.nombre.trim(),
+            apellido: visitanteForm.apellido.trim(),
+            cedula: visitanteForm.cedula || null,
+            telefono: visitanteForm.telefono || null,
+            sexo: visitanteForm.sexo || 'M'
+          }])
+          .select('id_persona').single();
+        if (pErr) throw pErr;
+
+        const { data: newV, error: vErr } = await supabase
+          .from('visitante')
+          .insert([{ id_persona: newP.id_persona }])
+          .select('id_visitante').single();
+        if (vErr) throw vErr;
+        
+        visitanteId = newV.id_visitante;
       }
 
-
-      // NUEVO: Resolver vehículo ANTES de crear el ticket
       const placa = visitanteForm.placa.toUpperCase();
       const { data: vEx } = await supabase.from('vehiculo').select('id_vehiculo').eq('placa', placa).maybeSingle();
       let vehiculoId = vEx?.id_vehiculo;
@@ -298,10 +325,11 @@ export default function Tickets() {
       
       if (tErr) throw tErr;
 
-      // Enriquecer manualmente el ticket con datos del visitante para el print view
       const visitanteSeleccionado = visitantesRegistrados.find(v => v.id_visitante === visitanteId);
-      nuevoTicket._visitanteNombre = visitanteForm.nombre || visitanteSeleccionado?.persona?.nombre || '';
-      nuevoTicket._visitanteApellido = visitanteForm.apellido || visitanteSeleccionado?.persona?.apellido || '';
+      const nombreFinal = visitanteForm.nombre || visitanteSeleccionado?.persona?.nombre || '';
+      const apellidoFinal = visitanteForm.apellido || visitanteSeleccionado?.persona?.apellido || '';
+      
+      nuevoTicket._personaNombre = `${nombreFinal} ${apellidoFinal}`.trim() || 'V. General';
       nuevoTicket._visitanteCedula = visitanteForm.cedula || visitanteSeleccionado?.persona?.cedula || null;
       nuevoTicket._marca = listaMarcas.find(m => m.id_marca === parseInt(visitanteForm.id_marca))?.nombre || null;
       nuevoTicket._modelo = listaModelos.find(m => m.id_modelo === parseInt(visitanteForm.id_modelo))?.nombre || null;
@@ -315,7 +343,6 @@ export default function Tickets() {
       setVisitanteForm({ id_visitante: null, nombre: '', apellido: '', cedula: '', telefono: '', sexo: 'M', placa: '', id_marca: '', id_modelo: '', id_color: '', id_plaza: '', duracion: '60', descripcion: '' });
       setActiveTab('activos');
       loadData();
-      // Registro acceso + barrera
       try {
         const plazaId = parseInt(visitanteForm.id_plaza);
         if (vehiculoId) {
@@ -347,10 +374,19 @@ export default function Tickets() {
       const idEstCerrTk = catEst?.find(e => e.contexto === 'ticket' && e.nombre === 'Cerrado')?.id || 2;
       const idEstLibPlaza = catEst?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
 
-      const { error: tkErr, count: tkCount } = await supabase.from('ticket').update({ id_estado: idEstCerrTk }, { count: 'exact' }).eq('id_ticket', ticket.id_ticket);
+      const { error: tkErr } = await supabase.from('ticket').update({ id_estado: idEstCerrTk }).eq('id_ticket', ticket.id_ticket);
       if (tkErr) throw tkErr;
+      
       const vt = visitantesRegistrados.find(v => v.id_visitante === ticket.id_visitante);
-      const nombreCompleto = vt ? `${vt.persona?.nombre || ''} ${vt.persona?.apellido || ''}`.trim() : (ticket.persona?.nombre || 'Visitante');
+      const nombreCompleto = vt ? `${vt.persona?.nombre || ''} ${vt.persona?.apellido || ''}`.trim() : 'Visitante';
+
+      const ticketCerrado = {
+        ...ticket,
+        _statusName: 'Cerrado',
+        _horaSalida: ahora,
+        _personaNombre: nombreCompleto,
+        _esReimpresion: true
+      };
 
       await Promise.all([
         supabase.from('plaza').update({ id_estado: idEstLibPlaza }).eq('id_plaza', ticket.id_plaza_asignada),
@@ -358,6 +394,8 @@ export default function Tickets() {
         registrarLog('SALIDA_VEHICULO', `Salida: ${nombreCompleto} — Vehículo: ${ticket.placa_capturada} — Plaza ${ticket.plaza?.numero_plaza}. Tiempo: ${calcTiempo(ticket.fecha_hora_emision, ahora)}.`, ticket.id_plaza_asignada),
         (async () => { try { const { data: { session } } = await supabase.auth.getSession(); if (session?.access_token) fetch('http://localhost:4000/api/access/open-main', { method: 'POST', headers: { 'Authorization': `Bearer ${session.access_token}` } }).catch(() => {}); } catch (_) {} })()
       ]);
+      
+      setTicketParaImprimir(ticketCerrado);
       Swal.fire('¡Salida Registrada!', `La plaza ${ticket.plaza?.numero_plaza} quedó libre.`, 'success');
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
@@ -371,7 +409,7 @@ export default function Tickets() {
       const idEstAnuTk = catEst?.find(e => e.contexto === 'ticket' && e.nombre === 'Anulado')?.id || 4;
       const idEstLibPlaza = catEst?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
 
-      const { error: tkErr, count: tkCount } = await supabase.from('ticket').update({ id_estado: idEstAnuTk }, { count: 'exact' }).eq('id_ticket', ticket.id_ticket);
+      const { error: tkErr } = await supabase.from('ticket').update({ id_estado: idEstAnuTk }).eq('id_ticket', ticket.id_ticket);
       if (tkErr) throw tkErr;
       await supabase.from('plaza').update({ id_estado: idEstLibPlaza }).eq('id_plaza', ticket.id_plaza_asignada);
       await registrarLog('TICKET_ANULADO', `Ticket anulado: ${ticket.placa_capturada} — Plaza ${ticket.plaza?.numero_plaza}.`, ticket.id_plaza_asignada);
@@ -402,7 +440,7 @@ export default function Tickets() {
       {canCreate && activeTab === 'entrada' && (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
           <section className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
-            <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-gray-800"><FaUserPlus className="text-green-600" /> Emisión de Ticket</h3>
+            <h3 className="text-lg font-bold mb-5 flex items-center gap-2"><FaUserPlus className="text-green-600" /> Emisión de Ticket</h3>
             <form onSubmit={handleEmitirTicket} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Visitante ya registrado?</label>
@@ -436,7 +474,6 @@ export default function Tickets() {
                   value={visitanteForm.cedula}
                   maxLength={13}
                   onChange={e => {
-                    // formatea: 000-0000000-0
                     const digits = e.target.value.replace(/\D/g, '');
                     let fmt = digits;
                     if (digits.length > 3) fmt = digits.slice(0, 3) + '-' + digits.slice(3);
@@ -498,77 +535,130 @@ export default function Tickets() {
 
       {activeTab === 'activos' && (
         <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-          <div className="flex items-center justify-between p-5 border-b">
-            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaClipboardCheck className="text-green-600" /> Lista de Tickets del Día</h3>
-            <button onClick={loadData} disabled={isRefreshing} className="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition disabled:opacity-50">
-                <FaSyncAlt className={isRefreshing ? 'animate-spin text-green-600' : ''} />
-            </button>
+          <div className="flex flex-col md:flex-row items-center justify-between p-5 border-b gap-4 bg-gray-50/50">
+            <div>
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaClipboardCheck className="text-green-600" /> Lista de Tickets del Día</h3>
+              <p className="text-[10px] text-gray-500 font-medium">Gestiona y visualiza todos los movimientos de hoy</p>
+            </div>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <div className="relative w-full md:w-64">
+                <input 
+                  type="text" 
+                  placeholder="Buscar por placa o nombre..." 
+                  className="w-full pl-8 pr-4 py-2 text-xs border rounded-xl focus:ring-2 focus:ring-green-500 outline-none transition-all"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <FaSyncAlt className="absolute left-3 top-2.5 text-gray-300 text-[10px]" />
+              </div>
+              <button 
+                onClick={() => { setSearchTerm(''); loadData(); }} 
+                disabled={isRefreshing} 
+                title="Sincronizar datos"
+                className="bg-white border text-gray-500 hover:text-green-600 p-2.5 rounded-xl hover:shadow-sm transition disabled:opacity-50"
+              >
+                  <FaSyncAlt className={isRefreshing ? 'animate-spin' : ''} />
+              </button>
+            </div>
           </div>
           {tickets.length === 0
             ? <div className="text-center py-16 text-gray-400"><FaTicketAlt className="mx-auto text-4xl mb-3 opacity-20" /><p>No hay tickets registrados hoy.</p></div>
             : (
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-100 text-sm">
-                  <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-100/50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">
                     <tr>
-                      <th className="px-5 py-3 text-left">Ticket</th>
-                      <th className="px-5 py-3 text-left">Visitante</th>
-                      <th className="px-5 py-3 text-left">Placa</th>
-                      <th className="px-5 py-3 text-left">Estado</th>
-                      <th className="px-5 py-3 text-left">Vehículo</th>
-                      <th className="px-5 py-3 text-left">Plaza</th>
-                      <th className="px-5 py-3 text-left">Entrada</th>
-                      <th className="px-5 py-3 text-left">Tiempo</th>
-                      <th className="px-5 py-3 text-left">Vence</th>
-                      <th className="px-5 py-3 text-center">Acciones</th>
+                      <th className="px-5 py-4 text-left">Ticket</th>
+                      <th className="px-5 py-4 text-left">Visitante</th>
+                      <th className="px-5 py-4 text-left">Placa</th>
+                      <th className="px-5 py-4 text-left">Estado</th>
+                      <th className="px-5 py-4 text-left">Plaza</th>
+                      <th className="px-5 py-4 text-left">Entrada</th>
+                      <th className="px-5 py-4 text-left">Salida/Vence</th>
+                      <th className="px-5 py-4 text-left">Tiempo</th>
+                      <th className="px-5 py-4 text-center">Acciones</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {tickets.map(t => {
-                      const estadoNombre = t.estado_ticket?.nombre_estado || t.Estado || '—';
-                      const estadoStyles = { Activo: "bg-green-100 text-green-700 border border-green-200", Vencido: "bg-amber-100 text-amber-700 border border-amber-200", Anulado: "bg-red-100 text-red-700 border border-red-200", Cerrado: "bg-gray-100 text-gray-600 border border-gray-200" };
-                      // Lookup client-side del visitante (evita PGRST201 de FK duplicada)
-                      const visitanteT = visitantesRegistrados.find(v => v.id_visitante === t.id_visitante);
-                      const nombreVisitante = visitanteT?.personas?.nombre ?? t._visitanteNombre ?? t.personas?.nombre ?? '—';
-                      const apellidoVisitante = visitanteT?.personas?.apellido ?? t._visitanteApellido ?? t.personas?.apellido ?? '';
-                      return (
-                        <tr key={t.id_ticket} className="hover:bg-gray-50 transition-all">
-                          <td className="px-5 py-4 text-xs text-gray-400 font-mono">#{String(t.id_ticket).padStart(5, '0')}</td>
-                          <td className="px-5 py-4 font-medium text-gray-800">{nombreVisitante} {apellidoVisitante}</td>
-                          <td className="px-5 py-4"><span className="bg-gray-900 text-white font-mono text-xs px-2 py-1 rounded">{t.placa_capturada}</span></td>
-                          <td className="px-5 py-4"><span className={`font-bold text-xs px-2 py-1 rounded-full ${estadoStyles[estadoNombre] || 'bg-gray-100 text-gray-500'}`}>{estadoNombre}</span></td>
-                          <td className="px-5 py-4 text-gray-500 text-xs">{[t._marca || t.vehiculo?.marca?.nombre, t._modelo || t.vehiculo?.modelo?.nombre, t._color || t.vehiculo?.color?.nombre].filter(Boolean).join(' · ') || '—'}</td>
-                          <td className="px-5 py-4"><span className="font-bold text-green-700 bg-green-50 px-2 py-1 rounded-full text-xs border border-green-200">{t.plaza?.numero_plaza}</span></td>
-                          <td className="px-5 py-4 text-xs text-gray-500">{new Date(t.fecha_hora_emision).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })}</td>
-                          <td className="px-5 py-4 text-xs font-bold text-amber-600">{estadoNombre === 'Activo' ? calcTiempo(t.fecha_hora_emision, new Date().toISOString()) : <span className="text-gray-300">—</span>}</td>
-                          <td className="px-5 py-4 text-xs">{t.fecha_hora_vencimiento ? <span className={`font-bold ${estadoNombre === 'Activo' && (new Date(t.fecha_hora_vencimiento) - Date.now()) < 600000 ? 'text-red-600 animate-pulse' : 'text-gray-500'}`}>{new Date(t.fecha_hora_vencimiento).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}</span> : <span className="text-gray-300">—</span>}</td>
-                          <td className="px-5 py-4 text-center">
-                            <div className="flex gap-1 justify-center">
-                              <button onClick={async () => {
-                                const vt = visitantesRegistrados.find(v => v.id_visitante === t.id_visitante);
-                                let salida = null;
-                                if (estadoNombre === 'Cerrado') {
-                                    const { data: ra } = await supabase.from('registros_acceso').select('salida_at').eq('ticket_id', t.Id_Ticket).not('salida_at', 'is', null).maybeSingle();
-                                    salida = ra?.salida_at || t.Fecha_Hora_Vencimiento || null;
-                                }
-                                setTicketParaImprimir({
-                                  ...t,
-                                  _esReimpresion: true,
-                                  _horaSalida: salida,
-                                  _visitanteNombre: vt?.persona?.nombre || t.persona?.nombre || '',
-                                  _visitanteApellido: vt?.persona?.apellido || t.persona?.apellido || '',
-                                  _visitanteCedula: vt?.persona?.cedula || t.persona?.cedula || null,
-                                });
-                              }} title="Reimprimir" className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition"><FaPrint size={15} /></button>
-                              {estadoNombre === 'Activo' && canEdit && (<>
-                                <button onClick={() => handleCerrarTicket(t)} className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-bold text-xs transition shadow"><FaSignOutAlt size={12} /> Salida</button>
-                                <button onClick={() => handleAnularTicket(t)} className="flex items-center gap-1 bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1.5 rounded-lg font-bold text-xs transition"><FaBan size={12} /> Anular</button>
-                              </>)}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                  <tbody className="bg-white divide-y divide-gray-100">
+                    {tickets
+                      .filter(t => 
+                        t.placa_capturada?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                        t._personaNombre?.toLowerCase().includes(searchTerm.toLowerCase())
+                      )
+                      .map(t => {
+                        const sName = t._statusName || '—';
+                        const sLower = sName.toLowerCase();
+                        const cls = {
+                          activo:  'bg-green-100 text-green-700 ring-1 ring-green-200',
+                          vencido: 'bg-amber-100 text-amber-700 ring-1 ring-amber-200',
+                          anulado: 'bg-red-100 text-red-700 ring-1 ring-red-200',
+                          cerrado: 'bg-gray-100 text-gray-500 ring-1 ring-gray-200'
+                        }[sLower] || 'bg-gray-100 text-gray-500';
+
+                        return (
+                          <tr key={t.id_ticket} className="hover:bg-gray-50/80 transition-all select-none group">
+                            <td className="px-5 py-4 text-xs text-gray-400 font-mono">
+                              #{String(t.id_ticket).padStart(5, '0')}
+                            </td>
+                            <td className="px-5 py-4 font-semibold text-gray-700">
+                              {t._personaNombre}
+                            </td>
+                            <td className="px-5 py-4">
+                              <span className="bg-gray-900 text-white font-mono text-[10px] px-2 py-1 rounded-md shadow-sm">{t.placa_capturada}</span>
+                            </td>
+                            <td className="px-5 py-4">
+                              <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase ${cls}`}>
+                                {sName}
+                              </span>
+                            </td>
+                            <td className="px-5 py-4 text-xs font-bold text-gray-600">
+                              {t.plaza?.numero_plaza || '—'}
+                            </td>
+                            <td className="px-5 py-4 text-[11px] text-gray-500 font-medium">
+                              {new Date(t.fecha_hora_emision).toLocaleString('es-DO', { hour: '2-digit', minute: '2-digit' })}
+                            </td>
+                            <td className="px-5 py-4 text-[11px] text-gray-400 italic">
+                              {t.fecha_hora_vencimiento 
+                                ? new Date(t.fecha_hora_vencimiento).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })
+                                : (t._horaSalida ? new Date(t._horaSalida).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' }) : '—')}
+                            </td>
+                            <td className="px-5 py-4 text-xs font-bold text-amber-600">
+                              {sLower === 'activo'
+                                ? <span className="animate-pulse">{calcTiempo(t.fecha_hora_emision, new Date().toISOString())}</span>
+                                : (t._horaSalida ? <span className="text-gray-400 font-normal">{calcTiempo(t.fecha_hora_emision, t._horaSalida)}</span> : '—')}
+                            </td>
+                            <td className="px-5 py-4 text-center">
+                              <div className="flex gap-1 justify-center opacity-70 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                  onClick={() => setTicketParaImprimir({ ...t, _esReimpresion: true })} 
+                                  title="Reimprimir Comprobante" 
+                                  className="p-2 text-blue-500 hover:bg-blue-50 rounded-xl transition"
+                                >
+                                  <FaPrint size={14} />
+                                </button>
+                                {sLower === 'activo' && (
+                                  <>
+                                    <button 
+                                      onClick={() => handleCerrarTicket(t)} 
+                                      title="Registrar Salida" 
+                                      className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-xl text-[10px] font-bold transition shadow-sm"
+                                    >
+                                      <FaSignOutAlt size={11} /> SALIDA
+                                    </button>
+                                    <button 
+                                      onClick={() => handleAnularTicket(t)} 
+                                      title="Anular Ticket" 
+                                      className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-xl text-[10px] font-bold transition"
+                                    >
+                                      <FaTimes size={11} />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                   </tbody>
                 </table>
               </div>

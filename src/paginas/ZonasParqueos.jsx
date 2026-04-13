@@ -81,7 +81,7 @@ export default function ZonasParqueo() {
   };
 
   /* ── Generar plazas en lote para una zona ── */
-  const generarPlazasEnLote = async (idZona, nombreZona, capacidad, idLibre) => {
+  const generarPlazasEnLote = async (idZona, nombreZona, capacidadTotal, idLibre) => {
     const prefijo = generarIniciales(nombreZona);
     // Obtener plazas existentes para no duplicar
     const { data: existentes } = await supabase.from('plaza').select('numero_plaza').eq('id_zona', idZona);
@@ -90,7 +90,7 @@ export default function ZonasParqueo() {
     const lote = [];
     let seq = 1;
     let insertadas = 0;
-    while (insertadas < capacidad) {
+    while (insertadas < capacidadTotal) {
       const codigo = `${prefijo}-${String(seq).padStart(2, '0')}`;
       if (!codigosExistentes.has(codigo)) {
         lote.push({
@@ -104,7 +104,7 @@ export default function ZonasParqueo() {
         insertadas++;
       }
       seq++;
-      if (seq > capacidad * 3) break; // Salvaguarda ante bucle infinito
+      if (seq > capacidadTotal * 3) break; // Salvaguarda ante bucle infinito
     }
 
     const { error } = await supabase.from('plaza').insert(lote);
@@ -121,7 +121,7 @@ export default function ZonasParqueo() {
 
     const payload = { 
       nombre: zoneForm.Nombre_Zona.trim(), 
-      capacidad: parseInt(zoneForm.Capacidad_Total),
+      capacidad_total: parseInt(zoneForm.Capacidad_Total),
       organizacion_id: orgId
     };
     const estaCreando = !editingZone;
@@ -186,16 +186,16 @@ export default function ZonasParqueo() {
   /* ── Generar plazas para zona existente (botón en tabla) ── */
   const handleGenerarPlazasExistente = async (zona) => {
     const plazasActuales = plazas.filter(p => p.id_zona === zona.id_zona).length;
-    const faltantes = zona.capacidad - plazasActuales;
+    const faltantes = zona.capacidad_total - plazasActuales;
 
     if (faltantes <= 0) {
-      return Swal.fire('Sin cambios', `Esta zona ya tiene ${plazasActuales} plazas (capacidad: ${zona.Capacidad_Total}).`, 'info');
+      return Swal.fire('Sin cambios', `Esta zona ya tiene ${plazasActuales} plazas (capacidad: ${zona.capacidad_total}).`, 'info');
     }
 
-    const prefijo = generarIniciales(zona.Nombre_Zona);
+    const prefijo = generarIniciales(zona.nombre);
     const confirm = await Swal.fire({
       title: `¿Generar ${faltantes} plazas faltantes?`,
-      html: `La zona <b>${zona.Nombre_Zona}</b> tiene ${plazasActuales}/${zona.Capacidad_Total} plazas.<br/>
+      html: `La zona <b>${zona.nombre}</b> tiene ${plazasActuales}/${zona.capacidad_total} plazas.<br/>
              Se agregarán las ${faltantes} restantes con prefijo <code>${prefijo}</code>.`,
       icon: 'question',
       showCancelButton: true,
@@ -208,9 +208,9 @@ export default function ZonasParqueo() {
       const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
       const idLibre = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
 
-      const { total } = await generarPlazasEnLote(zona.id_zona, zona.nombre, zona.capacidad, idLibre);
+      const { total } = await generarPlazasEnLote(zona.id_zona, zona.nombre, zona.capacidad_total, idLibre);
       Swal.fire('Listo', `Se generaron ${total} plazas nuevas.`, 'success');
-      registrarLog('Plazas Generadas', `Generación de ${total} plazas para zona: ${zona.Nombre_Zona}`);
+      registrarLog('Plazas Generadas', `Generación de ${total} plazas para zona: ${zona.nombre}`);
       loadData();
     } catch (error) { Swal.fire('Error', error.message, 'error'); }
   };
@@ -219,7 +219,7 @@ export default function ZonasParqueo() {
 
   const handleEditZone = (zone) => {
     setEditingZone(zone);
-    setZoneForm({ Nombre_Zona: zone.nombre, Capacidad_Total: zone.capacidad });
+    setZoneForm({ Nombre_Zona: zone.nombre, Capacidad_Total: zone.capacidad_total });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -235,14 +235,35 @@ export default function ZonasParqueo() {
 
     if (result.isConfirmed) {
       try {
-        // Borrado manual en cascada para evitar errores de FK
-        await supabase.from('plaza').delete().eq('id_zona', zoneId);
-        await supabase.from('zona').delete().eq('id_zona', zoneId);
-        Swal.fire('Eliminado', 'Zona y plazas eliminadas.', 'success');
+        Swal.fire({ title: 'Eliminando...', didOpen: () => Swal.showLoading() });
+        
+        // 1. Obtener IDs de las plazas de esta zona para limpiar dependencias si es necesario
+        const { data: plazasZona } = await supabase.from('plaza').select('id_plaza').eq('id_zona', zoneId);
+        const idsPlazas = (plazasZona || []).map(p => p.id_plaza);
+
+        if (idsPlazas.length > 0) {
+          // 2. Limpiar referencias en 'pantalla' (que dependen directamente de zona e id_plaza)
+          await supabase.from('pantalla').update({ id_zona: null, id_plaza: null }).eq('id_zona', zoneId);
+          // 3. Intentar borrar las plazas. Nota: Si tienen accesos/tickets, esto fallará por FK.
+          const { error: errP } = await supabase.from('plaza').delete().eq('id_zona', zoneId);
+          if (errP) throw new Error(`No se pueden borrar las plazas: ${errP.message}`);
+        }
+
+        // 4. Borrar la zona
+        const { error: errZ } = await supabase.from('zona').delete().eq('id_zona', zoneId);
+        if (errZ) throw new Error(`Error al borrar zona: ${errZ.message}`);
+
+        Swal.fire('Eliminado', 'Zona y plazas eliminadas con éxito.', 'success');
         registrarLog('Zona Eliminada', `Eliminación de zona ID: ${zoneId}`);
         loadData();
       } catch (error) {
-        Swal.fire('Error', 'No se pudo eliminar la zona', 'error');
+        console.error('Error delete:', error);
+        Swal.fire('Error de Borrado', 
+          error.message.includes('foreign key constraint') 
+          ? 'No se puede eliminar la zona porque tiene historial (accesos, tickets o dispositivos) vinculado. Sugerencia: use la funcionalidad de Desactivar en el futuro.'
+          : error.message, 
+          'error'
+        );
       }
     }
   };
@@ -319,10 +340,10 @@ export default function ZonasParqueo() {
         if (error) throw error;
         Swal.fire('Actualizada', `Plaza actualizada correctamente.`, 'success');
       } else {
-        const { data: est } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre_estado', 'Libre').maybeSingle();
-        const idLibre = est?.id_estado || 1;
+        const { data: est } = await supabase.from('estado').select('id').ilike('nombre', 'Libre').eq('contexto', 'plaza').maybeSingle();
+        const idLibre = est?.id || 1;
 
-        const { error } = await supabase.from('plazas').insert([{
+        const { error } = await supabase.from('plaza').insert([{
           ...payload,
           id_estado: idLibre
         }]);
@@ -332,8 +353,8 @@ export default function ZonasParqueo() {
         const idZona = parseInt(plazaForm.Id_Zona);
         const { count } = await supabase.from('plaza').select('id_plaza', { count: 'exact', head: true }).eq('id_zona', idZona);
         const zonaActual = zonas.find(z => z.id_zona === idZona);
-        if (zonaActual && count > zonaActual.capacidad) {
-          await supabase.from('zona').update({ capacidad: count }).eq('id_zona', idZona);
+        if (zonaActual && count > zonaActual.capacidad_total) {
+          await supabase.from('zona').update({ capacidad_total: count }).eq('id_zona', idZona);
         }
 
         Swal.fire('Creada', `Plaza ${plazaForm.Numero_Plaza} creada.`, 'success');
@@ -356,14 +377,19 @@ export default function ZonasParqueo() {
     });
 
     if (result.isConfirmed) {
-      await supabase.from('plaza').delete().eq('id_plaza', plaza.id_plaza);
-      
-      // Sincronizar automáticamente la capacidad a la baja tras el borrado
-      const { count } = await supabase.from('plaza').select('id_plaza', { count: 'exact', head: true }).eq('id_zona', plaza.id_zona);
-      await supabase.from('zona').update({ capacidad: count || 0 }).eq('id_zona', plaza.id_zona);
+      try {
+        const { error: errP } = await supabase.from('plaza').delete().eq('id_plaza', plaza.id_plaza);
+        if (errP) throw errP;
+        
+        // Sincronizar automáticamente la capacidad a la baja tras el borrado
+        const { count } = await supabase.from('plaza').select('id_plaza', { count: 'exact', head: true }).eq('id_zona', plaza.id_zona);
+        await supabase.from('zona').update({ capacidad_total: count || 0 }).eq('id_zona', plaza.id_zona);
 
-      loadData();
-      Swal.fire('Eliminada', '', 'success');
+        loadData();
+        Swal.fire('Eliminada', 'La plaza ha sido borrada.', 'success');
+      } catch (error) {
+        Swal.fire('Error', `No se pudo borrar la plaza: ${error.message}`, 'error');
+      }
     }
   };
 
@@ -408,7 +434,7 @@ export default function ZonasParqueo() {
                 {filteredZonas.map(z => (
                   <tr key={z.id_zona} className="hover:bg-gray-50">
                     <td className="px-6 py-3 font-medium text-gray-900"><FaParking className='inline mr-2 text-primary' /> {z.nombre}</td>
-                    <td className="px-6 py-3 text-gray-500 font-bold">{z.capacidad}</td>
+                    <td className="px-6 py-3 text-gray-500 font-bold">{z.capacidad_total}</td>
                     <td className="px-6 py-3 text-[10px] text-gray-400 font-medium italic">
                       {z.created_at ? new Date(z.created_at).toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: '2-digit' }) : '-'}
                     </td>

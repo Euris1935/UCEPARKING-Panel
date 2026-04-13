@@ -85,7 +85,7 @@ export default function Asignaciones() {
 
             // 4. Unir datos manualmente
             const asignacionesConDatos = asigData.map(asig => {
-                const emp = todosEmpleadosOrdenados?.find(e => e.id_empleado === asig.id_empleado_asignado);
+                const emp = todosEmpleadosOrdenados?.find(e => e.id_empleado === asig.id_empleado);
                 const plz = todasPlazas?.find(p => p.id_plaza === asig.id_plaza);
                 return {
                     ...asig,
@@ -100,7 +100,7 @@ export default function Asignaciones() {
             const ocupados = new Set(
                 (asigData || [])
                 .filter(a => a.id_estado === 1 && (!a.fecha_fin || new Date(a.fecha_fin) >= new Date(new Date().setHours(0,0,0,0))))
-                .map(a => a.id_empleado_asignado)
+                .map(a => a.id_empleado)
             );
             setEmpleadosConPlaza(ocupados);
 
@@ -188,12 +188,12 @@ export default function Asignaciones() {
     const handleOpenEdit = async (asig) => {
         setEditingAsignacion(asig);
 
-        const empleado = empleadosList.find(e => e.id_empleado === asig.id_empleado_asignado);
+        const empleado = empleadosList.find(e => e.id_empleado === asig.id_empleado);
         const vehiculo = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || null) : null;
         setVehiculoVinculado(vehiculo);
 
         setFormData({
-            Id_Empleado: String(asig.id_empleado_asignado || ''),
+            Id_Empleado: String(asig.id_empleado || ''),
             Id_Plaza: String(asig.id_plaza || ''),
             Fecha_Inicio: asig.fecha_inicio || new Date().toISOString().split('T')[0],
             Fecha_Fin: asig.fecha_fin || '',
@@ -236,7 +236,7 @@ export default function Asignaciones() {
         const idAsignadaPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Asignado')?.id || 2;
 
         const { error: insertError } = await supabase.from('asignacion').insert([{
-            id_empleado_asignado: parseInt(formData.Id_Empleado),
+            id_empleado: parseInt(formData.Id_Empleado),
             id_plaza: parseInt(formData.Id_Plaza),
             fecha_inicio: formData.Fecha_Inicio,
             fecha_fin: isPermanent ? null : (formData.Fecha_Fin || null),
@@ -265,7 +265,7 @@ export default function Asignaciones() {
         const { error: updateError } = await supabase
             .from('asignacion')
             .update({
-                id_empleado_asignado: parseInt(formData.Id_Empleado),
+                id_empleado: parseInt(formData.Id_Empleado),
                 id_plaza: plazaNueva,
                 fecha_inicio: formData.Fecha_Inicio,
                 fecha_fin: isPermanent ? null : (formData.Fecha_Fin || null),
@@ -428,7 +428,7 @@ export default function Asignaciones() {
                                                     : <span className="flex items-center gap-1 font-bold text-green-600"><FaCalendarAlt className="text-green-600"/> Indeterminada</span>}
                                             </td>
                                             <td className="px-6 py-4 text-sm text-gray-500 italic max-w-xs truncate">
-                                                {item.notes || '-'}
+                                                {item.notas || '-'}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-right">
                                                 <div className="flex items-center justify-end gap-2">

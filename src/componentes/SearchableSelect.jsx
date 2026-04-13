@@ -81,7 +81,10 @@ export default function SearchableSelect({
                                         setIsOpen(false);
                                     }}
                                 >
-                                    {opt.label}
+                                    <div className="flex items-center gap-2">
+                                        {opt.icon && <span className="flex-shrink-0">{opt.icon}</span>}
+                                        <div className="flex-grow">{opt.display || opt.label}</div>
+                                    </div>
                                 </div>
                             ))
                         )}

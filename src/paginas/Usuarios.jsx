@@ -74,7 +74,7 @@ export default function Usuarios() {
         { data: rolesData },
         { data: orgUsers, error: orgErr }
       ] = await Promise.all([
-        supabase.from('rol').select('*').order('nombre_rol'),
+        supabase.from('rol').select('*').order('nombre'),
         supabase.rpc('get_usuarios_org')
       ]);
 
@@ -83,7 +83,7 @@ export default function Usuarios() {
         await loadUsuariosFallback(rolesData || []);
       } else {
         const filtrados = (orgUsers || []).filter(u => {
-          const rol = u.nombre_rol?.toLowerCase();
+          const rol = u.nombre?.toLowerCase();
           return rol !== 'visitante';
         });
         setUsuarios(filtrados);
@@ -118,7 +118,7 @@ export default function Usuarios() {
           sexo:       persona?.sexo            || 'M',
           fecha_nacimiento: persona?.fecha_nacimiento || '',
           direccion:  persona?.direccion       || '',
-          nombre_rol: rol?.nombre_rol          || 'Sin Rol'
+          nombre_rol: rol?.nombre              || 'Sin Rol'
         };
       }).filter(u => u.nombre_rol.toLowerCase() !== 'visitante');
 
@@ -212,7 +212,8 @@ export default function Usuarios() {
             p_sexo:     sexo       || 'M',
             p_fecha_nacimiento: fecha_nacimiento || null,
             p_direccion: direccion || null,
-            p_rol_id:   parseInt(rol_id)
+            p_rol_id:   parseInt(rol_id),
+            p_org_id:   orgId
           });
 
           if (rpcError) {
@@ -265,7 +266,7 @@ export default function Usuarios() {
       Swal.fire('Éxito', 'Rol actualizado.', 'success');
       const u = usuarios.find(u => u.id_usuario === changingRolFor);
       const r = rolesList.find(r => r.id_rol === parseInt(newRolId));
-      registrarLog('Asignación Modificada', `Cambio de rol para ${u?.nombre} ${u?.apellido}: ahora es ${r?.nombre_rol}`);
+      registrarLog('Asignación Modificada', `Cambio de rol para ${u?.nombre} ${u?.apellido}: ahora es ${r?.nombre}`);
       setChangingRolFor(null);
       setNewRolId('');
       loadData();
@@ -411,9 +412,9 @@ export default function Usuarios() {
                                 >
                                   <option value="">-- Seleccionar --</option>
                                   {rolesList
-                                    .filter(r => r.nombre_rol.toLowerCase() !== 'visitante')
+                                    .filter(r => r.nombre.toLowerCase() !== 'visitante')
                                     .map(r => (
-                                      <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>
+                                      <option key={r.id_rol} value={r.id_rol}>{r.nombre}</option>
                                     ))
                                   }
                                 </select>
@@ -548,8 +549,8 @@ export default function Usuarios() {
                     className="w-full border border-gray-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none mt-0.5">
                     <option value="">Selecciona un rol</option>
                     {rolesList
-                      .filter(r => r.nombre_rol.toLowerCase() !== 'visitante')
-                      .map(r => <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>)
+                      .filter(r => r.nombre.toLowerCase() !== 'visitante')
+                      .map(r => <option key={r.id_rol} value={r.id_rol}>{r.nombre}</option>)
                     }
                   </select>
                 </div>

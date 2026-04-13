@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
@@ -87,10 +86,12 @@ export default function Ocupacion() {
       });
 
       // 2. RESERVAS (Activas)
+      const nowISO = new Date().toISOString();
       const { data: reservasActivas } = await supabase
         .from('reserva')
         .select('id_plaza, persona ( nombre, apellido )')
-        .eq('id_estado', estData?.find(e => e.nombre === 'Activa')?.id || 0);
+        .lte('fecha_hora_inicio', nowISO)
+        .gte('fecha_hora_fin', nowISO);
       
       (reservasActivas || []).forEach(res => {
         if (res.id_plaza && res.persona) {
@@ -102,6 +103,9 @@ export default function Ocupacion() {
       });
 
       // 3. ASIGNACIONES (Fijas)
+      // Buscamos estados relacionados con asignaciones (Activa, Vigente, etc)
+      const idEstadoAsig = estData?.find(e => (e.nombre === 'Activa' || e.nombre === 'Vigente') && (e.contexto === 'asignacion' || e.contexto === 'asignaciones'))?.id;
+
       const { data: asignacionesActivas } = await supabase
         .from('asignacion')
         .select(`
@@ -110,13 +114,13 @@ export default function Ocupacion() {
             persona ( nombre, apellido )
           )
         `)
-        .eq('id_estado', estData?.find(e => e.nombre === 'Activa')?.id || 0)
         .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
       
       (asignacionesActivas || []).forEach(asig => {
         if (asig.id_plaza) {
           mapaOcupacion[asig.id_plaza] = {
-            placa: mapaOcupacion[asig.id_plaza]?.placa || 'Asignada',
+            ...mapaOcupacion[asig.id_plaza],
+            type: 'asignacion',
             nombre: `${asig.empleado?.persona?.nombre || ''} ${asig.empleado?.persona?.apellido || ''}`.trim()
           };
         }
@@ -196,11 +200,12 @@ export default function Ocupacion() {
 
   const toggleOccupancy = (plaza) => {
     const estadoActual = plaza.Nombre_Estado_Rel;
+    const esAsignacionFija = ocupacionInfo[plaza.id_plaza]?.type === 'asignacion';
 
-    if (['ASIGNADA', 'RESERVADA'].includes(estadoActual)) {
+    if (['ASIGNADA', 'ASIGNADO', 'RESERVADA'].includes(estadoActual) || esAsignacionFija) {
       const infoActual = ocupacionInfo[plaza.id_plaza];
       const ocupanteText = infoActual ? `(${infoActual.nombre})` : '(Sin registros)';
-      const esAsig = estadoActual === 'ASIGNADA';
+      const esAsig = estadoActual.startsWith('ASIGNAD') || esAsignacionFija;
       
       Swal.fire({
         title: `Liberar Plaza ${esAsig ? 'Asignada' : 'Reservada'}`,
@@ -266,13 +271,12 @@ export default function Ocupacion() {
 
   const handleSpecialState = (e, plaza, estadoDeseado) => {
     e.stopPropagation();
-    if (['ASIGNADA', 'RESERVADA'].includes(plaza.Nombre_Estado_Rel)) {
-      const esAsig = plaza.Nombre_Estado_Rel === 'ASIGNADA';
+    if (plaza.Nombre_Estado_Rel.startsWith('ASIGNAD') || ocupacionInfo[plaza.id_plaza]?.type === 'asignacion') {
       Swal.fire({
-        title: `Plaza ${esAsig ? 'Asignada' : 'Reservada'}`,
-        html: `Esta plaza está <b>${esAsig ? 'asignada a un empleado' : 'reservada'}</b>.<br>Para cambiar su estado, use la página de <b>${esAsig ? 'Asignaciones' : 'Reservaciones'}</b>.`,
+        title: `Plaza Asignada`,
+        html: `Esta plaza está <b>asignada a un empleado</b>.<br>Para cambiar su estado, use la página de <b>Asignaciones</b>.`,
         icon: 'info',
-        confirmButtonColor: esAsig ? '#7c3aed' : '#f59e0b',
+        confirmButtonColor: '#7c3aed',
         confirmButtonText: 'Entendido'
       });
       return;
@@ -281,12 +285,16 @@ export default function Ocupacion() {
     changeStatus(plaza.id_plaza, nuevoEstado);
   };
 
-  const getCardColor = (estado) => {
+  const getCardColor = (estado, idPlaza) => {
+    const info = ocupacionInfo[idPlaza];
+    if (info?.type === 'asignacion') return 'bg-purple-50 border-purple-300 shadow-sm cursor-not-allowed';
+
     switch (estado) {
       case 'LIBRE': return 'bg-green-50 border-green-200 hover:border-green-400 shadow-sm';
       case 'OCUPADA': return 'bg-red-50 border-red-200 hover:border-red-400 shadow-sm';
       case 'RESERVADA': return 'bg-yellow-50 border-yellow-200 hover:border-yellow-400 shadow-sm';
-      case 'ASIGNADA': return 'bg-purple-50 border-purple-300 shadow-sm cursor-not-allowed';
+      case 'ASIGNADA':
+      case 'ASIGNADO': return 'bg-purple-50 border-purple-300 shadow-sm cursor-not-allowed';
       case 'MANTENIMIENTO':
       case 'EN MANTENIMIENTO':
       case 'FUERA DE SERVICIO': return 'bg-orange-50 border-orange-200 hover:border-orange-400 shadow-sm';
@@ -294,12 +302,16 @@ export default function Ocupacion() {
     }
   };
 
-  const getBadgeColor = (estado) => {
+  const getBadgeColor = (estado, idPlaza) => {
+    const info = ocupacionInfo[idPlaza];
+    if (info?.type === 'asignacion') return 'text-purple-800 bg-purple-200';
+
     switch (estado) {
       case 'LIBRE': return 'text-green-700 bg-green-200';
       case 'OCUPADA': return 'text-red-700 bg-red-200';
       case 'RESERVADA': return 'text-yellow-800 bg-yellow-200';
-      case 'ASIGNADA': return 'text-purple-800 bg-purple-200';
+      case 'ASIGNADA':
+      case 'ASIGNADO': return 'text-purple-800 bg-purple-200';
       case 'MANTENIMIENTO':
       case 'EN MANTENIMIENTO':
       case 'FUERA DE SERVICIO': return 'text-orange-800 bg-orange-200';
@@ -308,10 +320,10 @@ export default function Ocupacion() {
   };
 
   const stats = {
-    libres: plazas.filter(p => p.Nombre_Estado_Rel === 'LIBRE').length,
-    ocupadas: plazas.filter(p => p.Nombre_Estado_Rel === 'OCUPADA').length,
+    libres: plazas.filter(p => p.Nombre_Estado_Rel === 'LIBRE' && !ocupacionInfo[p.id_plaza]?.type).length,
+    ocupadas: plazas.filter(p => p.Nombre_Estado_Rel === 'OCUPADA' && !ocupacionInfo[p.id_plaza]?.type).length,
     reservadas: plazas.filter(p => p.Nombre_Estado_Rel === 'RESERVADA').length,
-    asignadas: plazas.filter(p => p.Nombre_Estado_Rel === 'ASIGNADA').length,
+    asignadas: plazas.filter(p => (p.Nombre_Estado_Rel.startsWith('ASIGNAD') || ocupacionInfo[p.id_plaza]?.type === 'asignacion')).length,
     mantenimiento: plazas.filter(p => ['MANTENIMIENTO', 'FUERA DE SERVICIO', 'EN MANTENIMIENTO'].includes(p.Nombre_Estado_Rel)).length
   };
 
@@ -357,12 +369,12 @@ export default function Ocupacion() {
                   {plazasDeZona.map(plaza => (
                     <div
                       key={plaza.id_plaza}
-                      className={`relative group p-4 rounded-lg border-2 cursor-pointer transition-all h-32 flex flex-col items-center justify-center text-center ${getCardColor(plaza.Nombre_Estado_Rel)}`}
+                      className={`relative group p-4 rounded-lg border-2 cursor-pointer transition-all h-32 flex flex-col items-center justify-center text-center ${getCardColor(plaza.Nombre_Estado_Rel, plaza.id_plaza)}`}
                       onClick={() => toggleOccupancy(plaza)}
                     >
                       <h4 className="font-bold text-xl text-gray-800">{plaza.numero_plaza}</h4>
-                      <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel)}`}>
-                        {plaza.Nombre_Estado_Rel}
+                      <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel, plaza.id_plaza)}`}>
+                        {ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' ? 'ASIGNADA' : plaza.Nombre_Estado_Rel}
                       </span>
                       {['OCUPADA', 'RESERVADA', 'ASIGNADA'].includes(plaza.Nombre_Estado_Rel) && ocupacionInfo[plaza.id_plaza] && (
                         <div className={`mt-1 text-[9px] leading-tight ${

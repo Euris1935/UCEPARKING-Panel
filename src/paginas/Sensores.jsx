@@ -66,8 +66,8 @@ export default function Sensores() {
         .from('dispositivo')
         .select(`
           *,
-          tipo:id_tipo(id, nombre, descripcion),
-          modelo:id_modelo_equipo(id, nombre, id_marca, marca(nombre)),
+          tipo:id_tipo(id, nombre),
+          modelo:id_modelo(id_modelo, nombre, id_marca, marca(id_marca, nombre)),
           plaza:id_plaza(id_plaza, numero_plaza),
           estado:id_estado(id, nombre)
         `)
@@ -76,24 +76,40 @@ export default function Sensores() {
       if (error) throw error;
       setDispositivos(dispData || []);
 
-      const { data: plazaData } = await supabase.from('plaza').select('id_plaza, numero_plaza').order('numero_plaza');
-      const plazasAsignadas = new Set((dispData || []).filter(d => d.id_plaza).map(d => d.id_plaza));
-      setPlazas((plazaData || []).filter(p => !plazasAsignadas.has(p.id_plaza)));
+      // 2. Carga paralela de catálogos para mayor velocidad y blindaje
+      const [
+        { data: tTipos }, 
+        { data: tMarcas }, 
+        { data: tModelos }, 
+        { data: pData }, 
+        { data: eSensor }
+      ] = await Promise.all([
+        supabase.from('tipo').select('*').order('nombre'),
+        supabase.from('marca').select('*').order('nombre'),
+        supabase.from('modelo').select('*').order('nombre'),
+        supabase.from('plaza').select('*').order('numero_plaza'),
+        supabase.from('estado').select('*').eq('contexto', 'dispositivo').order('nombre')
+      ]);
 
-      const { data: estSensor } = await supabase.from('estado').select('id, nombre').eq('contexto', 'dispositivo').order('nombre');
-      setEstadosSensor(estSensor || []);
-
-      const { data: tTipos } = await supabase.from('tipo').select('*').eq('contexto', 'dispositivo').order('nombre');
       setListaTipos(tTipos || []);
-
-      const { data: tMarcas } = await supabase.from('marca').select('*').order('nombre');
       setListaMarcas(tMarcas || []);
-
-      const { data: tModelos } = await supabase.from('modelo').select('*').order('nombre');
       setListaModelos(tModelos || []);
+      setPlazas(pData || []);
+      setEstadosSensor(eSensor || []);
+
+      if ((tMarcas || []).length === 0) console.warn("Marcas vacías en BD");
       
     } catch (error) {
-      console.error("Error cargando datos:", error.message);
+      console.error("Error crítico en loadData:", error.message);
+      Swal.fire({ 
+        title: 'Error de Red', 
+        text: 'No se pudo sincronizar con la base de datos de hardware.', 
+        icon: 'error', 
+        toast: true, 
+        position: 'top-end', 
+        showConfirmButton: false, 
+        timer: 4000 
+      });
     } finally {
       setIsRefreshing(false);
     }
@@ -122,23 +138,12 @@ export default function Sensores() {
     setEditingId(disp.id_dispositivo);
     
     let params = { param_frecuencia: 5, param_umbral: 10, param_timeout: 30 };
-    let descTexto = disp.tipo?.descripcion || '';
-    try {
-      if (descTexto.startsWith('{')) {
-        const parsed = JSON.parse(descTexto);
-        params = {
-          param_frecuencia: parsed.frecuencia ?? 5,
-          param_umbral: parsed.umbral ?? 10,
-          param_timeout: parsed.timeout ?? 30
-        };
-        descTexto = parsed.descripcion || '';
-      }
-    } catch (_) { }
+    let descTexto = '';
 
     setFormData({
       id_tipo: disp.id_tipo || '',
       id_marca: disp.modelo?.id_marca || '',
-      id_modelo: disp.id_modelo_equipo || '',
+      id_modelo: disp.id_modelo || '',
       tipo_descripcion: disp.ubicacion || descTexto, // Preferir ubicacion de la tabla dispositivos
       id_plaza: disp.id_plaza || '',
       id_estado: disp.id_estado || 1,
@@ -171,7 +176,7 @@ export default function Sensores() {
 
       const dispData = {
         id_tipo: parseInt(formData.id_tipo),
-        id_modelo_equipo: parseInt(formData.id_modelo),
+        id_modelo: parseInt(formData.id_modelo),
         id_plaza: formData.id_plaza || null,
         id_estado: parseInt(formData.id_estado),
         fecha_instalacion: formData.fecha_instalacion,

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch } from 'react-icons/fa';
+import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaCar } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import { playBeep } from '../utils/audio';
 import SearchableSelect from '../componentes/SearchableSelect';
@@ -10,15 +10,18 @@ import SearchableSelect from '../componentes/SearchableSelect';
 export default function AccesoManual() {
   const { orgId, loadingOrg } = useOrg();
   const [loading, setLoading] = useState(false);
-   const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos'
- 
-   // Datos
-   const [vehiculos, setVehiculos] = useState([]);
-   const [visitantes, setVisitantes] = useState([]);
-   const [todasPlazas, setTodasPlazas] = useState([]);
-   const [plazasLibres, setPlazasLibres] = useState([]);
-   const [accesosActivos, setAccesosActivos] = useState([]);
-   const [currentPersonaId, setCurrentPersonaId] = useState(null);
+  const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos'
+
+  // Datos
+  const [vehiculos, setVehiculos] = useState([]);
+  const [personas, setPersonas] = useState([]);
+  const [visitantes, setVisitantes] = useState([]);
+  const [todasPlazas, setTodasPlazas] = useState([]);
+  const [plazasLibres, setPlazasLibres] = useState([]);
+  const [accesosActivos, setAccesosActivos] = useState([]);
+  const [currentPersonaId, setCurrentPersonaId] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [searchOptions, setSearchOptions] = useState([]);
 
   // Formulario Entrada Manual
   const [entradaForm, setEntradaForm] = useState({
@@ -30,12 +33,6 @@ export default function AccesoManual() {
   const [busquedaVehiculo, setBusquedaVehiculo] = useState('');
   const [mostrarDropdown, setMostrarDropdown] = useState(false);
   const [busquedaActivos, setBusquedaActivos] = useState(''); // #25: búsqueda en accesos activos
-
-  const vehiculosFiltrados = vehiculos.filter(v =>
-    (v.placa && v.placa.toLowerCase().includes(busquedaVehiculo.toLowerCase())) ||
-    (v.personas?.nombre && v.personas.nombre.toLowerCase().includes(busquedaVehiculo.toLowerCase())) ||
-    (v.personas?.apellido && v.personas.apellido.toLowerCase().includes(busquedaVehiculo.toLowerCase()))
-  );
 
   useEffect(() => {
     const init = async () => {
@@ -58,45 +55,57 @@ export default function AccesoManual() {
 
   const loadData = async () => {
     try {
-      // Obtener estados para plaza
+      setIsRefreshing(true);
+      // 1. Estados y Plazas
       const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
       const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+      const idEstOcupPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Ocupado')?.id || 2;
 
-      // Plazas: obtener todas para mapear los nombres, y filtrar las libres para el dropdown
       const { data: plazas } = await supabase.from('plaza').select('*').order('numero_plaza');
       if (plazas) {
         setTodasPlazas(plazas);
         setPlazasLibres(plazas.filter(p => p.id_estado === idEstLibrePlaza));
       }
+      // 2. TODAS LAS PERSONAS (Solución Jarol)
+      const { data: allP } = await supabase.from('persona').select('*').order('nombre');
+      const pMap = {}; (allP || []).forEach(p => { pMap[p.id_persona] = p; });
+      setPersonas(allP || []);
 
-      // Vehículos registrados (con dueños)
-      const { data: vhs, error: vErr } = await supabase
-        .from('vehiculo')
-        .select('*, marca(nombre), modelo(nombre), color(nombre), persona(nombre, apellido, telefono)')
-        .order('created_at', { ascending: false });
-      if (vErr) console.error('Error cargando vehiculos:', vErr);
+      // 3. Vehículos y Visitantes
+      const { data: vhs } = await supabase.from('vehiculo').select('*, marca(nombre), modelo(nombre), color(nombre)');
+      const vhsEnriquecidos = (vhs || []).map(v => ({ ...v, persona: pMap[v.id_persona] || null }));
+      setVehiculos(vhsEnriquecidos);
 
-      // Visitantes registrados
-      const { data: vis, error: visErr } = await supabase
-        .from('visitante')
-        .select('*, persona(nombre, apellido, telefono)')
-        .order('created_at', { ascending: false });
-      if (visErr) console.error('Error cargando visitantes:', visErr);
+      // 4. Calcular Search Options (Para el buscador manual)
+      // Solo incluimos vehículos, pero permitimos buscarlos por nombre de dueño
+      const options = vhsEnriquecidos.map(v => ({ 
+        id: v.id_vehiculo, 
+        type: 'v', 
+        placa: v.placa, 
+        nombre: `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`,
+        marca: v.marca?.nombre, 
+        modelo: v.modelo?.nombre
+      }));
+      setSearchOptions(options);
 
-      // Accesos activos (entradas manuales sin salida)
-      const { data: activos, error: activosErr } = await supabase
+      // 5. Accesos activos
+      const { data: activos } = await supabase
         .from('acceso')
-        .select('*, vehiculo(placa, id_persona, marca(nombre), modelo(nombre), color(nombre), persona(nombre, apellido, telefono)), ticket(id_visitante)')
+        .select('*, vehiculo(*, marca(nombre), modelo(nombre), color(nombre))')
         .is('salida_at', null)
         .order('entrada_at', { ascending: false });
 
-      if (activosErr) console.error('Error cargando accesos activos:', activosErr);
- 
-      setVehiculos(vhs || []);
-      setVisitantes(vis || []);
-      setAccesosActivos(activos || []);
+      const enrichedActivos = (activos || []).map(acc => {
+        const per = pMap[acc.vehiculo?.id_persona];
+        return {
+          ...acc,
+          _personaNombre: per ? `${per.nombre} ${per.apellido}` : (acc.vehiculo?.placa || 'Desconocido'),
+          _personaTel: per?.telefono || '—'
+        };
+      });
+      setAccesosActivos(enrichedActivos);
 
-    } catch (err) { console.error('Error cargando datos:', err); }
+    } catch (err) { console.error('Error loadData:', err); } finally { setIsRefreshing(false); }
   };
 
   const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
@@ -341,49 +350,87 @@ export default function AccesoManual() {
           </h3>
           <form onSubmit={handleRegistrarEntrada} className="space-y-4">
             <div className="relative">
-              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar Vehículo (Placa / Cliente) *</label>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar Vehículo o Persona (Jarol, Placa, etc.) *</label>
               <input
                 type="text"
-                className="w-full border rounded-lg p-2 text-sm focus:ring-indigo-500 bg-gray-50 uppercase"
-                placeholder="Ej. ABC-1234 o nombre..."
+                className="w-full border rounded-lg p-3 text-sm focus:ring-2 focus:ring-indigo-500 bg-gray-50 outline-none transition-all"
+                placeholder="Ej. Jarol, ABC-1234 o nombre..."
                 value={busquedaVehiculo}
                 onChange={(e) => {
                   setBusquedaVehiculo(e.target.value);
                   setMostrarDropdown(true);
-                  if (entradaForm.vehiculo_id) {
-                    setEntradaForm({ ...entradaForm, vehiculo_id: '' });
-                  }
+                  if (entradaForm.vehiculo_id) setEntradaForm({ ...entradaForm, vehiculo_id: '' });
                 }}
                 onFocus={() => setMostrarDropdown(true)}
                 onBlur={() => setTimeout(() => setMostrarDropdown(false), 200)}
-                required={!entradaForm.vehiculo_id}
               />
 
               {mostrarDropdown && (
-                <ul className="absolute z-10 w-full bg-white border border-gray-200 shadow-xl max-h-60 overflow-y-auto rounded-lg mt-1">
-                  {vehiculosFiltrados.length === 0 ? (
-                    <li className="p-3 text-sm text-gray-500 text-center">No se encontraron vehículos</li>
-                  ) : (
-                    vehiculosFiltrados.map(v => (
+                <ul className="absolute z-50 w-full bg-white border border-gray-200 shadow-2xl max-h-72 overflow-y-auto rounded-xl mt-2 py-1 transform transition-all">
+                  {searchOptions
+                    .filter(opt => {
+                      const match = opt.nombre.toLowerCase().includes(busquedaVehiculo.toLowerCase()) || 
+                                    opt.placa.toLowerCase().includes(busquedaVehiculo.toLowerCase());
+                      
+                      // Si la búsqueda está vacía, solo mostrar vehículos (v)
+                      if (!busquedaVehiculo.trim()) return opt.type === 'v';
+                      
+                      // Si hay búsqueda, mostrar cualquier coincidencia
+                      return match;
+                    })
+                    .slice(0, 50)
+                    .map(opt => (
                       <li
-                        key={v.id_vehiculo}
-                        className="p-3 hover:bg-indigo-50 border-b last:border-0 cursor-pointer transition-colors"
+                        key={`${opt.type}-${opt.id}`}
+                        className="px-4 py-3 hover:bg-indigo-50 border-b border-gray-50 last:border-0 cursor-pointer transition-colors group"
                         onMouseDown={() => {
-                          setEntradaForm({ ...entradaForm, vehiculo_id: v.id_vehiculo });
-                          setBusquedaVehiculo(`${v.placa} — ${v.persona?.nombre} ${v.persona?.apellido}`);
+                          if (opt.type === 'p') {
+                            const pid = opt.id;
+                            Swal.fire({
+                              title: 'Vincular Placa',
+                              input: 'text',
+                              inputLabel: 'Este usuario no tiene vehículo. Ingrese la placa:',
+                              inputPlaceholder: 'ABC-1234',
+                              showCancelButton: true
+                            }).then(async (res) => {
+                              if (res.isConfirmed && res.value) {
+                                  const placa = res.value.toUpperCase();
+                                  const { data: exV } = await supabase.from('vehiculo').select('id_vehiculo').eq('placa', placa).maybeSingle();
+                                  if (exV) {
+                                    setEntradaForm({ ...entradaForm, vehiculo_id: exV.id_vehiculo });
+                                    setBusquedaVehiculo(`${placa} — ${opt.nombre}`);
+                                  } else {
+                                    const { data: nV } = await supabase.from('vehiculo').insert([{ placa, id_persona: pid, organizacion_id: orgId }]).select('id_vehiculo').single();
+                                    if (nV) {
+                                      setEntradaForm({ ...entradaForm, vehiculo_id: nV.id_vehiculo });
+                                      setBusquedaVehiculo(`${placa} — ${opt.nombre}`);
+                                    }
+                                  }
+                              }
+                            });
+                          } else {
+                            setEntradaForm({ ...entradaForm, vehiculo_id: opt.id });
+                            setBusquedaVehiculo(`${opt.placa} — ${opt.nombre}`);
+                          }
                           setMostrarDropdown(false);
                         }}
                       >
                         <div className="flex justify-between items-center">
-                          <span className="font-bold text-indigo-700 text-base font-mono">{v.placa}</span>
-                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">{v.marca?.nombre} {v.modelo?.nombre}</span>
+                          <span className={`font-bold font-mono text-base ${opt.type === 'v' ? 'text-indigo-700' : 'text-gray-400 italic'}`}>
+                            {opt.placa}
+                          </span>
+                          {opt.marca && (
+                            <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">
+                              {opt.marca} {opt.modelo}
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                          <FaUserPlus className="text-[10px]" /> {v.persona?.nombre} {v.persona?.apellido}
+                          <FaUserPlus className="text-[10px]" /> <span>{opt.nombre}</span>
                         </div>
                       </li>
                     ))
-                  )}
+                  }
                 </ul>
               )}
             </div>
@@ -433,19 +480,24 @@ export default function AccesoManual() {
       {activeTab === 'activos' && (
         <section className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
           <div className="p-5 border-b flex justify-between items-center bg-gray-50">
-            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              <FaList className="text-indigo-600" /> Control de Salidas
-            </h3>
-            {/* #25: Búsqueda en accesos activos */}
-            <div className="relative w-64">
-              <input
-                type="text"
-                placeholder="Buscar placa, nombre, tel..."
-                className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:ring-indigo-500 outline-none"
-                value={busquedaActivos}
-                onChange={e => setBusquedaActivos(e.target.value)}
-              />
-              <FaSearch className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+            <div className="flex items-center gap-2">
+              <div className="relative w-64">
+                <input
+                  type="text"
+                  placeholder="Buscar placa, nombre..."
+                  className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm focus:ring-indigo-500 outline-none"
+                  value={busquedaActivos}
+                  onChange={e => setBusquedaActivos(e.target.value)}
+                />
+                <FaSearch className="absolute left-3 top-2.5 text-gray-400 text-xs" />
+              </div>
+              <button
+                onClick={loadData}
+                disabled={isRefreshing}
+                className="p-2.5 bg-white border rounded-lg text-gray-400 hover:text-indigo-600 transition disabled:opacity-50"
+              >
+                <FaSyncAlt className={isRefreshing ? 'animate-spin' : ''} />
+              </button>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -464,14 +516,9 @@ export default function AccesoManual() {
                 {(() => {
                   const busq = busquedaActivos.toLowerCase();
                   const filtrados = accesosActivos.filter(acc => {
-                    const placa = acc.vehiculo?.placa?.toLowerCase() || '';
-                    const vOwner = acc.vehiculo?.persona;
-                    const vGuest = acc.ticket?.id_visitante ? visitantes.find(v => v.id_visitante === acc.ticket.id_visitante)?.persona : null;
-                    const per = vOwner || vGuest;
-
-                    const nombre = `${per?.nombre || ''} ${per?.apellido || ''}`.toLowerCase();
-                    const tel = (per?.telefono || '').toLowerCase();
-                    return placa.includes(busq) || nombre.includes(busq) || tel.includes(busq);
+                    return acc.vehiculo?.placa?.toLowerCase().includes(busq) ||
+                      acc._personaNombre?.toLowerCase().includes(busq) ||
+                      acc._personaTel?.toLowerCase().includes(busq);
                   });
                   if (filtrados.length === 0) {
                     return <tr><td colSpan="6" className="text-center py-8 text-gray-400">No hay accesos manuales activos</td></tr>;
@@ -481,28 +528,12 @@ export default function AccesoManual() {
                       <td className="py-3 px-4 font-mono font-bold text-indigo-700 text-base">{acc.vehiculo?.placa}</td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-gray-800">
-                            {(() => {
-                                const vOwner = acc.vehiculo?.persona;
-                                const guestPersona = acc.ticket?.id_visitante ? visitantes.find(v => v.id_visitante === acc.ticket.id_visitante)?.persona : null;
-                                
-                                if (vOwner) return `${vOwner.nombre} ${vOwner.apellido}`;
-                                if (guestPersona) return (
-                                    <div className="flex items-center gap-2">
-                                        <span>{guestPersona.nombre} {guestPersona.apellido}</span>
-                                        <span className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded-md font-black border border-amber-200">VISITANTE</span>
-                                    </div>
-                                );
-                                return 'Visitante';
-                            })()}
+                          {acc._personaNombre}
                         </div>
                         <div className="text-xs text-gray-500">{acc.vehiculo?.marca?.nombre} {acc.vehiculo?.modelo?.nombre}</div>
                       </td>
                       <td className="py-3 px-4 text-gray-600">
-                        {(() => {
-                             const vOwner = acc.vehiculo?.persona;
-                             const vGuest = acc.ticket?.id_visitante ? visitantes.find(v => v.id_visitante === acc.ticket.id_visitante)?.persona : null;
-                             return vOwner?.telefono || vGuest?.telefono || <span className="text-gray-300 italic">—</span>;
-                        })()}
+                        {acc._personaTel}
                       </td>
                       <td className="py-3 px-4">
                         <span className="bg-gray-200 text-gray-800 px-2 py-1 rounded font-bold text-xs">

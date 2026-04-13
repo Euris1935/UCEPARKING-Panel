@@ -4,8 +4,9 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import {
   FaCar, FaTicketAlt, FaUserPlus, FaSave, FaTrash, FaEdit,
-  FaPrint, FaSignOutAlt, FaClipboardCheck, FaSyncAlt, FaBan
+  FaPrint, FaSignOutAlt, FaClipboardCheck, FaSyncAlt, FaBan, FaSearch
 } from 'react-icons/fa';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 // ═══════════════════════════════════════════════════════════
 // BD REAL:
@@ -78,8 +79,10 @@ export default function VehiculosTickets() {
   const [plazasLibres, setPlazasLibres]       = useState([]);
   const [marcasCat, setMarcasCat]             = useState([]);
   const [coloresCat, setColoresCat]           = useState([]);
+  const [isRefreshing, setIsRefreshing]       = useState(false);
+  const [searchTerm, setSearchTerm]             = useState('');
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
-  const [currentOrgId, setCurrentOrgId]         = useState(null); // organizacion_id del usuario activo
+  const [currentOrgId, setCurrentOrgId]         = useState(null); 
   const [ticketParaImprimir, setTicketParaImprimir] = useState(null);
   const intervaloRef = useRef(null);
 
@@ -128,81 +131,57 @@ export default function VehiculosTickets() {
 
   const loadData = async () => {
     try {
-      // 1. Plazas libres (por id_estado)
+      setIsRefreshing(true);
+      // 1. Plazas libres
       const { data: epLibre } = await supabase
         .from('estado').select('id').eq('contexto', 'plaza').ilike('nombre', 'Libre').maybeSingle();
       const idLibre = epLibre?.id ?? 1;
+      const { data: plazas } = await supabase.from('plaza').select('*').eq('id_estado', idLibre);
 
-      const { data: plazas } = await supabase
-        .from('plaza').select('*').eq('id_estado', idLibre);
+      // 2. Catálogo de estados
+      const { data: stCat } = await supabase.from('estado').select('id, nombre').eq('contexto', 'ticket');
+      const stMap = {}; (stCat || []).forEach(s => { stMap[s.id] = s.nombre; });
 
-      // 2. Tickets de hoy
+      // 3. Cargar TODO el universo de Personas y Visitantes (Para que aparezca Jarol)
+      const { data: allP } = await supabase.from('persona').select('*').order('nombre');
+      const { data: allV } = await supabase.from('visitante').select('*');
+      
+      const pMap = {}; (allP || []).forEach(p => { pMap[p.id_persona] = p; });
+      const vMap = {}; (allV || []).forEach(v => { vMap[v.id_visitante] = { ...v, persona: pMap[v.id_persona] }; });
+
+      // 4. Tickets de hoy
       const hoy = new Date(); hoy.setHours(0,0,0,0);
       const { data: tks } = await supabase
         .from('ticket')
-        .select('*, plaza:id_plaza_asignada(numero_plaza), estado:id_estado(nombre)')
+        .select('*, plaza:id_plaza_asignada(numero_plaza)')
         .gte('fecha_hora_emision', hoy.toISOString())
         .order('fecha_hora_emision', { ascending: false });
 
-      // 3. Enriquecer tickets con datos de visitante y persona (Bypass RPC)
-      let ticketsEnriquecidos = [];
-      if (tks && tks.length > 0) {
-        const idVisSet = [...new Set(tks.map(t => t.id_visitante).filter(Boolean))];
-        let visitMap = {};
-        if (idVisSet.length > 0) {
-          const { data: visitData } = await supabase
-            .from('visitante')
-            .select('id_visitante, persona(nombre, apellido)');
-          (visitData || []).forEach(v => { visitMap[v.id_visitante] = v; });
-        }
-        ticketsEnriquecidos = tks.map(t => ({
+      const enrichedTickets = (tks || []).map(t => {
+        const visitor = vMap[t.id_visitante];
+        return {
           ...t,
-          _personaNombre: t.id_visitante && visitMap[t.id_visitante]
-            ? `${visitMap[t.id_visitante].persona?.nombre} ${visitMap[t.id_visitante].persona?.apellido}`
-            : '—'
-        }));
-      }
+          _statusName: stMap[t.id_estado] || '—',
+          _personaNombre: visitor?.persona ? `${visitor.persona.nombre} ${visitor.persona.apellido}` : (t.placa_capturada || '—')
+        };
+      });
 
-      // 4. Vehículos registrados con JOINs a catálogos
-      const { data: vhs } = await supabase
-        .from('vehiculo')
-        .select(`
-          id_vehiculo, placa, created_at, id_persona,
-          marca ( nombre ),
-          color ( nombre ),
-          persona ( nombre, apellido )
-        `)
-        .order('created_at', { ascending: false });
+      // 5. Vehículos
+      const { data: vhs } = await supabase.from('vehiculo').select('*, marca(nombre), color(nombre), persona(nombre, apellido)').order('created_at', { ascending: false });
 
-      // 5. Visitantes registrados — Bypass RPC (bypassea error de tabla personas)
-      const { data: visitantesData } = await supabase
-        .from('visitante')
-        .select('id_visitante, persona(nombre, apellido)');
-
-      // 6. Personal del sistema — Bypass RPC (bypassea error de tabla personas)
-      const { data: orgUsers } = await supabase
-        .from('usuario')
-        .select('id_persona, persona(nombre, apellido)');
-      
-      const personal = (orgUsers || []).map(u => ({
-        id_persona:  u.id_persona,
-        nombre:      u.persona?.nombre,
-        apellido:    u.persona?.apellido,
-      }));
-
-      // 7. Catálogos
+      // 6. Catálogos
       const { data: marcas }  = await supabase.from('marca').select('*').order('nombre');
       const { data: colores } = await supabase.from('color').select('*').order('nombre');
 
       setPlazasLibres(plazas || []);
-      setTickets(ticketsEnriquecidos);
-      setTicketsActivos(ticketsEnriquecidos.filter(t => (t.estado?.nombre || t.estado) === 'Activo').length);
+      setTickets(enrichedTickets);
+      setTicketsActivos(enrichedTickets.filter(t => t._statusName?.toLowerCase() === 'activo').length);
       setVehiculos(vhs || []);
-      setVisitantesReg(visitantesData || []);
-      setPersonasSistema(personal);
+      setVisitantesReg(Object.values(vMap));
+      setPersonasSistema(allP || []);
       setMarcasCat(marcas || []);
       setColoresCat(colores || []);
-    } catch (err) { console.error('Error cargando datos:', err); }
+    } catch (err) { console.error('Error cargando datos:', err); } finally { setIsRefreshing(false); }
   };
 
   const registrarLog = async (tipo, descripcion, idPlaza = null) => {
@@ -251,14 +230,28 @@ export default function VehiculosTickets() {
       // Buscar o crear visitante
       let visitanteId = visitanteForm.id_visitante;
       if (!visitanteId) {
-        if (!visitanteForm.id_persona_visitante) {
-          setLoading(false);
-          return Swal.fire('Atención','Seleccione la persona del visitante.','warning');
+        let pId = visitanteForm.id_persona_visitante;
+        
+        // Si no hay persona seleccionada, intentamos crearla con el nombre/telefono provisto
+        if (!pId && visitanteForm.nombre) {
+          const { data: nP, error: nPErr } = await supabase.from('persona').insert([{
+            nombre: visitanteForm.nombre.trim(),
+            apellido: visitanteForm.apellido.trim(),
+            telefono: visitanteForm.telefono.trim() || null
+          }]).select('id_persona').single();
+          if (nPErr) throw nPErr;
+          pId = nP.id_persona;
         }
-        // Crear visitante vinculando a persona existente
+
+        if (!pId) {
+          setLoading(false);
+          return Swal.fire('Atención','Ingrese al menos el nombre del visitante.','warning');
+        }
+
+        // Crear visitante vinculado a la persona (nueva o existente)
         const { data: newV, error: vErr } = await supabase
           .from('visitante')
-          .insert([{ id_persona: visitanteForm.id_persona_visitante }])
+          .insert([{ id_persona: pId }])
           .select().single();
         if (vErr) throw vErr;
         visitanteId = newV.id_visitante;
@@ -291,7 +284,10 @@ export default function VehiculosTickets() {
         }])
         .select('*, plaza:id_plaza_asignada(numero_plaza), estado:id_estado(nombre)')
         .single();
-      if (tErr) throw tErr;
+      if (tErr) {
+        console.error('DEBUG: handleEmitirTicket tErr:', tErr);
+        throw tErr;
+      }
 
       await supabase.from('plaza')
         .update({ id_estado: idOcupada })
@@ -466,10 +462,10 @@ export default function VehiculosTickets() {
   );
 
   const estadoBadge = {
-    Activo:  'bg-green-100 text-green-700 border border-green-200',
-    Vencido: 'bg-amber-100 text-amber-700 border border-amber-200',
-    Anulado: 'bg-red-100 text-red-700 border border-red-200',
-    Usado:   'bg-gray-100 text-gray-600 border border-gray-200'
+    activo:  'bg-green-100 text-green-700 border border-green-200',
+    vencido: 'bg-amber-100 text-amber-700 border border-amber-200',
+    anulado: 'bg-red-100 text-red-700 border border-red-200',
+    usado:   'bg-gray-100 text-gray-600 border border-gray-200'
   };
 
   return (
@@ -497,58 +493,57 @@ export default function VehiculosTickets() {
               <FaUserPlus className="text-green-600" /> Emisión de Ticket
             </h3>
             <form onSubmit={handleEmitirTicket} className="space-y-4">
-              {/* Visitante registrado */}
               <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">¿Visitante ya registrado?</label>
-                <select className="w-full border rounded-lg p-2 text-sm bg-gray-50"
-                  value={visitanteForm.id_visitante ?? ''}
-                  onChange={e => {
-                    const val = e.target.value;
-                    if (val) {
-                      const v = visitantesReg.find(vis => vis.id_visitante === parseInt(val));
-                      if (v) setVisitanteForm(f => ({
-                        ...f,
-                        id_visitante: v.id_visitante,
-                        id_persona_visitante: v.id_persona,
-                        nombre:   v.persona?.nombre   || '',
-                        apellido: v.persona?.apellido || ''
-                      }));
-                    } else {
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Buscar Visitante o Persona</label>
+                <SearchableSelect 
+                  options={[
+                    ...visitantesReg.map(v => ({ value: `v-${v.id_visitante}`, label: `${v.persona?.nombre || ''} ${v.persona?.apellido || ''} (V)` })),
+                    ...personasSistema.map(p => ({ value: `p-${p.id_persona}`, label: `${p.nombre || ''} ${p.apellido || ''} (P)` }))
+                  ]}
+                  value={visitanteForm.id_visitante ? `v-${visitanteForm.id_visitante}` : (visitanteForm.id_persona_visitante ? `p-${visitanteForm.id_persona_visitante}` : '')}
+                  onChange={(val) => {
+                    if (!val) {
                       setVisitanteForm(f => ({ ...f, id_visitante: null, id_persona_visitante: '', nombre: '', apellido: '' }));
+                    } else if (val.startsWith('v-')) {
+                      const vid = parseInt(val.replace('v-', ''));
+                      const v = visitantesReg.find(vis => vis.id_visitante === vid);
+                      setVisitanteForm(f => ({ ...f, id_visitante: v.id_visitante, id_persona_visitante: v.id_persona, nombre: v.persona?.nombre || '', apellido: v.persona?.apellido || '', telefono: v.persona?.telefono || '' }));
+                    } else {
+                      const pid = val.replace('p-', '');
+                      const p = personasSistema.find(x => x.id_persona === pid);
+                      setVisitanteForm(f => ({ ...f, id_visitante: null, id_persona_visitante: pid, nombre: p?.nombre || '', apellido: p?.apellido || '', telefono: p?.telefono || '' }));
                     }
-                  }}>
-                  <option value="">— Nuevo visitante —</option>
-                  {visitantesReg.map(v => (
-                    <option key={v.id_visitante} value={v.id_visitante}>
-                      {v.persona?.nombre} {v.persona?.apellido}
-                    </option>
-                  ))}
-                </select>
+                  }}
+                  placeholder="Buscar por nombre o apellido..."
+                />
               </div>
 
-              {/* Si es nuevo, seleccionar persona del sistema */}
               {!visitanteForm.id_visitante && (
-                <div>
-                  <label className="text-[10px] font-bold text-gray-400 uppercase">Persona *</label>
-                  <select className="w-full border rounded-lg p-2 text-sm mt-0.5"
-                    value={visitanteForm.id_persona_visitante}
-                    onChange={e => {
-                      const p = personasSistema.find(x => x.id_persona === e.target.value);
-                      setVisitanteForm(f => ({
-                        ...f,
-                        id_persona_visitante: e.target.value,
-                        nombre:   p?.nombre   || '',
-                        apellido: p?.apellido || ''
-                      }));
-                    }}
-                    required={!visitanteForm.id_visitante}>
-                    <option value="">— Seleccionar persona —</option>
-                    {personasSistema.map(p => (
-                      <option key={p.id_persona} value={p.id_persona}>{p.nombre} {p.apellido}</option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-2 gap-3 animate-fadeIn">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Nombre</label>
+                    <input className="w-full border rounded-lg p-2 text-sm mt-0.5" 
+                      value={visitanteForm.nombre}
+                      onChange={e => setVisitanteForm(f => ({ ...f, nombre: e.target.value }))}
+                      placeholder="Nombre" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase">Apellido</label>
+                    <input className="w-full border rounded-lg p-2 text-sm mt-0.5" 
+                      value={visitanteForm.apellido}
+                      onChange={e => setVisitanteForm(f => ({ ...f, apellido: e.target.value }))}
+                      placeholder="Apellido" />
+                  </div>
                 </div>
               )}
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Teléfono</label>
+                <input className="w-full border rounded-lg p-2 text-sm mt-0.5" 
+                  value={visitanteForm.telefono}
+                  onChange={e => setVisitanteForm(f => ({ ...f, telefono: e.target.value }))}
+                  placeholder="809-000-0000" />
+              </div>
 
               <hr className="border-dashed" />
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Datos del Vehículo</p>
@@ -645,98 +640,87 @@ export default function VehiculosTickets() {
       {/* ─── TAB 2: Tickets Activos ─── */}
       {activeTab === 'activos' && (
         <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-          <div className="flex items-center justify-between p-5 border-b">
-            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              <FaClipboardCheck className="text-green-600" /> Lista de Tickets de Hoy
-            </h3>
-            <button onClick={loadData} className="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100">
-              <FaSyncAlt />
-            </button>
+          <div className="flex flex-col md:flex-row items-center justify-between p-5 border-b gap-4 bg-gray-50/50">
+            <div>
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaClipboardCheck className="text-green-600" /> Tickets Activos</h3>
+              <p className="text-[10px] text-gray-400">Control de entradas del día</p>
+            </div>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <div className="relative w-full md:w-64">
+                <input 
+                  type="text" 
+                  placeholder="Buscar placa o visitante..." 
+                  className="w-full pl-8 pr-4 py-2 text-xs border rounded-xl focus:ring-2 focus:ring-green-500 outline-none transition-all"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <FaSearch className="absolute left-3 top-2.5 text-gray-300 text-[10px]" />
+              </div>
+              <button 
+                onClick={() => { setSearchTerm(''); loadData(); }} 
+                disabled={isRefreshing} 
+                className="bg-white border text-gray-500 hover:text-green-600 p-2.5 rounded-xl hover:shadow-sm transition disabled:opacity-50"
+              >
+                  <FaSyncAlt className={isRefreshing ? 'animate-spin' : ''} />
+              </button>
+            </div>
           </div>
 
-          {tickets.length === 0 ? (
-            <div className="text-center py-16 text-gray-400">
-              <FaTicketAlt className="mx-auto text-4xl mb-3 opacity-20" />
-              <p>No hay tickets registrados hoy.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-100 text-sm">
-                <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase">
-                  <tr>
-                    <th className="px-5 py-3 text-left">Ticket</th>
-                    <th className="px-5 py-3 text-left">Visitante</th>
-                    <th className="px-5 py-3 text-left">Placa</th>
-                    <th className="px-5 py-3 text-left">Estado</th>
-                    <th className="px-5 py-3 text-left">Vehículo</th>
-                    <th className="px-5 py-3 text-left">Plaza</th>
-                    <th className="px-5 py-3 text-left">Entrada</th>
-                    <th className="px-5 py-3 text-left">Tiempo</th>
-                    <th className="px-5 py-3 text-left">Vence</th>
-                    <th className="px-5 py-3 text-center">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {tickets.map(t => {
-                    const statusName = t.estado?.nombre || t.estado;
-                    const cls = estadoBadge[statusName] || 'bg-gray-100 text-gray-500';
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-100/50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">
+                <tr>
+                  <th className="px-5 py-4 text-left">Ticket</th>
+                  <th className="px-5 py-4 text-left">Visitante</th>
+                  <th className="px-5 py-4 text-left">Placa</th>
+                  <th className="px-5 py-4 text-left">Estado</th>
+                  <th className="px-5 py-4 text-left">Plaza</th>
+                  <th className="px-5 py-4 text-left">Entrada</th>
+                  <th className="px-5 py-4 text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-100">
+                {tickets
+                  .filter(t => 
+                    t.placa_capturada?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    t._personaNombre?.toLowerCase().includes(searchTerm.toLowerCase())
+                  )
+                  .map(t => {
+                    const sLower = (t._statusName || '').toLowerCase();
+                    const cls = estadoBadge[sLower] || estadoBadge.usado;
                     return (
-                      <tr key={t.id_ticket} className="hover:bg-gray-50 transition-all">
-                        <td className="px-5 py-4 text-xs text-gray-400 font-mono">
-                          #{String(t.id_ticket).padStart(5,'0')}
-                        </td>
-                        <td className="px-5 py-4 font-medium text-gray-800">{t._personaNombre}</td>
+                      <tr key={t.id_ticket} className="hover:bg-gray-50/80 transition-all group">
+                        <td className="px-5 py-4 text-xs font-mono text-gray-400">#{String(t.id_ticket).padStart(5,'0')}</td>
+                        <td className="px-5 py-4 font-semibold text-gray-700">{t._personaNombre}</td>
                         <td className="px-5 py-4">
-                          <span className="bg-gray-900 text-white font-mono text-xs px-2 py-1 rounded">
-                            {t.placa_capturada}
+                          <span className="bg-gray-900 text-white font-mono text-[10px] px-2 py-1 rounded shadow-sm">{t.placa_capturada}</span>
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className={`px-2.5 py-1 rounded-full text-[9px] font-bold uppercase ${cls}`}>
+                            {t._statusName}
                           </span>
                         </td>
-                        <td className="px-5 py-4">
-                          <span className={`font-bold text-xs px-2 py-1 rounded-full ${cls}`}>{statusName}</span>
+                        <td className="px-5 py-4 text-xs font-bold text-gray-600">
+                          {t.plaza?.numero_plaza || '—'}
                         </td>
-                        <td className="px-5 py-4 text-gray-500 text-xs">
-                          {[t.marca_vehiculo, t.color_vehiculo].filter(Boolean).join(' · ') || '—'}
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className="font-bold text-green-700 bg-green-50 px-2 py-1 rounded-full text-xs border border-green-200">
-                            {t.plaza?.numero_plaza}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-xs text-gray-500">
-                          {new Date(t.fecha_hora_emision).toLocaleString('es-DO',{dateStyle:'short',timeStyle:'short'})}
-                        </td>
-                        <td className="px-5 py-4 text-xs font-bold text-amber-600">
-                          {statusName === 'Activo'
-                            ? calcTiempo(t.fecha_hora_emision, new Date().toISOString())
-                            : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="px-5 py-4 text-xs">
-                          {t.fecha_hora_vencimiento ? (() => {
-                            const msLeft = new Date(t.fecha_hora_vencimiento) - Date.now();
-                            const pulsar = statusName === 'Activo' && msLeft < 10*60000;
-                            return (
-                              <span className={`font-bold ${pulsar ? 'text-red-600 animate-pulse' : 'text-gray-500'}`}>
-                                {new Date(t.fecha_hora_vencimiento).toLocaleTimeString('es-DO',{hour:'2-digit',minute:'2-digit'})}
-                              </span>
-                            );
-                          })() : <span className="text-gray-300">—</span>}
+                        <td className="px-5 py-4 text-[11px] text-gray-500">
+                          {new Date(t.fecha_hora_emision).toLocaleString('es-DO', { hour: '2-digit', minute: '2-digit' })}
                         </td>
                         <td className="px-5 py-4 text-center">
-                          <div className="flex gap-1 justify-center">
-                            <button onClick={() => setTicketParaImprimir(t)} title="Ver/Imprimir"
-                              className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition">
-                              <FaPrint size={15} />
+                          <div className="flex gap-1 justify-center opacity-70 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => setTicketParaImprimir(t)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg">
+                              <FaPrint size={14} />
                             </button>
-                            {statusName === 'Activo' && (<>
-                              <button onClick={() => handleCerrarTicket(t)} title="Registrar salida"
-                                className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-bold text-xs transition shadow">
-                                <FaSignOutAlt size={12} /> Salida
-                              </button>
-                              <button onClick={() => handleAnularTicket(t)} title="Anular ticket"
-                                className="flex items-center gap-1 bg-red-100 hover:bg-red-200 text-red-600 px-2 py-1.5 rounded-lg font-bold text-xs transition">
-                                <FaBan size={12} /> Anular
-                              </button>
-                            </>)}
+                            {sLower === 'activo' && (
+                              <>
+                                <button onClick={() => handleCerrarTicket(t)} className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-1.5 rounded-xl text-[10px] font-bold shadow-sm">
+                                  <FaSignOutAlt size={10} /> SALIDA
+                                </button>
+                                <button onClick={() => handleAnularTicket(t)} className="flex items-center gap-1.5 bg-red-50 text-red-600 px-3 py-1.5 rounded-xl text-[10px] font-bold">
+                                  <FaBan size={10} /> ANULAR
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -745,8 +729,7 @@ export default function VehiculosTickets() {
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
+          </div>
       )}
 
       {/* ─── TAB 3: Flota Registrada ─── */}

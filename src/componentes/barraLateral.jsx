@@ -34,14 +34,14 @@ export default function BarraLateral() {
   useEffect(() => {
     const fetchNoLeidas = async () => {
       const { count } = await supabase
-        .from('notificaciones')
+        .from('notificacion')
         .select('*', { count: 'exact', head: true })
-        .eq('Leida', false);
+        .eq('leida', false);
       setNoLeidas(count || 0);
     };
     fetchNoLeidas();
     const ch = supabase.channel('notif_badge')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notificaciones' }, fetchNoLeidas)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notificacion' }, fetchNoLeidas)
       .subscribe();
     return () => supabase.removeChannel(ch);
   }, []);
