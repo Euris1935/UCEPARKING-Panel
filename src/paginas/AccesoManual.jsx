@@ -5,20 +5,18 @@ import Swal from 'sweetalert2';
 import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import { playBeep } from '../utils/audio';
-import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function AccesoManual() {
   const { orgId, loadingOrg } = useOrg();
   const [loading, setLoading] = useState(false);
-   const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos'
- 
-   // Datos
-   const [vehiculos, setVehiculos] = useState([]);
-   const [visitantes, setVisitantes] = useState([]);
-   const [todasPlazas, setTodasPlazas] = useState([]);
-   const [plazasLibres, setPlazasLibres] = useState([]);
-   const [accesosActivos, setAccesosActivos] = useState([]);
-   const [currentPersonaId, setCurrentPersonaId] = useState(null);
+  const [activeTab, setActiveTab] = useState('entrada'); // 'entrada' | 'activos'
+
+  // Datos
+  const [vehiculos, setVehiculos] = useState([]);
+  const [todasPlazas, setTodasPlazas] = useState([]);
+  const [plazasLibres, setPlazasLibres] = useState([]);
+  const [accesosActivos, setAccesosActivos] = useState([]);
+  const [currentPersonaId, setCurrentPersonaId] = useState(null);
 
   // Formulario Entrada Manual
   const [entradaForm, setEntradaForm] = useState({
@@ -26,6 +24,12 @@ export default function AccesoManual() {
     id_plaza: '',
     puertaDestino: 'main'
   });
+
+  const nombrePuertaLabel = (key) => {
+    if (key === 'vip') return 'VIP';
+    if (key === 'exit') return 'Salida';
+    return 'Principal';
+  };
 
   const [busquedaVehiculo, setBusquedaVehiculo] = useState('');
   const [mostrarDropdown, setMostrarDropdown] = useState(false);
@@ -41,75 +45,63 @@ export default function AccesoManual() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
+        const { data } = await supabase.from('usuarios').select('id_persona').eq('id', user.id).single();
         if (data) setCurrentPersonaId(data.id_persona);
       }
     };
     init();
     loadData();
 
-    // Suscripción tiempo real a acceso y plaza
+    // Suscripción tiempo real a registros_acceso y plazas
     const ch = supabase.channel('rt_am')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'acceso' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'registros_acceso' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'plazas' }, loadData)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
 
   const loadData = async () => {
     try {
-      // Obtener estados para plaza
-      const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-      const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
-
       // Plazas: obtener todas para mapear los nombres, y filtrar las libres para el dropdown
-      const { data: plazas } = await supabase.from('plaza').select('*').order('numero_plaza');
+      const { data: plazas } = await supabase.from('plazas').select('*').order('Numero_Plaza');
       if (plazas) {
         setTodasPlazas(plazas);
-        setPlazasLibres(plazas.filter(p => p.id_estado === idEstLibrePlaza));
+        setPlazasLibres(plazas.filter(p => p.id_estado === 1));
       }
 
       // Vehículos registrados (con dueños)
       const { data: vhs, error: vErr } = await supabase
-        .from('vehiculo')
-        .select('*, marca(nombre), modelo(nombre), color(nombre), persona(nombre, apellido, telefono)')
-        .order('created_at', { ascending: false });
+        .from('vehiculos')
+        .select('*, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido, telefono)')
+        .order('Fecha_Registro', { ascending: false });
       if (vErr) console.error('Error cargando vehiculos:', vErr);
-
-      // Visitantes registrados
-      const { data: vis, error: visErr } = await supabase
-        .from('visitante')
-        .select('*, persona(nombre, apellido, telefono)')
-        .order('created_at', { ascending: false });
-      if (visErr) console.error('Error cargando visitantes:', visErr);
 
       // Accesos activos (entradas manuales sin salida)
       const { data: activos, error: activosErr } = await supabase
-        .from('acceso')
-        .select('*, vehiculo(placa, id_persona, marca(nombre), modelo(nombre), color(nombre), persona(nombre, apellido, telefono)), ticket(id_visitante)')
+        .from('registros_acceso')
+        .select('*, vehiculos(placa, id_persona, marcas_vehiculo(nombre), modelos_vehiculo(nombre), colores_vehiculo(nombre), personas(nombre, apellido, telefono))')
         .is('salida_at', null)
         .order('entrada_at', { ascending: false });
 
       if (activosErr) console.error('Error cargando accesos activos:', activosErr);
- 
+
       setVehiculos(vhs || []);
-      setVisitantes(vis || []);
       setAccesosActivos(activos || []);
 
     } catch (err) { console.error('Error cargando datos:', err); }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
+  const registrarLog = async (tipo, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre_tipo', tipo).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Acceso Manual').maybeSingle();
-      await supabase.from('evento').insert([{
-        fecha_hora: new Date().toISOString(),
-        descripcion: descripcion,
-        id_plaza: idPlaza,
+      await supabase.from('eventos').insert([{
+        Fecha_Hora: new Date().toISOString(),
+        Descripcion: descripcion,
+        Id_Plaza: idPlaza,
         id_persona: currentPersonaId,
-        id_tipo: te?.id || null,
+        id_tipo_evento: te?.id_tipo || null,
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -118,10 +110,9 @@ export default function AccesoManual() {
 
   const handleRegistrarEntrada = async (e) => {
     e.preventDefault();
-
-    if (!entradaForm.vehiculo_id) return Swal.fire('Atención', 'Seleccione un vehículo.', 'warning');
+    if (!entradaForm.vehiculo_id) return Swal.fire('Atención', 'Seleccione un vehículo/cliente.', 'warning');
     if (!entradaForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
-    if (!entradaForm.puertaDestino) return Swal.fire('Atención', 'Seleccione una puerta de acceso.', 'warning');
+    if (loadingOrg) return Swal.fire('Espere', 'Cargando contexto de organización...', 'info');
     if (!orgId) return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Verifique que su usuario esté vinculado a un empleado/organización.', 'error');
 
     setLoading(true);
@@ -135,35 +126,32 @@ export default function AccesoManual() {
         return Swal.fire('Acceso Denegado', 'Este vehículo ya tiene un acceso activo registrado y no ha salido del parqueo.', 'error');
       }
 
-      const plazaSelect = plazasLibres.find(p => p.id_plaza === parseInt(entradaForm.id_plaza));
+      const plazaSelect = plazasLibres.find(p => p.Id_Plaza === parseInt(entradaForm.id_plaza));
 
       // 1. Insertar Registro de Acceso
       const { error: raErr } = await supabase
-        .from('acceso')
+        .from('registros_acceso')
         .insert({
           entrada_at: new Date().toISOString(),
           id_vehiculo: vehiculoSelect.id_vehiculo,
           ticket_id: null,
-          id_plaza: plazaSelect.id_plaza,
+          Id_Plaza: plazaSelect.Id_Plaza,
           id_dispositivo_entrada: null,
           organizacion_id: orgId
         });
       if (raErr) throw raErr;
 
-      // 2. Actualizar Plaza (Ocupada)
-      const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-      const idEstOcupPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Ocupado')?.id || 2;
-
+      // 2. Actualizar Plaza
       playBeep();
-      await supabase.from('plaza').update({
-        id_estado: idEstOcupPlaza
-      }).eq('id_plaza', plazaSelect.id_plaza);
+      await supabase.from('plazas').update({
+        id_estado: 2
+      }).eq('Id_Plaza', plazaSelect.Id_Plaza);
 
       // 3. Log
       await registrarLog(
         'Entrada',
-        `Entrada manual: ${vehiculoSelect.placa} — ${vehiculoSelect.persona?.nombre} ${vehiculoSelect.persona?.apellido} — Plaza ${plazaSelect.numero_plaza}.`,
-        plazaSelect.id_plaza
+        `Entrada manual: ${vehiculoSelect.placa} — ${vehiculoSelect.personas?.nombre} ${vehiculoSelect.personas?.apellido} — Plaza ${plazaSelect.Numero_Plaza}.`,
+        plazaSelect.Id_Plaza
       );
 
       // 4. Abrir Barrera (Principal o VIP)
@@ -177,7 +165,7 @@ export default function AccesoManual() {
         }
       } catch (_) { }
 
-      const nombrePuerta = entradaForm.puertaDestino === 'vip' ? 'VIP' : 'Principal';
+      const nombrePuerta = nombrePuertaLabel(entradaForm.puertaDestino);
       Swal.fire('Registro Exitoso', `Entrada registrada para ${vehiculoSelect.placa}. Barrera ${nombrePuerta} abriéndose.`, 'success');
       setEntradaForm({ vehiculo_id: '', id_plaza: '', puertaDestino: 'main' });
       setBusquedaVehiculo('');
@@ -189,52 +177,56 @@ export default function AccesoManual() {
     setLoading(false);
   };
 
-  const handleRegistrarSalida = async (acc) => {
-    const plazaEncontrada = todasPlazas.find(p => p.id_plaza === acc.id_plaza);
+  const handleRegistrarSalida = async (acceso) => {
+    const plazaEncontrada = todasPlazas.find(p => p.Id_Plaza === acceso.Id_Plaza);
     const result = await Swal.fire({
       title: '¿Registrar Salida Manual?',
-      html: `Vehículo: <b>${acc.vehiculo?.placa}</b><br/>Plaza: <b>${plazaEncontrada?.numero_plaza || 'No asig.'}</b><br/><br/><span class="text-sm text-gray-500">Seleccione la barrera a abrir:</span>`,
+      html: `
+        <div style="text-align:left;margin-bottom:12px">
+          <b>Vehículo:</b> ${acceso.vehiculos?.placa}<br/>
+          <b>Plaza:</b> ${plazaEncontrada?.Numero_Plaza || 'No asig.'}
+        </div>
+        <p style="font-size:13px;color:#6b7280;margin-bottom:8px">Seleccione la barrera a abrir para la salida:</p>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+          <button id="swal-btn-main" onclick="window._swalBarrera='main';Swal.clickConfirm()" style="background:#16a34a;color:white;padding:8px 16px;border-radius:8px;font-weight:bold;border:none;cursor:pointer">🚗 Principal</button>
+          <button id="swal-btn-exit" onclick="window._swalBarrera='exit';Swal.clickConfirm()" style="background:#dc2626;color:white;padding:8px 16px;border-radius:8px;font-weight:bold;border:none;cursor:pointer">🚪 Salida</button>
+          <button id="swal-btn-vip" onclick="window._swalBarrera='vip';Swal.clickConfirm()" style="background:#9333ea;color:white;padding:8px 16px;border-radius:8px;font-weight:bold;border:none;cursor:pointer">⭐ VIP</button>
+        </div>`,
       icon: 'question',
       showCancelButton: true,
-      showDenyButton: true,
-      confirmButtonColor: '#16a34a',
-      denyButtonColor: '#9333ea',
-      confirmButtonText: 'Abrir Principal',
-      denyButtonText: 'Abrir VIP',
-      cancelButtonText: 'Cancelar'
+      showConfirmButton: false,
+      cancelButtonText: 'Cancelar',
+      didOpen: () => { window._swalBarrera = null; }
     });
-    if (!result.isConfirmed && !result.isDenied) return;
+    if (!result.isConfirmed || !window._swalBarrera) return;
 
-    const barreraSalida = result.isConfirmed ? 'main' : 'vip';
+    const barreraSalida = window._swalBarrera || 'main';
 
     try {
       const ahora = new Date().toISOString();
 
-      // 1. Marcar salida en acceso
+      // 1. Marcar salida en registros_acceso
       const { error: raErr } = await supabase
-        .from('acceso')
+        .from('registros_acceso')
         .update({ salida_at: ahora })
-        .eq('id_registro', acc.id_registro);
+        .eq('id_registro', acceso.id_registro);
       if (raErr) throw raErr;
 
       // 2. Liberar Plaza si existe
-      if (acc.id_plaza) {
-        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
-
-        await supabase.from('plaza').update({
-          id_estado: idEstLibrePlaza
-        }).eq('id_plaza', acc.id_plaza);
+      if (acceso.Id_Plaza) {
+        await supabase.from('plazas').update({
+          id_estado: 1
+        }).eq('Id_Plaza', acceso.Id_Plaza);
       }
 
 
 
-      // 3. Log 
-      const nombreSalida = `${acc.vehiculo?.persona?.nombre || ''} ${acc.vehiculo?.persona?.apellido || ''}`.trim() || 'Desconocido';
+      // 3. Log — incluye nombre de persona (#16)
+      const nombreSalida = `${acceso.vehiculos?.personas?.nombre || ''} ${acceso.vehiculos?.personas?.apellido || ''}`.trim() || 'Desconocido';
       await registrarLog(
         'Salida',
-        `Salida manual: ${nombreSalida} — ${acc.vehiculo?.placa} — Plaza ${plazaEncontrada?.numero_plaza || 'N/A'}.`,
-        acc.id_plaza
+        `Salida manual: ${nombreSalida} — ${acceso.vehiculos?.placa} — Plaza ${plazaEncontrada?.Numero_Plaza || 'N/A'}.`,
+        acceso.Id_Plaza
       );
 
       // 4. Abrir Barrera
@@ -248,7 +240,7 @@ export default function AccesoManual() {
         }
       } catch (_) { }
 
-      const nombrePuertaSalida = barreraSalida === 'vip' ? 'VIP' : 'Principal';
+      const nombrePuertaSalida = nombrePuertaLabel(barreraSalida);
       Swal.fire('Salida Registrada', `La plaza quedó libre y la barrera ${nombrePuertaSalida} se está abriendo.`, 'success');
       loadData();
     } catch (err) {
@@ -313,18 +305,24 @@ export default function AccesoManual() {
           <h2 className="text-3xl font-bold text-gray-900">Acceso Manual</h2>
           <p className="text-gray-500 mt-1">Dar acceso manual a clientes registrados sin LPR.</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap">
           <button
             onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')}
-            className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+            className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2 text-sm"
           >
-            PUERTA PRINCIPAL
+            🚗 ENTRADA PRINCIPAL
+          </button>
+          <button
+            onClick={() => apiControlBarrera('open-exit', '¿Abrir Barrera Salida?')}
+            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2 text-sm"
+          >
+            🚪 SALIDA
           </button>
           <button
             onClick={() => apiControlBarrera('open-vip', '¿Abrir Barrera VIP?')}
-            className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+            className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2 text-sm"
           >
-            PUERTA VIP
+            ⭐ PUERTA VIP
           </button>
         </div>
       </header>
@@ -370,16 +368,16 @@ export default function AccesoManual() {
                         className="p-3 hover:bg-indigo-50 border-b last:border-0 cursor-pointer transition-colors"
                         onMouseDown={() => {
                           setEntradaForm({ ...entradaForm, vehiculo_id: v.id_vehiculo });
-                          setBusquedaVehiculo(`${v.placa} — ${v.persona?.nombre} ${v.persona?.apellido}`);
+                          setBusquedaVehiculo(`${v.placa} — ${v.personas?.nombre} ${v.personas?.apellido}`);
                           setMostrarDropdown(false);
                         }}
                       >
                         <div className="flex justify-between items-center">
                           <span className="font-bold text-indigo-700 text-base font-mono">{v.placa}</span>
-                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">{v.marca?.nombre} {v.modelo?.nombre}</span>
+                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">{v.marcas_vehiculo?.nombre} {v.modelos_vehiculo?.nombre}</span>
                         </div>
                         <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                          <FaUserPlus className="text-[10px]" /> {v.persona?.nombre} {v.persona?.apellido}
+                          <FaUserPlus className="text-[10px]" /> {v.personas?.nombre} {v.personas?.apellido}
                         </div>
                       </li>
                     ))
@@ -388,33 +386,35 @@ export default function AccesoManual() {
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Asignar Plaza *</label>
-                <SearchableSelect
-                  options={plazasLibres.map(p => ({ value: p.id_plaza, label: `Plaza ${p.numero_plaza}` }))}
-                  value={entradaForm.id_plaza}
-                  onChange={(val) => setEntradaForm({ ...entradaForm, id_plaza: val })}
-                  placeholder="— Seleccione una plaza libre —"
-                  focusRingClass="focus:ring-indigo-500"
-                  selectedItemClass="bg-indigo-100 text-indigo-800"
-                />
-              </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Asignar Plaza *</label>
+              <select
+                className="w-full border rounded-lg p-2 text-sm focus:ring-indigo-500 bg-gray-50"
+                value={entradaForm.id_plaza}
+                onChange={(e) => setEntradaForm({ ...entradaForm, id_plaza: e.target.value })}
+                required
+              >
+                <option value="">— Seleccione una plaza libre —</option>
+                {plazasLibres.map(p => (
+                  <option key={p.Id_Plaza} value={p.Id_Plaza}>
+                    Plaza {p.Numero_Plaza}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Puerta de Acceso *</label>
-                <SearchableSelect
-                  options={[
-                    { value: 'main', label: 'Barrera Principal' },
-                    { value: 'vip', label: 'Barrera VIP' }
-                  ]}
-                  value={entradaForm.puertaDestino}
-                  onChange={(val) => setEntradaForm({ ...entradaForm, puertaDestino: val })}
-                  placeholder="— Seleccionar puerta —"
-                  focusRingClass="focus:ring-indigo-500"
-                  selectedItemClass="bg-indigo-100 text-indigo-800"
-                />
-              </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Puerta de Acceso *</label>
+              <select
+                className="w-full border rounded-lg p-2 text-sm focus:ring-indigo-500 bg-gray-50"
+                value={entradaForm.puertaDestino}
+                onChange={(e) => setEntradaForm({ ...entradaForm, puertaDestino: e.target.value })}
+                required
+              >
+                <option value="main">🚗 Barrera Principal (Entrada)</option>
+                <option value="exit">🚪 Barrera Salida</option>
+                <option value="vip">⭐ Barrera VIP</option>
+              </select>
             </div>
 
             <div className="pt-4">
@@ -464,13 +464,10 @@ export default function AccesoManual() {
                 {(() => {
                   const busq = busquedaActivos.toLowerCase();
                   const filtrados = accesosActivos.filter(acc => {
-                    const placa = acc.vehiculo?.placa?.toLowerCase() || '';
-                    const vOwner = acc.vehiculo?.persona;
-                    const vGuest = acc.ticket?.id_visitante ? visitantes.find(v => v.id_visitante === acc.ticket.id_visitante)?.persona : null;
-                    const per = vOwner || vGuest;
-
-                    const nombre = `${per?.nombre || ''} ${per?.apellido || ''}`.toLowerCase();
-                    const tel = (per?.telefono || '').toLowerCase();
+                    if (!busq) return true;
+                    const placa = acc.vehiculos?.placa?.toLowerCase() || '';
+                    const nombre = `${acc.vehiculos?.personas?.nombre || ''} ${acc.vehiculos?.personas?.apellido || ''}`.toLowerCase();
+                    const tel = (acc.vehiculos?.personas?.telefono || '').toLowerCase();
                     return placa.includes(busq) || nombre.includes(busq) || tel.includes(busq);
                   });
                   if (filtrados.length === 0) {
@@ -478,35 +475,17 @@ export default function AccesoManual() {
                   }
                   return filtrados.map((acc) => (
                     <tr key={acc.id_registro} className="hover:bg-gray-50 transition-colors">
-                      <td className="py-3 px-4 font-mono font-bold text-indigo-700 text-base">{acc.vehiculo?.placa}</td>
+                      <td className="py-3 px-4 font-mono font-bold text-indigo-700 text-base">{acc.vehiculos?.placa}</td>
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-gray-800">
-                            {(() => {
-                                const vOwner = acc.vehiculo?.persona;
-                                const guestPersona = acc.ticket?.id_visitante ? visitantes.find(v => v.id_visitante === acc.ticket.id_visitante)?.persona : null;
-                                
-                                if (vOwner) return `${vOwner.nombre} ${vOwner.apellido}`;
-                                if (guestPersona) return (
-                                    <div className="flex items-center gap-2">
-                                        <span>{guestPersona.nombre} {guestPersona.apellido}</span>
-                                        <span className="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded-md font-black border border-amber-200">VISITANTE</span>
-                                    </div>
-                                );
-                                return 'Visitante';
-                            })()}
-                        </div>
-                        <div className="text-xs text-gray-500">{acc.vehiculo?.marca?.nombre} {acc.vehiculo?.modelo?.nombre}</div>
+                        <div className="font-semibold text-gray-800">{acc.vehiculos?.personas?.nombre} {acc.vehiculos?.personas?.apellido}</div>
+                        <div className="text-xs text-gray-500">{acc.vehiculos?.marcas_vehiculo?.nombre} {acc.vehiculos?.modelos_vehiculo?.nombre}</div>
                       </td>
                       <td className="py-3 px-4 text-gray-600">
-                        {(() => {
-                             const vOwner = acc.vehiculo?.persona;
-                             const vGuest = acc.ticket?.id_visitante ? visitantes.find(v => v.id_visitante === acc.ticket.id_visitante)?.persona : null;
-                             return vOwner?.telefono || vGuest?.telefono || <span className="text-gray-300 italic">—</span>;
-                        })()}
+                        {acc.vehiculos?.personas?.telefono || <span className="text-gray-300 italic">—</span>}
                       </td>
                       <td className="py-3 px-4">
                         <span className="bg-gray-200 text-gray-800 px-2 py-1 rounded font-bold text-xs">
-                          {todasPlazas.find(p => p.id_plaza === acc.id_plaza)?.numero_plaza || 'N/A'}
+                          {todasPlazas.find(p => p.Id_Plaza === acc.Id_Plaza)?.Numero_Plaza || 'N/A'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-gray-600">{formatearFecha(acc.entrada_at)}</td>
