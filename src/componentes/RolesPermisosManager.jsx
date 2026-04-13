@@ -164,26 +164,29 @@ export default function RolesPermisosManager() {
     }
   };
 
-  // Agrupar permisos por módulo usando los datos del RPC
-  const permisosAgrupadosPorModulo = modulos.reduce((acc, modulo) => {
-    const permsOfModule = permisosDelRol.filter(p => p.modulo === modulo.nombre);
-    if (permsOfModule.length > 0) {
-      acc.push({ modulo, permisos: permsOfModule });
-    }
-    return acc;
-  }, []);
+  // Agrupar permisos de manera robusta
+  const permisosAgrupadosPorModulo = [];
+  const groupsObj = {};
 
-  // También incluir permisos cuyo módulo no esté en la lista ordenada
-  const modulosEnRol = permisosDelRol.map(p => p.modulo);
-  const modulosExtraData = [...new Set(modulosEnRol)].filter(
-    nombre => !modulos.some(m => m.nombre === nombre)
-  );
-  modulosExtraData.forEach(nomExtra => {
-    const permsExtra = permisosDelRol.filter(p => p.modulo === nomExtra);
-    if (permsExtra.length > 0) {
-      permisosAgrupadosPorModulo.push({ modulo: { nombre: nomExtra }, permisos: permsExtra });
+  permisosDelRol.forEach(p => {
+    // Buscar la propiedad correcta del nombre del módulo (puede venir como nombre_modulo, modulo, o extraemos de la ruta)
+    let modName = p.nombre_modulo || p.modulo;
+    if (!modName && p.ruta) {
+      modName = p.ruta.replace('/', '');
     }
+    modName = modName || 'Global';
+
+    if (!groupsObj[modName]) {
+      groupsObj[modName] = [];
+    }
+    groupsObj[modName].push(p);
   });
+
+  // Convertir a array y ordenar alfabeticamente
+  for (const [modName, perms] of Object.entries(groupsObj)) {
+    permisosAgrupadosPorModulo.push({ modulo: { nombre: modName }, permisos: perms });
+  }
+  permisosAgrupadosPorModulo.sort((a, b) => a.modulo.nombre.localeCompare(b.modulo.nombre));
 
   const totalAsignados = permisosDelRol.filter(p => p.asignado).length;
   const totalDisponibles = permisosDelRol.length;

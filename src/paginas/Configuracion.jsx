@@ -80,10 +80,10 @@ export default function Configuracion() {
             const { data: { user } } = await supabase.auth.getUser();
             if (!user) return;
 
-            // 1. Obtener datos base del usuario (id_persona y id_rol)
+            // 1. Obtener datos base del usuario (id_persona y rol_id)
             const { data: uData, error: uErr } = await supabase
                 .from('usuario')
-                .select('id_persona, id_rol')
+                .select('id_persona, rol_id')
                 .eq('id', user.id)
                 .maybeSingle();
 
@@ -107,13 +107,13 @@ export default function Configuracion() {
             }
 
             // 3. Obtener nombre del rol
-            if (uData?.id_rol) {
+            if (uData?.rol_id) {
                 const { data: rData } = await supabase
                     .from('rol')
-                    .select('nombre_rol')
-                    .eq('id_rol', uData.id_rol)
+                    .select('nombre')
+                    .eq('id_rol', uData.rol_id)
                     .maybeSingle();
-                if (rData) nombreRol = rData.nombre_rol;
+                if (rData) nombreRol = rData.nombre;
             }
 
             // 4. Fallback si no hay nombre en 'personas' (usar metadata de Supabase Auth)
