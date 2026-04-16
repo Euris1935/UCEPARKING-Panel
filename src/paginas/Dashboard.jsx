@@ -35,25 +35,30 @@ export default function Dashboard() {
 
   const loadDashboardData = async () => {
     try {
-      // 1. Obtener catálogos de estados (contexto plaza)
-      const { data: estados } = await supabase.from('estado').select('*').eq('contexto', 'plaza');
+      // 1. Obtener catálogos de estados
+      const { data: estadosPlaza } = await supabase.from('estado_plaza').select('*');
+      const { data: estadosReserva } = await supabase.from('estado_reserva').select('*');
 
       // 2. Obtener plazas
       const { data: plazas } = await supabase.from('plaza').select('id_estado');
 
-      // 3. Obtener Reservas de la tabla reserva
+      // 3. Obtener Reservas ACTIVAS que aún no han vencido
+      const ahoraISO = new Date().toISOString();
+      const idEstadoReservaActiva = estadosReserva?.find(e => e.nombre === 'Activa')?.id_estado || 0;
       const { count: reservasTablaCount } = await supabase
         .from('reserva')
         .select('*', { count: 'exact', head: true })
-        .eq('id_estado', estados?.find(e => e.nombre === 'Activa')?.id || 0);
+        .eq('id_estado', idEstadoReservaActiva)
+        .or(`fecha_hora_fin.is.null,fecha_hora_fin.gt.${ahoraISO}`);
 
-      const getId = (name) => estados?.find(e => e.nombre.trim().toUpperCase() === name.toUpperCase())?.id;
+      const getId = (name) => estadosPlaza?.find(e => e.nombre.trim().toUpperCase() === name.toUpperCase())?.id_estado;
 
       const idLibre = getId('Libre');
       const idOcupada = getId('Ocupada');
       const idReservada = getId('Reservada');
-      const idMantenimiento = getId('Mantenimiento') || getId('Fuera de Servicio');
-      const idAsignada = getId('Asignada');
+      const idMantenimiento = getId('Mantenimiento') || getId('En Mantenimiento') || getId('Fuera de Servicio');
+      // Buscar estado asignado tolerando Asignada / Asignado / Assigned
+      const idAsignada = estadosPlaza?.find(e => e.nombre.trim().toUpperCase().startsWith('ASIGNAD'))?.id_estado;
 
       // Cálculos
       const total = plazas?.length || 0;
@@ -63,13 +68,13 @@ export default function Dashboard() {
       const asignadasNum = plazas?.filter(p => p.id_estado === idAsignada).length || 0;
       const libresNum = plazas?.filter(p => p.id_estado === idLibre || p.id_estado === null).length || 0;
 
-      const reservasActivasNum = reservasTablaCount > 0 ? reservasTablaCount : reservadasEnMapa;
+      const reservasActivasNum = reservasTablaCount || 0;
       const personasActivasNum = ocupadasNum + asignadasNum + reservasActivasNum;
 
       setStats({
         totalPlazas: total,
         ocupadas: ocupadasNum,
-        reservadas: reservadasEnMapa,
+        reservadas: reservasActivasNum,   // Usar conteo real de reserva table, no estado plaza
         libres: libresNum,
         mantenimiento: mantenimientoNum,
         asignadas: asignadasNum,
@@ -85,7 +90,7 @@ export default function Dashboard() {
   };
 
   const ocupacionPorcentaje = stats.totalPlazas > 0
-    ? Math.round(((stats.ocupadas + stats.reservadas + stats.asignadas) / stats.totalPlazas) * 100)
+    ? Math.round((stats.personasActivas / stats.totalPlazas) * 100)
     : 0;
 
   return (
@@ -102,7 +107,7 @@ export default function Dashboard() {
           <div>
             <p className="text-gray-500 text-sm font-semibold uppercase">Ocupación Actual</p>
             <h3 className="text-3xl font-bold text-gray-800 mt-1">
-              {stats.ocupadas} <span className="text-sm text-gray-400 font-normal">/ {stats.totalPlazas}</span>
+              {stats.personasActivas} <span className="text-sm text-gray-400 font-normal">/ {stats.totalPlazas}</span>
             </h3>
             <p className="text-xs text-green-600 mt-2 font-medium">{stats.libres} plazas libres</p>
           </div>

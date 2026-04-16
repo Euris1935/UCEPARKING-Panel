@@ -63,11 +63,10 @@ export default function Logs() {
                 .select(`
                     *,
                     persona ( nombre, apellido ),
-                    tipo ( nombre ),
-                    origen_evento ( nombre ),
+                    tipo:tipo_evento!id_tipo ( nombre ),
                     dispositivo (
                         ubicacion,
-                        tipo ( nombre )
+                        tipo:tipo_dispositivo!id_tipo ( nombre )
                     )
                 `)
                 .order('fecha_hora', { ascending: false })
@@ -196,7 +195,6 @@ export default function Logs() {
                                             </td>
                                             <td className="px-6 py-4 text-xs text-gray-600">
                                                 <span className="block font-medium">{ev.persona ? `${ev.persona.nombre} ${ev.persona.apellido}` : 'Sistema'}</span>
-                                                {ev.origen_evento?.nombre && <span className="text-gray-400 italic">{ev.origen_evento.nombre}</span>}
                                             </td>
                                         </tr>
                                     );

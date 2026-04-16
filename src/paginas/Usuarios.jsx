@@ -82,29 +82,28 @@ export default function Usuarios() {
         console.error('Error get_usuarios_org:', orgErr);
         await loadUsuariosFallback(rolesData || []);
       } else {
-        const filtrados = (orgUsers || []).filter(u => {
-          const rol = u.nombre_rol?.toLowerCase() || u.nombre?.toLowerCase();
-          return rol !== 'visitante';
-        });
+        const listaNormalizada = (orgUsers || []).map(u => ({
+          ...u,
+          id_usuario: u.id_usuario || u.id,
+          id_persona: u.id_persona || u.persona_id
+        }));
 
-        // Obtener `created_at` de respaldo desde tabla usuario o persona
-        const userIds = filtrados.map(u => u.id_usuario || u.id).filter(Boolean);
-        const personaIds = filtrados.map(u => u.id_persona || u.persona_id).filter(Boolean);
+        // Obtener `created_at` de respaldo si falta
+        const userIds = listaNormalizada.map(u => u.id_usuario).filter(Boolean);
+        const personaIds = listaNormalizada.map(u => u.id_persona).filter(Boolean);
         
         const [ { data: fUsr }, { data: fPer } ] = await Promise.all([
             userIds.length > 0 ? supabase.from('usuario').select('id, created_at').in('id', userIds) : { data: [] },
             personaIds.length > 0 ? supabase.from('persona').select('id_persona, created_at').in('id_persona', personaIds) : { data: [] }
         ]);
 
-        filtrados.forEach(u => {
-            const uid = u.id_usuario || u.id;
-            const pid = u.id_persona || u.persona_id;
-            const fu = fUsr?.find(x => String(x.id) === String(uid));
-            const fp = fPer?.find(x => String(x.id_persona) === String(pid));
-            u.created_at = fu?.created_at || fp?.created_at || u.created_at;
+        listaNormalizada.forEach(u => {
+            const fu = fUsr?.find(x => String(x.id) === String(u.id_usuario));
+            const fp = fPer?.find(x => String(x.id_persona) === String(u.id_persona));
+            u.created_at = u.created_at || fu?.created_at || fp?.created_at;
         });
         
-        setUsuarios(filtrados);
+        setUsuarios(listaNormalizada);
       }
 
       setRolesList(rolesData || []);
@@ -148,13 +147,13 @@ export default function Usuarios() {
   const registrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Usuarios').maybeSingle();
       await supabase.from('evento').insert([{ 
         fecha_hora: new Date().toISOString(), 
         descripcion: descripcion, 
         id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
+        id_tipo: te?.id_tipo || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -168,7 +167,11 @@ export default function Usuarios() {
   };
 
   const handleEdit = (user) => {
-    setEditingUser(user);
+    setEditingUser({
+      ...user,
+      id_persona: user.id_persona || user.persona_id,
+      id_usuario: user.id_usuario || user.id
+    });
     setFormData({
       nombre: user.nombre,
       apellido: user.apellido,

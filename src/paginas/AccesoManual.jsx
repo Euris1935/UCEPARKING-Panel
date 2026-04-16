@@ -56,9 +56,8 @@ export default function AccesoManual() {
     try {
       setIsRefreshing(true);
       // 1. Estados y Plazas
-      const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-      const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
-      const idEstOcupPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Ocupado')?.id || 2;
+      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+      const idEstLibrePlaza = epLibre?.id_estado || 1;
 
       const { data: plazas } = await supabase.from('plaza').select('*').order('numero_plaza');
       if (plazas) {
@@ -71,30 +70,55 @@ export default function AccesoManual() {
       setPersonas(allP || []);
 
       // 3. Vehículos y Visitantes
-      const { data: vhs } = await supabase.from('vehiculo').select('*, marca(nombre), modelo(nombre), color(nombre)');
+      const { data: vhs } = await supabase.from('vehiculo').select('*, modelo(nombre, marca(nombre)), color(nombre)');
       const vhsEnriquecidos = (vhs || []).map(v => ({ ...v, persona: pMap[v.id_persona] || null }));
       setVehiculos(vhsEnriquecidos);
 
-      // 4. Calcular Search Options (Para el buscador manual)
-      // Solo incluimos vehículos, pero permitimos buscarlos por nombre de dueño
-      const options = vhsEnriquecidos.map(v => ({ 
-        id: v.id_vehiculo, 
-        type: 'v', 
-        placa: v.placa, 
-        nombre: `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`,
-        marca: v.marca?.nombre, 
-        modelo: v.modelo?.nombre
-      }))
-      .sort((a, b) => {
-        const cmp = a.nombre.localeCompare(b.nombre);
-        return cmp !== 0 ? cmp : a.placa.localeCompare(b.placa);
+      // 4. Obtener vehiculos con acceso activo (no pueden volver a registrarse)
+      const { data: accActivosIds } = await supabase
+        .from('acceso').select('id_vehiculo').is('salida_at', null);
+      const vehiculosConAccesoActivo = new Set((accActivosIds || []).map(a => a.id_vehiculo));
+
+      // Calcular Search Options (Para el buscador manual)
+      const vhsOptions = vhsEnriquecidos.map(v => {
+        const tieneAcceso = vehiculosConAccesoActivo.has(v.id_vehiculo);
+        return {
+          id: v.id_vehiculo,
+          type: 'v',
+          placa: v.placa,
+          nombre: `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`.trim() || 'Sin Propietario',
+          marca: v.modelo?.marca?.nombre,
+          modelo: v.modelo?.nombre,
+          disabled: tieneAcceso,
+          razon: tieneAcceso ? 'Ya tiene acceso activo' : null
+        };
+      });
+
+      // Personas sin vehiculo vinculado
+      const idsPersonasConVehiculo = new Set(vhsEnriquecidos.map(v => v.id_persona).filter(Boolean));
+      const personasSinVehiculo = (allP || [])
+        .filter(p => !idsPersonasConVehiculo.has(p.id_persona))
+        .map(p => ({
+          id: p.id_persona,
+          type: 'p',
+          placa: 'No tiene placa asignada',
+          nombre: `${p.nombre || ''} ${p.apellido || ''}`.trim() || 'Sin nombre',
+          marca: null,
+          modelo: null,
+          disabled: false,
+          razon: null
+        }));
+
+      const options = [...vhsOptions, ...personasSinVehiculo].sort((a, b) => {
+        const cmp = (a.nombre || '').localeCompare(b.nombre || '');
+        return cmp !== 0 ? cmp : (a.placa || '').localeCompare(b.placa || '');
       });
       setSearchOptions(options);
 
       // 5. Accesos activos
       const { data: activos } = await supabase
         .from('acceso')
-        .select('*, vehiculo(*, marca(nombre), modelo(nombre), color(nombre))')
+        .select('*, vehiculo(*, modelo(nombre, marca(nombre)), color(nombre))')
         .is('salida_at', null)
         .order('entrada_at', { ascending: false });
 
@@ -103,7 +127,9 @@ export default function AccesoManual() {
         return {
           ...acc,
           _personaNombre: per ? `${per.nombre} ${per.apellido}` : (acc.vehiculo?.placa || 'Desconocido'),
-          _personaTel: per?.telefono || '—'
+          _personaTel: per?.telefono || '—',
+          _marcaNombre: acc.vehiculo?.modelo?.marca?.nombre,
+          _modeloNombre: acc.vehiculo?.modelo?.nombre
         };
       });
       setAccesosActivos(enrichedActivos);
@@ -114,14 +140,14 @@ export default function AccesoManual() {
   const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Acceso Manual').maybeSingle();
       await supabase.from('evento').insert([{
         fecha_hora: new Date().toISOString(),
         descripcion: descripcion,
         id_plaza: idPlaza,
         id_persona: currentPersonaId,
-        id_tipo: te?.id || null,
+        id_tipo: te?.id_tipo || null,
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -163,8 +189,8 @@ export default function AccesoManual() {
       if (raErr) throw raErr;
 
       // 2. Actualizar Plaza (Ocupada)
-      const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-      const idEstOcupPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Ocupado')?.id || 2;
+      const { data: epOcupado } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Ocupad%').maybeSingle();
+      const idEstOcupPlaza = epOcupado?.id_estado || 2;
 
       await supabase.from('plaza').update({
         id_estado: idEstOcupPlaza
@@ -173,7 +199,7 @@ export default function AccesoManual() {
       // 3. Log
       await registrarLog(
         'Entrada',
-        `Entrada manual: ${vehiculoSelect.placa} — ${vehiculoSelect.persona?.nombre} ${vehiculoSelect.persona?.apellido} — Plaza ${plazaSelect.numero_plaza}.`,
+        `Entrada manual: ${vehiculoSelect.placa} — ${vehiculoSelect.persona?.nombre} ${vehiculoSelect.persona?.apellido} — Plaza ${plazaSelect.numero_plaza}.`,
         plazaSelect.id_plaza
       );
 
@@ -230,8 +256,8 @@ export default function AccesoManual() {
 
       // 2. Liberar Plaza si existe
       if (acc.id_plaza) {
-        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+        const idEstLibrePlaza = epLibre?.id_estado || 1;
 
         await supabase.from('plaza').update({
           id_estado: idEstLibrePlaza
@@ -244,7 +270,7 @@ export default function AccesoManual() {
       const nombreSalida = `${acc.vehiculo?.persona?.nombre || ''} ${acc.vehiculo?.persona?.apellido || ''}`.trim() || 'Desconocido';
       await registrarLog(
         'Salida',
-        `Salida manual: ${nombreSalida} — ${acc.vehiculo?.placa} — Plaza ${plazaEncontrada?.numero_plaza || 'N/A'}.`,
+        `Salida manual: ${nombreSalida} — ${acc.vehiculo?.placa} — Plaza ${plazaEncontrada?.numero_plaza || 'N/A'}.`,
         acc.id_plaza
       );
 
@@ -297,7 +323,7 @@ export default function AccesoManual() {
   };
 
   const formatearFecha = (iso) => {
-    if (!iso) return '—';
+    if (!iso) return '—';
     return new Date(iso).toLocaleString('es-DO', {
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: true
@@ -371,67 +397,74 @@ export default function AccesoManual() {
                 <ul className="absolute z-50 w-full bg-white border border-gray-200 shadow-2xl max-h-72 overflow-y-auto rounded-xl mt-2 py-1 transform transition-all">
                   {searchOptions
                     .filter(opt => {
-                      const match = opt.nombre.toLowerCase().includes(busquedaVehiculo.toLowerCase()) || 
-                                    opt.placa.toLowerCase().includes(busquedaVehiculo.toLowerCase());
+                      const match = (opt.nombre || '').toLowerCase().includes(busquedaVehiculo.toLowerCase()) || 
+                                    (opt.placa || '').toLowerCase().includes(busquedaVehiculo.toLowerCase());
                       
-                      // Si la búsqueda está vacía, solo mostrar vehículos (v)
+                      // Restaurado: Si la búsqueda está vacía, solo mostrar vehículos vinculados (v) para evitar llenar el tope de 50
                       if (!busquedaVehiculo.trim()) return opt.type === 'v';
                       
-                      // Si hay búsqueda, mostrar cualquier coincidencia
+                      // Si hay búsqueda, mostrar coincidencias ya sea de vehículos o de personas sin vehículo
                       return match;
                     })
                     .slice(0, 50)
-                    .map(opt => (
-                      <li
-                        key={`${opt.type}-${opt.id}`}
-                        className="px-4 py-3 hover:bg-indigo-50 border-b border-gray-50 last:border-0 cursor-pointer transition-colors group"
-                        onMouseDown={() => {
-                          if (opt.type === 'p') {
-                            const pid = opt.id;
-                            Swal.fire({
-                              title: 'Vincular Placa',
-                              input: 'text',
-                              inputLabel: 'Este usuario no tiene vehículo. Ingrese la placa:',
-                              inputPlaceholder: 'ABC-1234',
-                              showCancelButton: true
-                            }).then(async (res) => {
-                              if (res.isConfirmed && res.value) {
-                                  const placa = res.value.toUpperCase();
-                                  const { data: exV } = await supabase.from('vehiculo').select('id_vehiculo').eq('placa', placa).maybeSingle();
-                                  if (exV) {
-                                    setEntradaForm({ ...entradaForm, vehiculo_id: exV.id_vehiculo });
-                                    setBusquedaVehiculo(`${placa} — ${opt.nombre}`);
-                                  } else {
-                                    const { data: nV } = await supabase.from('vehiculo').insert([{ placa, id_persona: pid, organizacion_id: orgId }]).select('id_vehiculo').single();
-                                    if (nV) {
-                                      setEntradaForm({ ...entradaForm, vehiculo_id: nV.id_vehiculo });
-                                      setBusquedaVehiculo(`${placa} — ${opt.nombre}`);
-                                    }
-                                  }
-                              }
-                            });
-                          } else {
-                            setEntradaForm({ ...entradaForm, vehiculo_id: opt.id });
-                            setBusquedaVehiculo(`${opt.placa} — ${opt.nombre}`);
-                          }
-                          setMostrarDropdown(false);
-                        }}
-                      >
-                        <div className="flex justify-between items-center">
-                          <span className={`font-bold font-mono text-base ${opt.type === 'v' ? 'text-indigo-700' : 'text-gray-400 italic'}`}>
-                            {opt.placa}
-                          </span>
-                          {opt.marca && (
-                            <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">
-                              {opt.marca} {opt.modelo}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                          <FaUserPlus className="text-[10px]" /> <span>{opt.nombre}</span>
-                        </div>
-                      </li>
-                    ))
+                    .map(opt => {
+                      const isBlocked = opt.disabled === true;
+                      return (
+                       <li
+                         key={`${opt.type}-${opt.id}`}
+                         className={`px-4 py-3 border-b border-gray-50 last:border-0 transition-colors group ${isBlocked ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'hover:bg-indigo-50 cursor-pointer'}`}
+                         onMouseDown={() => {
+                           if (isBlocked) return;
+                           if (opt.type === 'p') {
+                             const pid = opt.id;
+                             Swal.fire({
+                               title: 'Vincular Placa',
+                               input: 'text',
+                               inputLabel: 'Este usuario no tiene vehiculo. Ingrese la placa:',
+                               inputPlaceholder: 'ABC-1234',
+                               showCancelButton: true
+                             }).then(async (res) => {
+                               if (res.isConfirmed && res.value) {
+                                   const placa = res.value.toUpperCase();
+                                   const { data: exV } = await supabase.from('vehiculo').select('id_vehiculo').eq('placa', placa).maybeSingle();
+                                   if (exV) {
+                                     setEntradaForm({ ...entradaForm, vehiculo_id: exV.id_vehiculo });
+                                     setBusquedaVehiculo(`${placa} - ${opt.nombre}`);
+                                   } else {
+                                     const { data: nV } = await supabase.from('vehiculo').insert([{ placa, id_persona: pid, organizacion_id: orgId }]).select('id_vehiculo').single();
+                                     if (nV) {
+                                       setEntradaForm({ ...entradaForm, vehiculo_id: nV.id_vehiculo });
+                                       setBusquedaVehiculo(`${placa} - ${opt.nombre}`);
+                                     }
+                                   }
+                               }
+                             });
+                           } else {
+                             setEntradaForm({ ...entradaForm, vehiculo_id: opt.id });
+                             setBusquedaVehiculo(`${opt.placa} - ${opt.nombre}`);
+                           }
+                           setMostrarDropdown(false);
+                         }}
+                       >
+                         <div className="flex justify-between items-center">
+                           <span className={`font-bold font-mono text-base ${opt.type === 'v' ? 'text-indigo-700' : 'text-gray-400 italic'}`}>
+                             {opt.placa}
+                           </span>
+                           {opt.marca && (
+                             <span className="text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600 border">
+                               {opt.marca} {opt.modelo}
+                             </span>
+                           )}
+                         </div>
+                         <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                           <FaUserPlus className="text-[10px]" /> <span>{opt.nombre}</span>
+                           {isBlocked && opt.razon && (
+                             <span className="ml-2 text-red-400 font-semibold">- {opt.razon}</span>
+                           )}
+                         </div>
+                       </li>
+                      );
+                    })
                   }
                 </ul>
               )}
@@ -444,7 +477,7 @@ export default function AccesoManual() {
                   options={plazasLibres.map(p => ({ value: p.id_plaza, label: `Plaza ${p.numero_plaza}` }))}
                   value={entradaForm.id_plaza}
                   onChange={(val) => setEntradaForm({ ...entradaForm, id_plaza: val })}
-                  placeholder="— Seleccione una plaza libre —"
+                  placeholder="Seleccionar plaza disponible"
                   focusRingClass="focus:ring-indigo-500"
                   selectedItemClass="bg-indigo-100 text-indigo-800"
                 />
@@ -459,7 +492,7 @@ export default function AccesoManual() {
                   ]}
                   value={entradaForm.puertaDestino}
                   onChange={(val) => setEntradaForm({ ...entradaForm, puertaDestino: val })}
-                  placeholder="— Seleccionar puerta —"
+                  placeholder="Seleccionar puerta"
                   focusRingClass="focus:ring-indigo-500"
                   selectedItemClass="bg-indigo-100 text-indigo-800"
                 />
@@ -532,7 +565,7 @@ export default function AccesoManual() {
                         <div className="font-semibold text-gray-800">
                           {acc._personaNombre}
                         </div>
-                        <div className="text-xs text-gray-500">{acc.vehiculo?.marca?.nombre} {acc.vehiculo?.modelo?.nombre}</div>
+                        <div className="text-xs text-gray-500">{acc._marcaNombre} {acc._modeloNombre}</div>
                       </td>
                       <td className="py-3 px-4 text-gray-600">
                         {acc._personaTel}

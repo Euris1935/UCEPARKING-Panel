@@ -139,23 +139,21 @@ export default function Tickets() {
   const loadData = async () => {
     setIsRefreshing(true);
     try {
-      const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-      const getEstadoId = (ctx, nom) => estadosCat?.find(e => e.contexto === ctx && e.nombre === nom)?.id;
-      
-      const idEstLibrePlaza = getEstadoId('plaza', 'Libre') || 1;
+      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+      const idEstLibrePlaza = epLibre?.id_estado || 1;
 
       const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
 
       const { data: plazas } = await supabase.from('plaza').select('*').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
 
-      const { data: stCat } = await supabase.from('estado').select('id, nombre').eq('contexto', 'ticket');
-      const stMap = {}; (stCat || []).forEach(s => { stMap[s.id] = s.nombre; });
+      const { data: stCat } = await supabase.from('estado_ticket').select('id_estado, nombre');
+      const stMap = {}; (stCat || []).forEach(s => { stMap[s.id_estado] = s.nombre; });
 
-      const { data: vhData } = await supabase.from('vehiculo').select('id_vehiculo, placa, id_marca, id_modelo, id_color, marca(nombre), modelo(nombre), color(nombre)');
+      const { data: vhData } = await supabase.from('vehiculo').select('id_vehiculo, placa, id_modelo, id_color, modelo(nombre, marca(nombre)), color(nombre)');
       const vhMap = {}; 
       (vhData || []).forEach(v => {
         vhMap[v.id_vehiculo] = {
-          marca: v.marca?.nombre,
+          marca: v.modelo?.marca?.nombre,
           modelo: v.modelo?.nombre,
           color: v.color?.nombre
         };
@@ -199,8 +197,8 @@ export default function Tickets() {
         };
       });
 
-      const { data: catMarcas } = await supabase.from('marca').select('id_marca, nombre').eq('tipo', 'vehiculo').order('nombre');
-      const { data: catModelos } = await supabase.from('modelo').select('id_modelo, nombre, id_marca').eq('tipo', 'vehiculo').order('nombre');
+      const { data: catMarcas } = await supabase.from('marca').select('id_marca, nombre').order('nombre');
+      const { data: catModelos } = await supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre');
       const { data: catColores } = await supabase.from('color').select('id_color, nombre').order('nombre');
 
       setPlazasLibres(plazas || []);
@@ -216,14 +214,14 @@ export default function Tickets() {
   const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Tickets').maybeSingle();
       await supabase.from('evento').insert([{ 
         fecha_hora: new Date().toISOString(), 
         descripcion: descripcion, 
         id_plaza: idPlaza, 
         id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
+        id_tipo: te?.id_tipo || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -233,10 +231,12 @@ export default function Tickets() {
   const checkExpiredTickets = async () => {
     try {
       const ahora = new Date().toISOString();
-      const { data: catEst } = await supabase.from('estado').select('id, nombre, contexto');
-      const idEstActivoTk = catEst?.find(e => e.contexto === 'ticket' && e.nombre === 'Activo')?.id || 1;
-      const idEstVencidoTk = catEst?.find(e => e.contexto === 'ticket' && e.nombre === 'Vencido')?.id || 3;
-      const idEstLibrePlaza = catEst?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+      const idEstLibrePlaza = epLibre?.id_estado || 1;
+      const { data: stActivo } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
+      const idEstActivoTk = stActivo?.id_estado || 1;
+      const { data: stVencido } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Vencido').maybeSingle();
+      const idEstVencidoTk = stVencido?.id_estado || 3;
 
       const { data: vencidos } = await supabase
         .from('ticket').select('id_ticket, id_plaza_asignada')
@@ -256,8 +256,9 @@ export default function Tickets() {
     e.preventDefault();
     if (!visitanteForm.placa.trim()) return Swal.fire('Atención', 'La placa es obligatoria.', 'warning');
     const placaLimpia = visitanteForm.placa.replace(/[^A-Z0-9]/gi, '');
-    if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres.', 'warning');
+    if (placaLimpia.length > 7) return Swal.fire('Atención', 'La placa no debe superar los 7 caracteres (1 letra y 6 números).', 'warning');
     if (!visitanteForm.id_plaza) return Swal.fire('Atención', 'Seleccione una plaza.', 'warning');
+    if (!visitanteForm.descripcion.trim()) return Swal.fire('Atención', 'La descripción u observaciones son obligatorias.', 'warning');
     setLoading(true);
     try {
       let visitanteId = visitanteForm.id_visitante;
@@ -294,7 +295,6 @@ export default function Tickets() {
       if (!vehiculoId) {
         const { data: vNuevo, error: vNErr } = await supabase.from('vehiculo').insert({ 
           placa, 
-          id_marca: visitanteForm.id_marca ? parseInt(visitanteForm.id_marca) : null, 
           id_modelo: visitanteForm.id_modelo ? parseInt(visitanteForm.id_modelo) : null, 
           id_color: visitanteForm.id_color ? parseInt(visitanteForm.id_color) : null,
           organizacion_id: orgId
@@ -307,9 +307,10 @@ export default function Tickets() {
       const minutos = parseInt(visitanteForm.duracion) || 0;
       const vencimiento = minutos > 0 ? new Date(Date.now() + minutos * 60000).toISOString() : null;
       
-      const { data: catEst } = await supabase.from('estado').select('id, nombre, contexto');
-      const idEstActivoTk = catEst?.find(e => e.contexto === 'ticket' && e.nombre === 'Activo')?.id || 1;
-      const idEstOcupPlaza = catEst?.find(e => e.contexto === 'plaza' && e.nombre === 'Ocupado')?.id || 2;
+      const { data: stActivo } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
+      const idEstActivoTk = stActivo?.id_estado || 1;
+      const { data: epOcupada } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Ocupada').maybeSingle();
+      const idEstOcupPlaza = epOcupada?.id_estado || 2;
 
       const { data: nuevoTicket, error: tErr } = await supabase.from('ticket').insert([{ 
         id_vehiculo: vehiculoId, 
@@ -321,7 +322,7 @@ export default function Tickets() {
         fecha_hora_vencimiento: vencimiento,
         descripcion: visitanteForm.descripcion.trim() || '',
         ...(orgId ? { organizacion_id: orgId } : {})
-      }]).select('*, estado(nombre), plaza(numero_plaza)').single();
+      }]).select('*, estado_ticket(nombre), plaza(numero_plaza)').single();
       
       if (tErr) throw tErr;
 
@@ -370,9 +371,10 @@ export default function Tickets() {
     if (!result.isConfirmed) return;
     const ahora = new Date().toISOString();
     try {
-      const { data: catEst } = await supabase.from('estado').select('id, nombre, contexto');
-      const idEstCerrTk = catEst?.find(e => e.contexto === 'ticket' && e.nombre === 'Cerrado')?.id || 2;
-      const idEstLibPlaza = catEst?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+      const { data: stCerrado } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Cerrado').maybeSingle();
+      const idEstCerrTk = stCerrado?.id_estado || 2;
+      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+      const idEstLibPlaza = epLibre?.id_estado || 1;
 
       const { error: tkErr } = await supabase.from('ticket').update({ id_estado: idEstCerrTk }).eq('id_ticket', ticket.id_ticket);
       if (tkErr) throw tkErr;
@@ -405,9 +407,10 @@ export default function Tickets() {
     const result = await Swal.fire({ title: '¿Anular ticket?', html: `Ticket <b>#${String(ticket.id_ticket).padStart(5, '0')}</b>`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Sí, anular' });
     if (!result.isConfirmed) return;
     try {
-      const { data: catEst } = await supabase.from('estado').select('id, nombre, contexto');
-      const idEstAnuTk = catEst?.find(e => e.contexto === 'ticket' && e.nombre === 'Anulado')?.id || 4;
-      const idEstLibPlaza = catEst?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+      const { data: stAnulado } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Anulado').maybeSingle();
+      const idEstAnuTk = stAnulado?.id_estado || 4;
+      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+      const idEstLibPlaza = epLibre?.id_estado || 1;
 
       const { error: tkErr } = await supabase.from('ticket').update({ id_estado: idEstAnuTk }).eq('id_ticket', ticket.id_ticket);
       if (tkErr) throw tkErr;
@@ -484,7 +487,7 @@ export default function Tickets() {
               </div>
               <hr className="border-dashed" />
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Datos del Vehículo</p>
-              <div><label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (máx. 6 caracteres)</label><input className="w-full border-2 border-green-300 focus:border-green-500 rounded-lg p-2 text-sm font-mono font-bold uppercase mt-0.5 text-center tracking-widest text-lg" placeholder="ABC123" value={visitanteForm.placa} maxLength={7} onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (val.length <= 6) setVisitanteForm(f => ({ ...f, placa: val })); }} required /></div>
+              <div><label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (1 Letra + 6 Números)</label><input className="w-full border-2 border-green-300 focus:border-green-500 rounded-lg p-2 text-sm font-mono font-bold uppercase mt-0.5 text-center tracking-widest text-lg" placeholder="L 010536" value={visitanteForm.placa} maxLength={8} onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); const letterMatch = val.match(/[A-Z]/); let nuevaPlaca = ''; if (letterMatch) { const letter = letterMatch[0]; const digits = val.replace(/[A-Z]/g, '').replace(/[^0-9]/g, '').slice(0, 6); nuevaPlaca = digits ? `${letter} ${digits}` : letter; } setVisitanteForm(f => ({ ...f, placa: nuevaPlaca })); }} required /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
@@ -517,6 +520,7 @@ export default function Tickets() {
                   value={visitanteForm.descripcion}
                   onChange={e => setVisitanteForm(f => ({ ...f, descripcion: e.target.value }))}
                   maxLength={300}
+                  required
                 />
                 {visitanteForm.descripcion.length > 0 && (
                   <p className="text-[10px] text-gray-400 text-right mt-0.5">{visitanteForm.descripcion.length}/300</p>

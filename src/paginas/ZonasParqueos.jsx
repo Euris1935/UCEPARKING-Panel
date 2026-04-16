@@ -46,7 +46,7 @@ export default function ZonasParqueo() {
       const { data: zData } = await supabase.from('zona').select('*').order('id_zona');
       setZonas(zData || []);
 
-      const { data: pData } = await supabase.from('plaza').select(`*, estado(nombre)`).order('numero_plaza');
+      const { data: pData } = await supabase.from('plaza').select(`*, estado_plaza(nombre)`).order('numero_plaza');
       setPlazas(pData || []);
     } catch (error) { console.error(error); }
   };
@@ -54,13 +54,13 @@ export default function ZonasParqueo() {
   const registrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Parqueos').maybeSingle();
       await supabase.from('evento').insert([{ 
         fecha_hora: new Date().toISOString(), 
         descripcion: descripcion, 
         id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
+        id_tipo: te?.id_tipo || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -153,8 +153,8 @@ export default function ZonasParqueo() {
 
         if (confirm.isConfirmed) {
           // 2. Obtener el id del estado LIBRE
-          const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-          const idLibre = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+          const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+          const idLibre = epLibre?.id_estado || 1;
           
           // 3. Generar plazas en lote
           const { total } = await generarPlazasEnLote(zonaCreada.id_zona, zonaCreada.nombre, cap, idLibre);
@@ -205,8 +205,8 @@ export default function ZonasParqueo() {
 
     try {
       Swal.fire({ title: 'Generando...', didOpen: () => Swal.showLoading() });
-      const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-      const idLibre = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+      const idLibre = epLibre?.id_estado || 1;
 
       const { total } = await generarPlazasEnLote(zona.id_zona, zona.nombre, zona.capacidad_total, idLibre);
       Swal.fire('Listo', `Se generaron ${total} plazas nuevas.`, 'success');
@@ -340,8 +340,8 @@ export default function ZonasParqueo() {
         if (error) throw error;
         Swal.fire('Actualizada', `Plaza actualizada correctamente.`, 'success');
       } else {
-        const { data: est } = await supabase.from('estado').select('id').ilike('nombre', 'Libre').eq('contexto', 'plaza').maybeSingle();
-        const idLibre = est?.id || 1;
+        const { data: est } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+        const idLibre = est?.id_estado || 1;
 
         const { error } = await supabase.from('plaza').insert([{
           ...payload,

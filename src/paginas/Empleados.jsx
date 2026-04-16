@@ -83,13 +83,13 @@ export default function Empleados() {
   const registrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Personal').maybeSingle();
       await supabase.from('evento').insert([{ 
         fecha_hora: new Date().toISOString(), 
         descripcion: descripcion, 
         id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
+        id_tipo: te?.id_tipo || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: adminOrgId
       }]);
@@ -182,9 +182,10 @@ export default function Empleados() {
         if (error) throw error;
         Swal.fire('Actualizado', 'Datos laborales actualizados.', 'success');
       } else {
+        const { data: eeActivo } = await supabase.from('estado_empleado').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
         const { error } = await supabase
           .from('empleado')
-          .insert([{ id_persona, ...payload }]);
+          .insert([{ id_persona, id_estado: eeActivo?.id_estado || 1, ...payload }]);
         if (error) throw error;
         Swal.fire('¡Asignado!', 'El usuario fue registrado como empleado.', 'success');
       }

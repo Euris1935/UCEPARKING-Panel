@@ -43,22 +43,21 @@ export default function Ocupacion() {
   const loadData = async () => {
     setIsRefreshing(true);
     try {
-      const { data: estData } = await supabase.from('estado').select('*').eq('contexto', 'plaza');
-      setEstadosCatalogo(estData || []);
+      const { data: estData } = await supabase.from('estado_plaza').select('id_estado, nombre');
+      setEstadosCatalogo(estData?.map(e => ({ id: e.id_estado, nombre: e.nombre })) || []);
 
       const { data: zonasData } = await supabase.from('zona').select('*').order('id_zona');
       setZonas(zonasData || []);
 
       const { data: plazasData } = await supabase.from('plaza').select('*').order('numero_plaza');
 
-      const plazasCompletas = (plazasData || []).map(p => {
-        const estadoObj = (estData || []).find(e => e.id === p.id_estado);
+      let plazasCompletas = (plazasData || []).map(p => {
+        const estadoObj = (estData || []).find(e => e.id_estado === p.id_estado);
         return {
           ...p,
           Nombre_Estado_Rel: estadoObj ? estadoObj.nombre.toUpperCase() : 'LIBRE'
         };
       });
-      setPlazas(plazasCompletas);
 
       // Info de quién ocupa/reserva/tiene asignada cada plaza
       const mapaOcupacion = {};
@@ -78,6 +77,7 @@ export default function Ocupacion() {
       (accesosActivos || []).forEach(acc => {
         if (acc.id_plaza && acc.vehiculo) {
           mapaOcupacion[acc.id_plaza] = {
+            type: 'acceso',
             placa: acc.vehiculo.placa,
             nombre: `${acc.vehiculo.persona?.nombre || 'Visitante'} ${acc.vehiculo.persona?.apellido || ''}`.trim()
           };
@@ -85,10 +85,10 @@ export default function Ocupacion() {
       });
 
       // 2. RESERVAS (Activas y Autocaducidad Global)
-      const { data: todosEstados } = await supabase.from('estado').select('id, nombre, contexto');
-      const idResActiva = (todosEstados || []).find(e => e.contexto === 'reserva' && e.nombre === 'Activa')?.id || 1;
-      const idEstCompletadoRes = (todosEstados || []).find(e => e.contexto === 'reserva' && e.nombre === 'Completada')?.id || 3;
-      const idEstLibrePlaza = (todosEstados || []).find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+      const { data: erData } = await supabase.from('estado_reserva').select('id_estado, nombre');
+      const idResActiva = erData?.find(e => e.nombre === 'Activa')?.id_estado || 1;
+      const idEstCompletadoRes = erData?.find(e => e.nombre === 'Completada')?.id_estado || 3;
+      const idEstLibrePlaza = estData?.find(e => e.nombre === 'Libre')?.id_estado || 1;
 
       const ahora = new Date();
       const tzOffset = ahora.getTimezoneOffset() * 60000;
@@ -104,12 +104,18 @@ export default function Ocupacion() {
       });
 
       if (vencidas.length > 0) {
+          const plazasVencidasIds = new Set();
           for (const rv of vencidas) {
               await supabase.from('reserva').update({ id_estado: idEstCompletadoRes }).eq('id_reserva', rv.id_reserva);
               if (rv.id_plaza) {
                   await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', rv.id_plaza);
+                  plazasVencidasIds.add(rv.id_plaza);
               }
           }
+          // Actualizar en memoria para que no aparezcan en el mapa ni en el conteo
+          plazasCompletas = plazasCompletas.map(p =>
+              plazasVencidasIds.has(p.id_plaza) ? { ...p, Nombre_Estado_Rel: 'LIBRE' } : p
+          );
           // Quitar vencidas de resData vivo para no sobreescribir mapas
           resData = resData.filter(r => !vencidas.find(v => v.id_reserva === r.id_reserva));
       }
@@ -117,13 +123,23 @@ export default function Ocupacion() {
       if (resData.length > 0) {
           const pIdsRes = resData.map(r => r.id_persona).filter(Boolean);
           const { data: resPersonas } = await supabase.from('persona').select('id_persona, nombre, apellido').in('id_persona', pIdsRes);
+
+          // Obtener vehículos vinculados a las personas que reservaron
+          const { data: vehRes } = pIdsRes.length > 0
+            ? await supabase.from('vehiculo').select('id_persona, placa').in('id_persona', pIdsRes)
+            : { data: [] };
+          const vehResMap = {};
+          (vehRes || []).forEach(v => { if (!vehResMap[v.id_persona]) vehResMap[v.id_persona] = v; });
           
           resData.forEach(res => {
              const p = resPersonas?.find(x => String(x.id_persona) === String(res.id_persona));
              if (p && res.id_plaza) {
+                const vh = vehResMap[res.id_persona];
                 mapaOcupacion[res.id_plaza] = {
                    ...mapaOcupacion[res.id_plaza],
-                   nombre: `${p.nombre} ${p.apellido}`.trim()
+                   type: 'reserva',
+                   nombre: `${p.nombre} ${p.apellido}`.trim(),
+                   placa: vh?.placa || null
                 };
              }
           });
@@ -136,20 +152,45 @@ export default function Ocupacion() {
          
       if (asigData && asigData.length > 0) {
           const empIds = asigData.map(a => a.id_empleado);
-          const { data: empPersonas } = await supabase.from('empleado').select('id_empleado, persona(nombre, apellido)').in('id_empleado', empIds);
+          const { data: empPersonas } = await supabase
+            .from('empleado')
+            .select('id_empleado, id_persona, persona(nombre, apellido)')
+            .in('id_empleado', empIds);
+
+          // Obtener vehículos vinculados a cada persona empleada
+          const personaIds = (empPersonas || []).map(e => e.id_persona).filter(Boolean);
+          const { data: vehAsig } = personaIds.length > 0
+            ? await supabase.from('vehiculo').select('id_persona, placa').in('id_persona', personaIds)
+            : { data: [] };
+          const vehAsigMap = {};
+          (vehAsig || []).forEach(v => { if (!vehAsigMap[v.id_persona]) vehAsigMap[v.id_persona] = v; });
           
           asigData.forEach(asig => {
              const emp = empPersonas?.find(x => x.id_empleado === asig.id_empleado);
              if (emp?.persona && asig.id_plaza) {
+                const vh = emp.id_persona ? vehAsigMap[emp.id_persona] : null;
                 mapaOcupacion[asig.id_plaza] = {
                    ...mapaOcupacion[asig.id_plaza],
                    type: 'asignacion',
-                   nombre: `${emp.persona.nombre} ${emp.persona.apellido}`.trim()
+                   nombre: `${emp.persona.nombre} ${emp.persona.apellido}`.trim(),
+                   placa: vh?.placa || null
                 };
              }
           });
       }
 
+      // FORCE PLAZA STATUS VISUALLY BASED ON mapaOcupacion
+      // Cubre casos de desincronización entre tabla acceso/reserva/asignacion y tabla plaza
+      plazasCompletas = plazasCompletas.map(p => {
+         const info = mapaOcupacion[p.id_plaza];
+         if (!info || p.Nombre_Estado_Rel !== 'LIBRE') return p;
+         if (info.type === 'acceso')     return { ...p, Nombre_Estado_Rel: 'OCUPADA' };
+         if (info.type === 'reserva')    return { ...p, Nombre_Estado_Rel: 'RESERVADA' };
+         if (info.type === 'asignacion') return { ...p, Nombre_Estado_Rel: 'ASIGNADO' };
+         return p;
+      });
+
+      setPlazas(plazasCompletas);
       setOcupacionInfo(mapaOcupacion);
     } catch (error) { console.error("Error cargando datos:", error); } finally { setLoading(false); setIsRefreshing(false); }
   };
@@ -162,14 +203,14 @@ export default function Ocupacion() {
   const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Control de Ocupación').maybeSingle();
       await supabase.from('evento').insert([{
         fecha_hora: new Date().toISOString(),
         descripcion: descripcion,
         id_plaza: idPlaza,
         id_persona: currentPersonaId,
-        id_tipo: te?.id || null,
+        id_tipo: te?.id_tipo || null,
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -280,11 +321,24 @@ export default function Ocupacion() {
       }
 
       Swal.fire({
-        title: 'Plaza en Uso',
-        html: 'Esta plaza tiene un vehículo legalmente registrado dentro de ella.<br><br>Para liberarla, ve al módulo de <b>Tickets</b> o <b>Acceso Manual</b> y dale Salida al vehículo.',
-        icon: 'info',
+        title: 'Plaza en Uso (Advertencia)',
+        html: `Esta plaza tiene un vehículo (<b>${infoActual.placa}</b>) legalmente registrado dentro de ella.<br><br>Normalmente debes darle Salida desde <b>Tickets</b> o <b>Acceso Manual</b>. Sin embargo, si crees que esto es un <b>"Registro Fantasma"</b> o un error del sistema que quedó atascado, puedes forzar su limpieza aquí.`,
+        icon: 'warning',
+        showCancelButton: true,
         confirmButtonColor: '#ef4444',
-        confirmButtonText: 'Entendido'
+        confirmButtonText: 'Forzar Salida (Limpiar Error)',
+        cancelButtonText: 'Dejarlo así'
+      }).then(async (result) => {
+        if (result.isConfirmed) {
+            // Buscamos cualquier acceso activo que tenga esta plaza para matarlo
+            const { error: updErr } = await supabase.from('acceso').update({ salida_at: new Date().toISOString() }).eq('id_plaza', plaza.id_plaza).is('salida_at', null);
+            if (updErr) { Swal.fire('Error', updErr.message, 'error'); }
+            else { 
+               changeStatus(plaza.id_plaza, 'LIBRE');
+               await Swal.fire('Limpieza Exitosa', 'El registro fantasma ha sido cerrado a la fuerza y la plaza quedó totalmente libre.', 'success');
+               loadData();
+            }
+        }
       });
       return;
     }
@@ -342,11 +396,11 @@ export default function Ocupacion() {
   };
 
   const stats = {
-    libres: plazas.filter(p => p.Nombre_Estado_Rel === 'LIBRE' && !ocupacionInfo[p.id_plaza]?.type).length,
-    ocupadas: plazas.filter(p => p.Nombre_Estado_Rel === 'OCUPADA' && !ocupacionInfo[p.id_plaza]?.type).length,
-    reservadas: plazas.filter(p => p.Nombre_Estado_Rel === 'RESERVADA').length,
-    asignadas: plazas.filter(p => (p.Nombre_Estado_Rel.startsWith('ASIGNAD') || ocupacionInfo[p.id_plaza]?.type === 'asignacion')).length,
-    mantenimiento: plazas.filter(p => ['MANTENIMIENTO', 'FUERA DE SERVICIO', 'EN MANTENIMIENTO'].includes(p.Nombre_Estado_Rel)).length
+    libres:       plazas.filter(p => p.Nombre_Estado_Rel === 'LIBRE').length,
+    ocupadas:     plazas.filter(p => p.Nombre_Estado_Rel === 'OCUPADA').length,
+    reservadas:   plazas.filter(p => p.Nombre_Estado_Rel === 'RESERVADA').length,
+    asignadas:    plazas.filter(p => p.Nombre_Estado_Rel.startsWith('ASIGNAD') || ocupacionInfo[p.id_plaza]?.type === 'asignacion').length,
+    mantenimiento:plazas.filter(p => ['MANTENIMIENTO', 'FUERA DE SERVICIO', 'EN MANTENIMIENTO'].includes(p.Nombre_Estado_Rel)).length
   };
 
   return (
@@ -398,7 +452,7 @@ export default function Ocupacion() {
                       <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel, plaza.id_plaza)}`}>
                         {ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' ? 'ASIGNADA' : plaza.Nombre_Estado_Rel}
                       </span>
-                      {(['OCUPADA', 'RESERVADA', 'RESERVADO', 'ASIGNADA', 'ASIGNADO'].includes(plaza.Nombre_Estado_Rel) || ocupacionInfo[plaza.id_plaza]) && ocupacionInfo[plaza.id_plaza] && (
+                      {(['OCUPADA', 'RESERVADA', 'RESERVADO', 'ASIGNADA', 'ASIGNADO'].includes(plaza.Nombre_Estado_Rel) || ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' || ocupacionInfo[plaza.id_plaza]?.type === 'reserva') && ocupacionInfo[plaza.id_plaza] && (
                         <div className={`mt-1 text-[9px] leading-tight ${
                           plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-red-700' : 
                           plaza.Nombre_Estado_Rel === 'RESERVADA' ? 'text-yellow-800' : 'text-purple-800'

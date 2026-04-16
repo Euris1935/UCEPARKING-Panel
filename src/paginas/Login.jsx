@@ -35,7 +35,7 @@ export default function Login() {
     } catch (error) {
       Swal.fire({
           title: 'Error de Acceso',
-          text: error.message || "Credenciales incorrectas o cuenta no activa.",
+          text: "Las credenciales son incorrectas. Por favor, revise su correo y contraseña nuevamente.",
           icon: 'error',
           confirmButtonColor: '#d33'
       });

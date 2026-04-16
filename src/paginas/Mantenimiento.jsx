@@ -66,17 +66,17 @@ export default function Mantenimiento() {
                 id_empleado,
                 id_tipo,
                 id_estado,
-                estado:id_estado ( nombre ),
-                tipo:id_tipo ( nombre ),
-                dispositivo:id_dispositivo ( 
+                estado:estado_mantenimiento ( nombre ),
+                tipo:tipo_mantenimiento ( nombre ),
+                dispositivo ( 
                     id_dispositivo,
                     id_plaza,
                     ubicacion, 
-                    tipo:id_tipo ( nombre ) 
+                    tipo:tipo_dispositivo ( nombre ) 
                 ),
-                empleado:id_empleado ( 
+                empleado ( 
                     id_empleado,
-                    persona:id_persona ( nombre, apellido ) 
+                    persona ( nombre, apellido ) 
                 )
             `)
                 .eq('organizacion_id', orgId)
@@ -94,14 +94,14 @@ export default function Mantenimiento() {
 
             const { data: dispData, error: dispError } = await supabase
                 .from('dispositivo')
-                .select('id_dispositivo, id_plaza, ubicacion, id_estado, tipo:id_tipo(nombre), modelo:id_modelo(nombre, marca:id_marca(nombre))')
+                .select('id_dispositivo, id_plaza, ubicacion, id_estado, tipo:tipo_dispositivo(nombre), modelo(nombre, marca(nombre))')
                 .eq('organizacion_id', orgId)
                 .order('ubicacion', { ascending: true });
 
             if (dispError) console.warn('Error cargando dispositivos:', dispError.message);
-            const { data: empData } = await supabase.from('empleado').select('id_empleado, persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId);
-            const { data: tipoData } = await supabase.from('tipo').select('*').eq('contexto', 'mantenimiento').order('nombre');
-            const { data: estData } = await supabase.from('estado').select('*').eq('contexto', 'mantenimiento').order('nombre');
+            const { data: empData } = await supabase.from('empleado').select('id_empleado, persona(nombre, apellido)').eq('organizacion_id', orgId);
+            const { data: tipoData } = await supabase.from('tipo_mantenimiento').select('*').order('nombre');
+            const { data: estData } = await supabase.from('estado_mantenimiento').select('*').order('nombre');
 
             setDispositivos(dispData || []);
             setTecnicos((empData || []).sort((a, b) => {
@@ -124,16 +124,16 @@ export default function Mantenimiento() {
         if (!currentPersonaId) return;
         try {
             // #RF10: Fallback dinámico para evitar N/A en logs
-            let { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
+            let { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
             if (!te) {
-                const { data: fallback } = await supabase.from('tipo').select('id').eq('nombre', 'Mantenimiento Iniciado').eq('contexto', 'evento').maybeSingle();
+                const { data: fallback } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', 'Mantenimiento Iniciado').maybeSingle();
                 te = fallback;
             }            const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Mantenimiento').maybeSingle();
             await supabase.from('evento').insert([{
                 fecha_hora: new Date().toISOString(),
                 descripcion: descripcion,
                 id_persona: currentPersonaId,
-                id_tipo: te?.id || null,
+                id_tipo: te?.id_tipo || null,
                 id_origen_evento: oe?.id_origen || null,
                 id_dispositivo: idDispositivo,
                 id_plaza: idPlaza,
@@ -183,10 +183,10 @@ export default function Mantenimiento() {
         e.preventDefault();
         setLoading(true);
         try {
-            const estadoCompletadoId = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('completado'))?.id;
-            const estadoInicialId = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('pendiente'))?.id || 1;
+            const estadoCompletadoId = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('completado'))?.id_estado;
+            const estadoInicialId = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('pendiente'))?.id_estado || 1;
             const nuevoEstadoId = parseInt(formData.id_estado);
-            const nombreEstadoActual = estadosMantenimiento.find(e => e.id === nuevoEstadoId)?.nombre || 'Actualizado';
+            const nombreEstadoActual = estadosMantenimiento.find(e => e.id_estado === nuevoEstadoId)?.nombre || 'Actualizado';
 
             // Mapear nombre del estado al tipo de evento correspondiente
             const ESTADO_A_EVENTO = {
@@ -268,7 +268,7 @@ export default function Mantenimiento() {
 
         if (confirm) {
             // Buscar ID de estado Completado (con fallback)
-            const idCompletado = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('completado'))?.id || null;
+            const idCompletado = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('completado'))?.id_estado || null;
             const fechaFin = new Date().toISOString();
 
             const updatePayload = { 
@@ -485,7 +485,7 @@ export default function Mantenimiento() {
                                 <div>
                                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo Mantenimiento *</label>
                                     <SearchableSelect
-                                        options={tiposMantenimiento.map(t => ({ value: t.id, label: t.nombre }))}
+                                        options={tiposMantenimiento.map(t => ({ value: t.id_tipo || t.id, label: t.nombre }))}
                                         value={formData.id_tipo}
                                         onChange={val => setFormData({ ...formData, id_tipo: val })}
                                         placeholder="— Tipo —"
@@ -543,7 +543,7 @@ export default function Mantenimiento() {
                                     >
                                         <option value="">— Estado —</option>
                                         {estadosMantenimiento.map(est => (
-                                            <option key={est.id} value={est.id}>{est.nombre}</option>
+                                            <option key={est.id_estado || est.id} value={est.id_estado || est.id}>{est.nombre}</option>
                                         ))}
                                     </select>
                                 </div>

@@ -72,7 +72,7 @@ export default function Reservaciones() {
             *,
             persona (id_persona, nombre, apellido),
             plaza (id_plaza, numero_plaza),
-            estado ( nombre ) 
+            estado:estado_reserva ( nombre ) 
           `)
           .order('fecha_hora_inicio', { ascending: false });
 
@@ -85,12 +85,47 @@ export default function Reservaciones() {
   const loadAuxData = async () => {
     try {
         // Obtener estado 'Libre' para plaza
-        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+        const idEstLibrePlaza = epLibre?.id_estado || 1;
 
-        const { data: personas } = await supabase.from('persona').select('id_persona, nombre, apellido').order('nombre');
+        // Traer todos los usuarios de la organización (no visitantes)
+        const { data: uData } = await supabase.rpc('get_usuarios_org');
+        const soloUsuarios = (uData || []).map(u => ({
+          id_persona: u.id_persona || u.persona_id,
+          nombre: u.nombre,
+          apellido: u.apellido
+        }));
+
+        // Calcular personas bloqueadas (reserva activa o asignacion activa — el acceso activo NO bloquea aqui)
+        const ahoraISO = new Date().toISOString();
+        const personasOcupadas = new Map(); // id_persona → razón
+
+        // Reservas activas no vencidas
+        const { data: erActivo } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle();
+        const { data: reservasActivas } = await supabase
+          .from('reserva').select('id_persona')
+          .eq('id_estado', erActivo?.id_estado || 1)
+          .or(`fecha_hora_fin.is.null,fecha_hora_fin.gt.${ahoraISO}`);
+        (reservasActivas || []).forEach(r => {
+          if (r.id_persona) personasOcupadas.set(r.id_persona, 'Reserva activa');
+        });
+
+        // Asignaciones activas (a través de empleado → persona)
+        const { data: asigActivas } = await supabase
+          .from('asignacion').select('empleado(id_persona)')
+          .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
+        (asigActivas || []).forEach(a => {
+          if (a.empleado?.id_persona) personasOcupadas.set(a.empleado.id_persona, 'Plaza asignada');
+        });
+
+        const personasConEstado = soloUsuarios.map(p => ({
+          ...p,
+          _ocupada: personasOcupadas.has(p.id_persona),
+          _razon: personasOcupadas.get(p.id_persona) || null
+        }));
+        
         const { data: plazas } = await supabase.from('plaza').select('id_plaza, numero_plaza').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
-        setPersonasList(personas || []);
+        setPersonasList(personasConEstado);
         setPlazasList(plazas || []);
     } catch (error) { console.error("Error aux:", error); }
   };
@@ -98,15 +133,13 @@ export default function Reservaciones() {
   const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Reservas').maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       await supabase.from('evento').insert([{ 
         fecha_hora: new Date().toISOString(), 
         descripcion: descripcion, 
         id_plaza: idPlaza, 
         id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
-        id_origen_evento: oe?.id_origen || null,
+        id_tipo: te?.id_tipo || null, 
         organizacion_id: orgId
       }]);
     } catch (e) { console.warn('Log error:', e.message); }
@@ -138,9 +171,10 @@ export default function Reservaciones() {
 
   const handleMarkCompleted = async (id, idPlaza, isAuto = false) => {
     try {
-        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-        const idEstCompletadoRes = estadosCat?.find(e => e.contexto === 'reserva' && e.nombre === 'Completada')?.id || 3;
-        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+        const { data: stCompletada } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Completada').maybeSingle();
+        const idEstCompletadoRes = stCompletada?.id_estado || 3;
+        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+        const idEstLibrePlaza = epLibre?.id_estado || 1;
 
         await supabase.from('reserva').update({ id_estado: idEstCompletadoRes }).eq('id_reserva', id);
         if (idPlaza) await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', idPlaza);
@@ -157,9 +191,10 @@ export default function Reservaciones() {
   const handleCancelReserva = async (idReserva, idPlaza) => {
     const result = await Swal.fire({ title: '¿Cancelar?', text: "La plaza se liberará.", icon: 'warning', showCancelButton: true, confirmButtonColor: '#f59e0b' });
     if (result.isConfirmed) {
-        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-        const idEstCanceladaRes = estadosCat?.find(e => e.contexto === 'reserva' && e.nombre === 'Cancelada')?.id || 2;
-        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+        const { data: stCancelada } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Cancelada').maybeSingle();
+        const idEstCanceladaRes = stCancelada?.id_estado || 2;
+        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+        const idEstLibrePlaza = epLibre?.id_estado || 1;
 
         await supabase.from('reserva').update({ id_estado: idEstCanceladaRes }).eq('id_reserva', idReserva);
         if (idPlaza) await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', idPlaza);
@@ -175,8 +210,8 @@ export default function Reservaciones() {
     if (result.isConfirmed) {
         await supabase.from('reserva').delete().eq('id_reserva', idReserva);
         if (estadoNombre === 'Activa' && idPlaza) {
-             const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-             const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+             const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+             const idEstLibrePlaza = epLibre?.id_estado || 1;
              await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', idPlaza);
         }
         loadReservas();
@@ -198,7 +233,7 @@ export default function Reservaciones() {
             const maxHoras = cfg.tiempoMaximoReserva || 4;
             if (duracionHoras > maxHoras) {
                 setLoading(false);
-                return Swal.fire('Duración excedida', `La reserva no puede superar las ${maxHoras} hora(s). La duración seleccionada es de ${duracionHoras.toFixed(1)} hora(s).`, 'warning');
+                return Swal.fire('Duración excedida', `La reserva no puede superar las ${maxHoras} hora(s). La duración seleccionada es de ${duracionHoras.toFixed(1)} hora(s).\n\nPara cambiar las horas establecidas, ve a configuración.`, 'warning');
             }
             if (duracionHoras <= 0) {
                 setLoading(false);
@@ -206,10 +241,12 @@ export default function Reservaciones() {
             }
         }
 
-        const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-        const idEstActivaRes = estadosCat?.find(e => e.contexto === 'reserva' && e.nombre === 'Activa')?.id || 1;
-        const idEstReservPlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Reservado')?.id || 3;
-        const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+        const { data: stActiva } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle();
+        const idEstActivaRes = stActiva?.id_estado || 1;
+        const { data: epReservado } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Reservad%').maybeSingle();
+        const idEstReservPlaza = epReservado?.id_estado || 3;
+        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+        const idEstLibrePlaza = epLibre?.id_estado || 1;
 
         const payload = {
             id_persona: formData.id_persona,
@@ -249,6 +286,7 @@ export default function Reservaciones() {
         resetForm();
         loadReservas();
         loadAuxData();
+        Swal.fire('¡Éxito!', `La reserva se ha ${isUpdating ? 'actualizado' : 'creado'} correctamente.`, 'success');
     } catch (error) { Swal.fire('Error', error.message, 'error'); } 
     finally { setLoading(false); }
   };
@@ -275,8 +313,8 @@ export default function Reservaciones() {
   const handleOpenCreate = async () => {
     await resetForm();
     // Recargar plazas libres al instante
-    const { data: estadosCat } = await supabase.from('estado').select('id, nombre, contexto');
-    const idEstLibrePlaza = estadosCat?.find(e => e.contexto === 'plaza' && e.nombre === 'Libre')?.id || 1;
+    const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+    const idEstLibrePlaza = epLibre?.id_estado || 1;
     const { data: plazaData } = await supabase.from('plaza').select('id_plaza, numero_plaza').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
     setPlazasList(plazaData || []);
 

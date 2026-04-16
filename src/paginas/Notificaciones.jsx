@@ -73,7 +73,7 @@ export default function Notificaciones() {
           id_persona,
           id_tipo,
           persona ( nombre, apellido ),
-          tipo ( id, nombre )
+          tipo_notificacion ( id_tipo, nombre )
         `)
         .order('created_at', { ascending: false });
 
@@ -81,22 +81,44 @@ export default function Notificaciones() {
         console.error('Error cargando notificaciones:', nErr.message);
         Swal.fire('Error Interno BD', 'No se pudieron cargar las notificaciones: ' + nErr.message + ' (' + nErr.code + ')', 'error');
       }
-      setNotifs(nData || []);
+      
+      const nDataMapped = (nData || []).map(n => ({
+        ...n,
+        tipo: { id: n.tipo_notificacion?.id_tipo, nombre: n.tipo_notificacion?.nombre }
+      }));
+      setNotifs(nDataMapped);
 
       /* Tipos de notificación desde la BD (Catálogo unificado) */
       const { data: tData } = await supabase
-        .from('tipo')
-        .select('id, nombre')
-        .eq('contexto', 'notificacion')
+        .from('tipo_notificacion')
+        .select('id_tipo, nombre')
         .order('nombre');
-      setTiposNotif(tData || []);
+      
+      const tDataMapped = tData?.map(t => ({ id: t.id_tipo, nombre: t.nombre })) || [];
+      setTiposNotif(tDataMapped);
 
-      /* Personas disponibles como destinatarios */
-      const { data: pData } = await supabase
-        .from('persona')
-        .select('id_persona, nombre, apellido')
-        .order('nombre');
-      setPersonasList(pData || []);
+      /* Personas disponibles como destinatarios (Todos los usuarios de la organización) */
+      const { data: uData, error: uErr } = await supabase.rpc('get_usuarios_org');
+      
+      if (uErr) {
+        console.warn('Falla en RPC get_usuarios_org, usando fallback');
+        // Fallback: intentar obtener personas vinculadas a usuarios
+        const { data: fData } = await supabase.from('usuario').select('id_persona, persona(nombre, apellido)').eq('organizacion_id', orgId);
+        const mapped = (fData || []).map(u => ({
+           id_persona: u.id_persona,
+           nombre: u.persona?.nombre || 'N/D',
+           apellido: u.persona?.apellido || ''
+        }));
+        setPersonasList(mapped);
+      } else {
+        const pDataMapped = (uData || []).map(u => ({
+          id_persona: u.id_persona || u.persona_id, // Manejar posibles variaciones de alias en RPC
+          nombre: u.nombre,
+          apellido: u.apellido
+        })).sort((a, b) => a.nombre.localeCompare(b.nombre));
+        
+        setPersonasList(pDataMapped);
+      }
 
     } catch (e) {
       console.error('Error notificaciones:', e.message);
@@ -110,14 +132,12 @@ export default function Notificaciones() {
   const registrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Alertas').maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       await supabase.from('evento').insert([{ 
         fecha_hora: new Date().toISOString(), 
         descripcion: descripcion, 
         id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
-        id_origen_evento: oe?.id_origen || null,
+        id_tipo: te?.id_tipo || null, 
         organizacion_id: orgId
       }]);
     } catch (e) { console.warn('Log error:', e.message); }

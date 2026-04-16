@@ -52,11 +52,12 @@ export default function Vehiculos() {
     try {
       const { data: vhs } = await supabase
         .from('vehiculo')
-        .select('*, marca(nombre), modelo(nombre), color(nombre), persona(nombre, apellido)')
+        .select('*, modelo(nombre, marca(nombre)), color(nombre), persona(nombre, apellido)')
+        .not('id_persona', 'is', null)
         .order('created_at', { ascending: false });
 
-      const { data: catMarcas } = await supabase.from('marca').select('id_marca, nombre').eq('tipo', 'vehiculo').order('nombre');
-      const { data: catModelos } = await supabase.from('modelo').select('id_modelo, nombre, id_marca').eq('tipo', 'vehiculo').order('nombre');
+      const { data: catMarcas } = await supabase.from('marca').select('id_marca, nombre').order('nombre');
+      const { data: catModelos } = await supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre');
       const { data: catColores } = await supabase.from('color').select('id_color, nombre').order('nombre');
 
       // Personal del sistema
@@ -86,13 +87,13 @@ export default function Vehiculos() {
   const registrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
     try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
+      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Vehículos').maybeSingle();
       await supabase.from('evento').insert([{ 
         fecha_hora: new Date().toISOString(), 
         descripcion: descripcion, 
         id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
+        id_tipo: te?.id_tipo || null, 
         id_origen_evento: oe?.id_origen || null,
         organizacion_id: orgId
       }]);
@@ -103,13 +104,12 @@ export default function Vehiculos() {
     e.preventDefault();
     if (!vehiculoPersonalForm.persona_id) return Swal.fire('Atención', 'Seleccione un propietario.', 'warning');
     const placaLimpia = vehiculoPersonalForm.placa.replace(/[^A-Z0-9]/gi, '');
-    if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres.', 'warning');
+    if (placaLimpia.length > 7) return Swal.fire('Atención', 'La placa no debe superar los 7 caracteres (1 letra y 6 números).', 'warning');
     setLoading(true);
     try {
       const { error } = await supabase.from('vehiculo').insert([{
         id_persona: vehiculoPersonalForm.persona_id,
         placa: vehiculoPersonalForm.placa.toUpperCase(),
-        id_marca: vehiculoPersonalForm.id_marca ? parseInt(vehiculoPersonalForm.id_marca) : null,
         id_modelo: vehiculoPersonalForm.id_modelo ? parseInt(vehiculoPersonalForm.id_modelo) : null,
         id_color: vehiculoPersonalForm.id_color ? parseInt(vehiculoPersonalForm.id_color) : null,
         organizacion_id: orgId
@@ -126,9 +126,11 @@ export default function Vehiculos() {
 
   const handleEditarVehiculo = async (e) => {
     e.preventDefault();
+    const placaLimpia = editVehiculoForm.placa.replace(/[^A-Z0-9]/gi, '');
+    if (placaLimpia.length > 7) return Swal.fire('Atención', 'La placa no debe superar los 7 caracteres (1 letra y 6 números).', 'warning');
     try {
       const { error, count } = await supabase.from('vehiculo').update(
-        { placa: editVehiculoForm.placa.toUpperCase(), id_marca: editVehiculoForm.id_marca ? parseInt(editVehiculoForm.id_marca) : null, id_modelo: editVehiculoForm.id_modelo ? parseInt(editVehiculoForm.id_modelo) : null, id_color: editVehiculoForm.id_color ? parseInt(editVehiculoForm.id_color) : null },
+        { placa: editVehiculoForm.placa.toUpperCase(), id_modelo: editVehiculoForm.id_modelo ? parseInt(editVehiculoForm.id_modelo) : null, id_color: editVehiculoForm.id_color ? parseInt(editVehiculoForm.id_color) : null },
         { count: 'exact' }
       ).eq('id_vehiculo', editandoVehiculo.id_vehiculo);
       if (error) throw error;
@@ -140,11 +142,10 @@ export default function Vehiculos() {
   };
 
   const handleEliminarVehiculo = async (vehiculo) => {
-    // Buscar si tiene un ticket activo. id_estado para Ticket 'Activo' ahora depende del contexto en tabla estado.
-    // Buscamos el ID del estado 'Activo' para 'ticket'.
-    const { data: estActivo } = await supabase.from('estado').select('id').eq('contexto', 'ticket').eq('nombre', 'Activo').maybeSingle();
+    // Buscar si tiene un ticket activo usando la nueva tabla estado_ticket
+    const { data: estActivo } = await supabase.from('estado_ticket').select('id_estado').eq('nombre', 'Activo').maybeSingle();
     
-    const { data: ticketsActivos } = await supabase.from('ticket').select('id_ticket').eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', estActivo?.id || 1);
+    const { data: ticketsActivos } = await supabase.from('ticket').select('id_ticket').eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', estActivo?.id_estado || 1);
     if (ticketsActivos && ticketsActivos.length > 0) return Swal.fire('No se puede eliminar', `Este vehículo tiene ${ticketsActivos.length} ticket(s) activo(s). Registre la salida primero.`, 'warning');
 
     const result = await Swal.fire({ title: '¿Eliminar vehículo?', html: `Placa: <b>${vehiculo.placa}</b><br><small>Se eliminarán también sus registros de acceso históricos.</small>`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Sí, eliminar' });
@@ -153,7 +154,16 @@ export default function Vehiculos() {
       if (result.isConfirmed) {
         const { error } = await supabase.from('vehiculo').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
         if (error) {
-          Swal.fire('Error', error.message, 'error');
+          if (error.message.includes('registro_acceso_vehiculo_fk')) {
+            // Soft delete: Desvincular de la persona para ocultarlo, conservando el historial
+            const { error: updErr } = await supabase.from('vehiculo').update({ id_persona: null }).eq('id_vehiculo', vehiculo.id_vehiculo);
+            if (updErr) throw updErr;
+            Swal.fire('Eliminado de forma segura', 'El vehículo fue removido de la flota (su historial de accesos antiguos se conserva internamente).', 'success');
+            registrarLog('Vehículo Removido', `Vehículo con placa ${vehiculo.placa} desvinculado por tener historial.`);
+            loadData();
+          } else {
+            Swal.fire('Error', error.message, 'error');
+          }
         } else {
           Swal.fire('Eliminado', 'Vehículo borrado correctamente.', 'success');
           registrarLog('Vehículo Eliminado', `Vehículo con placa ${vehiculo.placa} eliminado del sistema.`);
@@ -188,11 +198,11 @@ export default function Vehiculos() {
               />
             </div>
             <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (máx. 6 caracteres)</label>
+              <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (1 Letra + 6 Números)</label>
               <input
-                className="w-full border-2 border-purple-200 rounded-lg p-2 text-sm font-mono uppercase tracking-widest text-center text-base mt-0.5"
-                placeholder="ABC123" value={vehiculoPersonalForm.placa} maxLength={7}
-                onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (val.length <= 6) setVehiculoPersonalForm(f => ({ ...f, placa: val })); }}
+                className="w-full border-2 border-purple-200 rounded-lg p-2 font-mono uppercase tracking-widest text-center text-base mt-0.5"
+                placeholder="L 010536" value={vehiculoPersonalForm.placa} maxLength={8}
+                onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); const letterMatch = val.match(/[A-Z]/); let nuevaPlaca = ''; if (letterMatch) { const letter = letterMatch[0]; const digits = val.replace(/[A-Z]/g, '').replace(/[^0-9]/g, '').slice(0, 6); nuevaPlaca = digits ? `${letter} ${digits}` : letter; } setVehiculoPersonalForm(f => ({ ...f, placa: nuevaPlaca })); }}
                 required
               />
             </div>
@@ -282,11 +292,15 @@ export default function Vehiculos() {
                     <tr key={v.id_vehiculo} className="hover:bg-gray-50 transition-all">
                       <td className="px-5 py-4 font-medium text-gray-800">{v.persona?.nombre} {v.persona?.apellido}</td>
                       <td className="px-5 py-4"><span className="font-mono font-bold bg-gray-900 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span></td>
-                      <td className="px-5 py-4 text-gray-500 text-xs">{[v.marca?.nombre, v.modelo?.nombre, v.color?.nombre].filter(Boolean).join(' · ') || '—'}</td>
+                      <td className="px-5 py-4 text-gray-500 text-xs">{[v.modelo?.marca?.nombre, v.modelo?.nombre, v.color?.nombre].filter(Boolean).join(' · ') || '—'}</td>
                       <td className="px-5 py-4 text-xs text-gray-400">{new Date(v.created_at).toLocaleDateString('es-DO')}</td>
                       <td className="px-5 py-4 text-center">
                         <div className="flex gap-1 justify-center">
-                          {canEdit && <button onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, id_marca: v.id_marca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); }} className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition" title="Editar"><FaEdit size={14} /></button>}
+                          {canEdit && <button onClick={() => { 
+                            setEditandoVehiculo(v); 
+                            const idMarca = v.id_modelo ? listaModelos.find(m => m.id_modelo === v.id_modelo)?.id_marca : '';
+                            setEditVehiculoForm({ placa: v.placa, id_marca: idMarca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); 
+                          }} className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition" title="Editar"><FaEdit size={14} /></button>}
                           {canDelete && <button onClick={() => handleEliminarVehiculo(v)} className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition" title="Eliminar"><FaTrash size={14} /></button>}
                         </div>
                       </td>
@@ -306,8 +320,8 @@ export default function Vehiculos() {
             <h3 className="text-lg font-bold mb-4 text-gray-800">Editar Vehículo</h3>
             <form onSubmit={handleEditarVehiculo} className="space-y-3">
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa *</label>
-                <input className="w-full border-2 border-purple-200 rounded-lg p-2 font-mono uppercase tracking-widest text-center text-base mt-0.5" value={editVehiculoForm.placa} maxLength={7} onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (val.length <= 6) setEditVehiculoForm(f => ({ ...f, placa: val })); }} required />
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (1 Letra + 6 Números)</label>
+                <input className="w-full border-2 border-purple-200 rounded-lg p-2 font-mono uppercase tracking-widest text-center text-base mt-0.5" placeholder="L 010536" value={editVehiculoForm.placa} maxLength={8} onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); const letterMatch = val.match(/[A-Z]/); let nuevaPlaca = ''; if (letterMatch) { const letter = letterMatch[0]; const digits = val.replace(/[A-Z]/g, '').replace(/[^0-9]/g, '').slice(0, 6); nuevaPlaca = digits ? `${letter} ${digits}` : letter; } setEditVehiculoForm(f => ({ ...f, placa: nuevaPlaca })); }} required />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
