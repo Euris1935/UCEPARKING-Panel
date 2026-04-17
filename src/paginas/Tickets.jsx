@@ -144,7 +144,13 @@ export default function Tickets() {
 
       const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
 
-      const { data: plazas } = await supabase.from('plaza').select('*').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
+      const { data: rawPlazas } = await supabase
+        .from('plaza')
+        .select('*, zona:id_zona(estado_zona(nombre))')
+        .eq('id_estado', idEstLibrePlaza)
+        .order('numero_plaza');
+      
+      const plazas = (rawPlazas || []).filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
 
       const { data: stCat } = await supabase.from('estado_ticket').select('id_estado, nombre');
       const stMap = {}; (stCat || []).forEach(s => { stMap[s.id_estado] = s.nombre; });

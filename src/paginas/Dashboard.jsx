@@ -39,8 +39,13 @@ export default function Dashboard() {
       const { data: estadosPlaza } = await supabase.from('estado_plaza').select('*');
       const { data: estadosReserva } = await supabase.from('estado_reserva').select('*');
 
-      // 2. Obtener plazas
-      const { data: plazas } = await supabase.from('plaza').select('id_estado');
+      // 2. Obtener plazas e información de zona (para filtrar inactivas)
+      const { data: rawPlazas } = await supabase
+        .from('plaza')
+        .select('id_estado, id_zona, zona(estado_zona(nombre))');
+
+      // Filtrar plazas de zonas inactivas
+      const plazas = (rawPlazas || []).filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
 
       // 3. Obtener Reservas ACTIVAS que aún no han vencido
       const ahoraISO = new Date().toISOString();

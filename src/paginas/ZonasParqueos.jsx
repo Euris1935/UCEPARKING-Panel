@@ -4,9 +4,13 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaSearch, FaEdit, FaTrash, FaParking, FaMapMarkerAlt, FaPlus, FaSave, FaArrowsAltH, FaArrowsAltV } from 'react-icons/fa';
+import { 
+  FaSearch, FaEdit, FaTrash, FaParking, FaMapMarkerAlt, FaPlus, FaSave, 
+  FaArrowsAltH, FaArrowsAltV, FaSync, FaSyncAlt, FaCar 
+} from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function ZonasParqueo() {
   const { tienePermiso } = useRbac();
@@ -18,9 +22,15 @@ export default function ZonasParqueo() {
   const [zonas, setZonas] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingZone, setEditingZone] = useState(null);
-  const initialZoneState = { Nombre_Zona: '', Capacidad_Total: '' };
+  const initialZoneState = { Nombre_Zona: '', Capacidad_Total: '', id_tipo: '', id_estado: '' };
   const [zoneForm, setZoneForm] = useState(initialZoneState);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
+  const [currentEmpleadoId, setCurrentEmpleadoId] = useState(null);
+  const [localOrgId, setLocalOrgId] = useState(null);
+  
+  // Catálogos
+  const [tiposZona, setTiposZona] = useState([]);
+  const [estadosZona, setEstadosZona] = useState([]);
 
   // --- ESTADOS DE PLAZAS ---
   const [plazas, setPlazas] = useState([]);
@@ -33,8 +43,29 @@ export default function ZonasParqueo() {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-        if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
+        const { data: uData } = await supabase.from('usuario')
+          .select('id_persona, organizacion_id')
+          .eq('id', user.id)
+          .single();
+        
+        if (uData) {
+          if (uData.id_persona) setCurrentPersonaId(uData.id_persona);
+          if (uData.organizacion_id) setLocalOrgId(uData.organizacion_id);
+          
+          // Obtener id_empleado para el creador
+          const { data: empData } = await supabase
+            .from('empleado')
+            .select('id_empleado, organizacion_id')
+            .eq('id_persona', uData.id_persona)
+            .maybeSingle();
+          
+          if (empData) {
+            setCurrentEmpleadoId(empData.id_empleado);
+            if (!uData.organizacion_id && empData.organizacion_id) {
+              setLocalOrgId(empData.organizacion_id);
+            }
+          }
+        }
       }
     };
     init();
@@ -43,12 +74,29 @@ export default function ZonasParqueo() {
 
   const loadData = async () => {
     try {
-      const { data: zData } = await supabase.from('zona').select('*').order('id_zona');
+      // 1. Catálogos ordenados alfabéticamente
+      const { data: tzData } = await supabase.from('tipo_zona').select('*').order('nombre');
+      const { data: ezData } = await supabase.from('estado_zona').select('*').order('nombre');
+      setTiposZona(tzData || []);
+      setEstadosZona(ezData || []);
+
+      // 2. Zonas ordenadas alfabéticamente
+      const { data: zData } = await supabase
+        .from('zona')
+        .select(`
+          *,
+          tipo:tipo_zona(nombre),
+          estado:estado_zona(nombre),
+          creador:empleado(persona(nombre, apellido))
+        `)
+        .order('nombre');
+      
       setZonas(zData || []);
 
+      // 3. Plazas ordenadas por número
       const { data: pData } = await supabase.from('plaza').select(`*, estado_plaza(nombre)`).order('numero_plaza');
       setPlazas(pData || []);
-    } catch (error) { console.error(error); }
+    } catch (error) { console.error("Error cargando datos:", error); }
   };
 
   const registrarLog = async (tipo_nombre, descripcion) => {
@@ -117,17 +165,35 @@ export default function ZonasParqueo() {
     e.preventDefault();
     if (!zoneForm.Nombre_Zona.trim()) return Swal.fire('Error', "Nombre obligatorio.", 'warning');
     if (parseInt(zoneForm.Capacidad_Total) <= 0) return Swal.fire('Error', "Capacidad debe ser > 0.", 'warning');
-    if (!orgId) return Swal.fire('Error', 'Contexto de organización no detectado.', 'error');
+
+    const activeOrgId = orgId || localOrgId;
+    if (!activeOrgId) return Swal.fire('Error', 'No se pudo detectar la organización asociada a su cuenta.', 'error');
+
+    const estaCreando = !editingZone;
+    
+    // 1. Determinar ID del estado si no se seleccionó
+    let finalIdEstado = zoneForm.id_estado ? parseInt(zoneForm.id_estado) : null;
+    if (estaCreando && !finalIdEstado) {
+      const { data: stAct } = await supabase.from('estado_zona').select('id_estado').ilike('nombre', 'Activa').maybeSingle();
+      if (stAct) finalIdEstado = stAct.id_estado;
+    }
 
     const payload = { 
       nombre: zoneForm.Nombre_Zona.trim(), 
       capacidad_total: parseInt(zoneForm.Capacidad_Total),
-      organizacion_id: orgId
+      id_tipo: zoneForm.id_tipo ? parseInt(zoneForm.id_tipo) : null,
+      id_estado: finalIdEstado,
+      organizacion_id: activeOrgId
     };
-    const estaCreando = !editingZone;
+
+    if (estaCreando) {
+      payload.id_empleado_creador = currentEmpleadoId;
+    }
+
+    const estaCreandoConst = estaCreando;
 
     // Si es nueva zona, previsualizar el código y pedir confirmación
-    if (estaCreando) {
+    if (estaCreandoConst) {
       const prefijo = generarIniciales(zoneForm.Nombre_Zona);
       const cap = parseInt(zoneForm.Capacidad_Total);
       const ejemplos = Array.from({ length: Math.min(cap, 3) }, (_, i) =>
@@ -152,11 +218,8 @@ export default function ZonasParqueo() {
         if (errZ) throw errZ;
 
         if (confirm.isConfirmed) {
-          // 2. Obtener el id del estado LIBRE
           const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
           const idLibre = epLibre?.id_estado || 1;
-          
-          // 3. Generar plazas en lote
           const { total } = await generarPlazasEnLote(zonaCreada.id_zona, zonaCreada.nombre, cap, idLibre);
           Swal.fire('Éxito', `Zona creada con ${total} plazas generadas automáticamente.`, 'success');
         } else {
@@ -169,13 +232,58 @@ export default function ZonasParqueo() {
       } catch (error) { Swal.fire('Error', error.message, 'error'); }
 
     } else {
-      // Editar zona existente (no genera plazas, solo actualiza datos)
       try {
         Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading() });
+        
+        // Antes de actualizar, verificar capacidad para el aviso automático
+        const oldCap = editingZone.capacidad_total;
+        const newCap = parseInt(zoneForm.Capacidad_Total);
+        const currentPlazasCount = plazas.filter(p => p.id_zona === editingZone.id_zona).length;
+
         const { error } = await supabase.from('zona').update(payload).eq('id_zona', editingZone.id_zona);
         if (error) throw error;
-        Swal.fire('Éxito', 'Zona actualizada.', 'success');
-        registrarLog('Zona Modificada', `Edición de zona: ${zoneForm.Nombre_Zona} (Capacidad: ${zoneForm.Capacidad_Total})`);
+
+        // 2. Propagación en cascada si el estado es Mantenimiento o Cerrada
+        const nuevoEstado = estadosZona.find(e => e.id_estado === payload.id_estado);
+        if (nuevoEstado && (nuevoEstado.nombre.toLowerCase().includes('mantenimiento') || nuevoEstado.nombre.toLowerCase().includes('cerrada'))) {
+            const { data: stPlaza } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', nuevoEstado.nombre).maybeSingle();
+            if (stPlaza) {
+                const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+                const idLibre = epLibre?.id_estado || 1;
+                await supabase.from('plaza').update({ id_estado: stPlaza.id_estado }).eq('id_zona', editingZone.id_zona).eq('id_estado', idLibre);
+            }
+        }
+
+        // 3. Manejo inteligente de capacidad
+        if (newCap > currentPlazasCount) {
+            const faltantes = newCap - currentPlazasCount;
+            const confirmGen = await Swal.fire({
+                title: 'Capacidad Aumentada',
+                text: `Has aumentado la capacidad. ¿Deseas generar las ${faltantes} plazas faltantes automáticamente ahora?`,
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonText: 'Sí, generar',
+                cancelButtonText: 'No por ahora'
+            });
+            if (confirmGen.isConfirmed) {
+                const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+                const idLibre = epLibre?.id_estado || 1;
+                await generarPlazasEnLote(editingZone.id_zona, zoneForm.Nombre_Zona, newCap, idLibre);
+                Swal.fire('Éxito', `Zona actualizada y ${faltantes} plazas generadas.`, 'success');
+            } else {
+                Swal.fire('Éxito', 'Zona actualizada correctamente.', 'success');
+            }
+        } else if (newCap < currentPlazasCount) {
+            Swal.fire({
+                title: 'Aviso de Capacidad',
+                text: `Has reducido la capacidad numérica, pero las ${currentPlazasCount} plazas físicas existentes permanecerán en el sistema para proteger su historial.`,
+                icon: 'info'
+            });
+        } else {
+            Swal.fire('Éxito', 'Zona actualizada.', 'success');
+        }
+
+        registrarLog('Zona Modificada', `Edición de zona: ${zoneForm.Nombre_Zona}`);
         setZoneForm(initialZoneState);
         setEditingZone(null);
         loadData();
@@ -219,7 +327,12 @@ export default function ZonasParqueo() {
 
   const handleEditZone = (zone) => {
     setEditingZone(zone);
-    setZoneForm({ Nombre_Zona: zone.nombre, Capacidad_Total: zone.capacidad_total });
+    setZoneForm({ 
+      Nombre_Zona: zone.nombre, 
+      Capacidad_Total: zone.capacidad_total,
+      id_tipo: zone.id_tipo || '',
+      id_estado: zone.id_estado || ''
+    });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -258,12 +371,31 @@ export default function ZonasParqueo() {
         loadData();
       } catch (error) {
         console.error('Error delete:', error);
-        Swal.fire('Error de Borrado', 
-          error.message.includes('foreign key constraint') 
-          ? 'No se puede eliminar la zona porque tiene historial (accesos, tickets o dispositivos) vinculado. Sugerencia: use la funcionalidad de Desactivar en el futuro.'
-          : error.message, 
-          'error'
-        );
+        if (error.message.toLowerCase().includes('foreign key') || error.message.toLowerCase().includes('violates')) {
+          const confirmInac = await Swal.fire({
+            title: 'No se puede eliminar',
+            text: 'Esta zona tiene historial (accesos, tickets o dispositivos) vinculado y no puede borrarse. ¿Deseas marcarla como Inactiva para que desaparezca de las vistas operativas?',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, Desactivar',
+            cancelButtonText: 'Cancelar'
+          });
+
+          if (confirmInac.isConfirmed) {
+            try {
+              const { data: stInac } = await supabase.from('estado_zona').select('id_estado').ilike('nombre', 'Inactiva').maybeSingle();
+              if (!stInac) throw new Error('Estado "Inactiva" no encontrado en el sistema.');
+              
+              await supabase.from('zona').update({ id_estado: stInac.id_estado }).eq('id_zona', zoneId);
+              Swal.fire('Zona Desactivada', 'La zona ha sido marcada como Inactiva y sus plazas se han ocultado.', 'success');
+              loadData();
+            } catch (errInac) {
+              Swal.fire('Error', errInac.message, 'error');
+            }
+          }
+        } else {
+          Swal.fire('Error de Borrado', error.message, 'error');
+        }
       }
     }
   };
@@ -398,151 +530,299 @@ export default function ZonasParqueo() {
       <header className="mb-8 flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Configuración de Parqueo</h2>
-          <p className="text-gray-500">Gestión estructural de zonas y plazas.</p>
+          <p className="text-gray-500 mt-1">Gestión estructural y mapa de plazas.</p>
         </div>
-        {canCreate && (
-        <button
-          onClick={() => openPlazaModal(null)}
-          className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-bold shadow-lg flex items-center gap-2 transition"
-        >
-          <FaPlus /> NUEVA PLAZA
-        </button>
-        )}
+        <div className="flex gap-3">
+          {canCreate && (
+            <button
+              onClick={() => openPlazaModal(null)}
+              className="bg-primary hover:bg-opacity-90 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg flex items-center gap-2 transition-all active:scale-95"
+            >
+              <FaPlus /> NUEVA PLAZA
+            </button>
+          )}
+        </div>
       </header>
 
-      <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-        <section className="lg:col-span-2">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xl font-semibold text-gray-900">Zonas Registradas</h3>
-            <div className="relative w-64">
-              <input type="text" placeholder="Buscar zona..." className="w-full pl-10 pr-4 py-2 border rounded-lg"
-                value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-              <FaSearch className="absolute left-3 top-3 text-gray-400" />
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-8 items-start">
+        {/* --- FORMULARIO DE GESTIÓN (A LA IZQUIERDA - Estilo Foto - Verde) --- */}
+        <div className="xl:col-span-2">
+          {(canCreate || editingZone) && (
+            <div className="bg-white rounded-3xl shadow-xl shadow-gray-200/50 border border-gray-100 p-8">
+              <h3 className="text-xl font-bold mb-6 flex items-center gap-3 text-gray-800 uppercase tracking-tighter">
+                <FaParking className="text-emerald-500" /> 
+                {editingZone ? 'Editar Zona' : 'Registrar Nueva Zona'}
+              </h3>
+              
+              <form className="space-y-5" onSubmit={handleSubmitZone}>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Nombre de Zona *</label>
+                  <input 
+                    type="text" 
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 outline-none transition-all font-medium text-gray-700" 
+                    placeholder="Ej: Sótano A, Nivel 1"
+                    value={zoneForm.Nombre_Zona} 
+                    onChange={(e) => setZoneForm({ ...zoneForm, Nombre_Zona: e.target.value })} 
+                  />
+                </div>
+                
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Capacidad Numérica *</label>
+                  <input 
+                    type="number" 
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 outline-none transition-all text-gray-700" 
+                    placeholder="Cantidad total de plazas"
+                    value={zoneForm.Capacidad_Total} 
+                    onChange={(e) => setZoneForm({ ...zoneForm, Capacidad_Total: e.target.value })} 
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 gap-5">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Tipo de Zona</label>
+                    <SearchableSelect 
+                      options={tiposZona.map(t => ({ value: t.id_tipo, label: t.nombre }))}
+                      value={zoneForm.id_tipo}
+                      onChange={(val) => setZoneForm({ ...zoneForm, id_tipo: val })}
+                      placeholder="— Seleccionar Tipo —"
+                      focusRingClass="focus:ring-emerald-500"
+                      selectedItemClass="bg-emerald-100 text-emerald-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Estado de Zona</label>
+                    <SearchableSelect 
+                      options={estadosZona.map(e => ({ value: e.id_estado, label: e.nombre }))}
+                      value={zoneForm.id_estado}
+                      onChange={(val) => setZoneForm({ ...zoneForm, id_estado: val })}
+                      placeholder="— Seleccionar Estado —"
+                      focusRingClass="focus:ring-emerald-500"
+                      selectedItemClass="bg-emerald-100 text-emerald-800"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-4 flex flex-col gap-3">
+                  <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white py-4 rounded-2xl font-black shadow-lg shadow-emerald-100 transition-all transform active:scale-95 flex items-center justify-center gap-2 uppercase tracking-wider">
+                    <FaSave /> {editingZone ? "GUARDAR CAMBIOS" : "CREAR ZONA"}
+                  </button>
+                  {editingZone && (
+                    <button 
+                      type="button" 
+                      onClick={() => { setEditingZone(null); setZoneForm(initialZoneState); }} 
+                      className="w-full py-2 text-xs font-bold text-gray-400 hover:text-gray-600 transition-colors uppercase tracking-widest"
+                    >
+                      CANCELAR EDICIÓN
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
+        </div>
+
+        {/* --- LISTA DE ZONAS (A LA DERECHA - Ocupa 3 columnas) --- */}
+        <div className="xl:col-span-3 bg-white rounded-3xl shadow-xl shadow-gray-200/50 border border-gray-100 overflow-hidden">
+          <div className="p-7 border-b border-gray-50 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+               <FaParking className="text-emerald-500" /> Zonas Registradas
+               <span className="ml-2 bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-0.5 rounded-full">{zonas.length}</span>
+            </h3>
+            <div className="relative w-full sm:w-64">
+              <input 
+                type="text" 
+                placeholder="Buscar por nombre..." 
+                className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none"
+                value={searchTerm} 
+                onChange={(e) => setSearchTerm(e.target.value)} 
+              />
+              <FaSearch className="absolute left-3.5 top-3 text-gray-400" />
             </div>
           </div>
-          <div className="overflow-x-auto max-h-64 overflow-y-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50 sticky top-0">
+          
+          <div className="overflow-x-auto max-h-[500px]">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-gray-50 text-[10px] font-black uppercase text-gray-400 tracking-wider">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nombre</th>
-                  <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Capacidad</th>
-                  <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase">Registro</th>
-                  <th className="px-6 py-3 text-center text-xs font-bold text-gray-500 uppercase">Acciones</th>
+                  <th className="px-6 py-4">Zona</th>
+                  <th className="px-6 py-4">Detalles</th>
+                  <th className="px-6 py-4">Capacidad</th>
+                  <th className="px-6 py-4">Registro</th>
+                  <th className="px-6 py-4 text-center">Acciones</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-50">
                 {filteredZonas.map(z => (
-                  <tr key={z.id_zona} className="hover:bg-gray-50">
-                    <td className="px-6 py-3 font-medium text-gray-900"><FaParking className='inline mr-2 text-primary' /> {z.nombre}</td>
-                    <td className="px-6 py-3 text-gray-500 font-bold">{z.capacidad_total}</td>
-                    <td className="px-6 py-3 text-[10px] text-gray-400 font-medium italic">
-                      {z.created_at ? new Date(z.created_at).toLocaleDateString('es-DO', { day: '2-digit', month: 'short', year: '2-digit' }) : '-'}
+                  <tr key={z.id_zona} className="hover:bg-emerald-50/10 transition-colors">
+                    <td className="px-6 py-4 font-bold text-gray-900">{z.nombre}</td>
+                    <td className="px-6 py-4">
+                      <div className="text-xs text-gray-600">{z.tipo?.nombre || 'General'}</div>
+                      <div className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${
+                        z.estado?.nombre === 'Activa' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {z.estado?.nombre || 'N/A'}
+                      </div>
                     </td>
-                    <td className="px-6 py-3 flex gap-2 justify-center">
-                      {canEdit && <button onClick={() => handleEditZone(z)} className="text-blue-500 hover:bg-blue-50 p-2 rounded"><FaEdit /></button>}
-                      {canDelete && <button onClick={() => handleDeleteZone(z.id_zona)} className="text-red-500 hover:bg-red-50 p-2 rounded"><FaTrash /></button>}
+                    <td className="px-6 py-4 font-black text-gray-700 text-lg">
+                      {z.capacidad_total}
+                    </td>
+                    <td className="px-6 py-4">
+                        <p className="text-[11px] font-bold text-gray-700 truncate w-32" title={z.creador?.persona ? `${z.creador.persona.nombre} ${z.creador.persona.apellido}` : 'Sistema'}>
+                            {z.creador?.persona ? `${z.creador.persona.nombre} ${z.creador.persona.apellido}` : 'Sistema'}
+                        </p>
+                        <p className="text-[10px] text-gray-400 font-medium">
+                          {new Date(z.created_at).toLocaleDateString('es-DO')} {new Date(z.created_at).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                    </td>
+                    <td className="px-6 py-4 text-center">
+                      <div className="flex justify-center items-center gap-2">
+                        {canEdit && <button onClick={() => handleEditZone(z)} className="text-blue-500 hover:bg-blue-50 p-2.5 rounded-xl transition-all" title="Editar"><FaEdit /></button>}
+                        <button onClick={() => handleGenerarPlazasExistente(z)} className="text-emerald-500 hover:bg-emerald-50 p-2.5 rounded-xl transition-all" title="Generar Plazas"><FaSyncAlt /></button>
+                        {canDelete && <button onClick={() => handleDeleteZone(z.id_zona)} className="text-red-500 hover:bg-red-50 p-2.5 rounded-xl transition-all" title="Eliminar"><FaTrash /></button>}
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </section>
-
-        {(canCreate || editingZone) && (
-        <section className="bg-gray-50 p-6 rounded-lg border border-gray-200 h-fit">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">{editingZone ? "Editar Zona" : "Crear Zona"}</h3>
-          <form className="space-y-4" onSubmit={handleSubmitZone}>
-            <input type="text" className="w-full border p-2 rounded" placeholder="Nombre (Ej: Sótano 1)"
-              value={zoneForm.Nombre_Zona} onChange={(e) => setZoneForm({ ...zoneForm, Nombre_Zona: e.target.value })} />
-            <input type="number" className="w-full border p-2 rounded" placeholder="Capacidad Total"
-              value={zoneForm.Capacidad_Total} onChange={(e) => setZoneForm({ ...zoneForm, Capacidad_Total: e.target.value })} />
-            <div className="flex justify-end gap-2 pt-2">
-              {editingZone && <button type="button" onClick={() => { setEditingZone(null); setZoneForm(initialZoneState); }} className="text-gray-500 text-sm">Cancelar</button>}
-              <button type="submit" className="bg-primary text-white px-4 py-2 rounded shadow text-sm font-bold">{editingZone ? "Actualizar" : "Guardar"}</button>
-            </div>
-          </form>
-        </section>
-        )}
+        </div>
       </div>
 
-      <div className="space-y-6">
-        <h3 className="text-2xl font-bold text-gray-800 border-b pb-2">Mapa de Plazas (Edición)</h3>
-        {filteredZonas.map(zona => {
-          const plazasDeZona = plazas.filter(p => p.id_zona === zona.id_zona);
+      {/* --- MAPA DE PLAZAS (RESTAURADO A TAMAÑO GRANDE) --- */}
+      <div className="mt-12 space-y-8">
+        <div className="flex items-center gap-3 border-b pb-4">
+           <h3 className="text-2xl font-black text-gray-900 uppercase tracking-tighter italic">Mapa de Plazas Físicas</h3>
+           <div className="h-px flex-1 bg-gray-100"></div>
+        </div>
+        
+        {zonas.map(zona => {
+          const plazasZona = plazas.filter(p => p.id_zona === zona.id_zona);
           return (
-            <section key={zona.id_zona} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-              <div className="flex items-center gap-2 mb-4 border-b pb-2">
-                <FaMapMarkerAlt className="text-gray-400" />
-                <h3 className="text-lg font-bold text-gray-700">{zona.nombre}</h3>
-                <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500 ml-auto">{plazasDeZona.length} plazas</span>
+            <section key={zona.id_zona} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm relative overflow-hidden">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
+                <div className="flex items-center gap-3">
+                  <div className="w-1.5 h-8 bg-primary rounded-full"></div>
+                  <div>
+                    <h4 className="text-xl font-bold text-gray-800 tracking-tight">{zona.nombre}</h4>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">{plazasZona.length} de {zona.capacidad_total} Plazas Creadas</p>
+                  </div>
+                </div>
+                <div className={`px-4 py-1.5 rounded-xl font-bold text-xs shadow-sm ${
+                  zona.estado?.nombre === 'Activa' ? 'bg-green-500 text-white' : 'bg-amber-500 text-white'
+                }`}>
+                  {zona.estado?.nombre}
+                </div>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-6 lg:grid-cols-8 gap-3">
-                {plazasDeZona.map(plaza => (
-                  <div key={plaza.id_plaza} className="group relative p-3 rounded border bg-gray-50 hover:border-blue-400 transition-all cursor-pointer h-24 flex flex-col items-center justify-center">
-                    <span className="font-bold text-lg text-gray-800">{plaza.numero_plaza}</span>
-                    <span className="text-[10px] text-gray-400">{plaza.amplitud}m x {plaza.longitud}m</span>
-                    {/* Fecha de creación de la plaza */}
-                    {plaza.created_at && (
-                      <div className="mt-auto pt-1 border-t border-gray-100 w-full text-center">
-                        <span className="text-[9px] text-gray-400 font-medium tracking-tighter">
-                          {new Date(plaza.created_at).toLocaleDateString('es-DO', { day: '2-digit', month: '2-digit', year: '2-digit' })}
-                        </span>
-                      </div>
-                    )}
-                    <div className="absolute inset-0 bg-white/90 hidden group-hover:flex items-center justify-center gap-2 rounded transition-all">
-                      {canEdit && <button onClick={() => openPlazaModal(plaza)} className="text-blue-600 bg-blue-100 p-2 rounded-full hover:bg-blue-200" title="Editar"><FaEdit /></button>}
-                      {canDelete && <button onClick={() => handleDeletePlaza(plaza)} className="text-red-600 bg-red-100 p-2 rounded-full hover:bg-red-200" title="Borrar"><FaTrash /></button>}
+              
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-4">
+                {plazasZona.map(p => (
+                  <div key={p.id_plaza} className="group relative aspect-square bg-gray-50 border-2 border-gray-100 rounded-2xl flex flex-col items-center justify-center hover:border-primary/40 hover:bg-white hover:shadow-xl transition-all duration-300 cursor-default">
+                    <span className="text-lg font-black text-gray-800 tracking-tighter">{p.numero_plaza}</span>
+                    <span className="text-[9px] font-bold text-gray-400 uppercase">{p.amplitud}x{p.longitud}</span>
+                    
+                    <div className="mt-2 h-1.5 w-8 rounded-full bg-gray-200 overflow-hidden">
+                       <div className={`h-full w-full ${p.estado_plaza?.nombre === 'Libre' ? 'bg-green-500' : 'bg-amber-500'}`}></div>
+                    </div>
+
+                    {/* Acciones Hover */}
+                    <div className="absolute inset-0 bg-white/95 rounded-2xl opacity-0 group-hover:opacity-100 flex items-center justify-center gap-3 transition-opacity duration-200">
+                        {canEdit && (
+                          <button onClick={() => openPlazaModal(p)} className="p-2.5 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors" title="Editar">
+                            <FaEdit size={16} />
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button onClick={() => handleDeletePlaza(p)} className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors" title="Borrar">
+                            <FaTrash size={16} />
+                          </button>
+                        )}
                     </div>
                   </div>
                 ))}
-                {plazasDeZona.length === 0 && <p className="col-span-full text-center text-sm text-gray-400 py-4">Zona vacía.</p>}
+                {plazasZona.length === 0 && (
+                   <div className="col-span-full py-12 flex flex-col items-center justify-center border-2 border-dashed border-gray-100 rounded-3xl bg-gray-50/30">
+                      <p className="text-sm text-gray-400 font-bold uppercase tracking-widest italic">Aún no se han generado plazas para esta zona</p>
+                      <button onClick={() => handleGenerarPlazasExistente(zona)} className="mt-4 text-primary font-bold text-xs hover:underline flex items-center gap-2">
+                        <FaSyncAlt /> GENERAR PLAZAS AHORA
+                      </button>
+                   </div>
+                )}
               </div>
             </section>
           );
         })}
       </div>
 
+      {/* --- MODAL DE PLAZA (Estilo Foto - Verde) --- */}
       {showPlazaModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-xl w-96">
-            <h3 className="text-xl font-bold mb-4 text-gray-800">{editingPlaza ? 'Editar Plaza' : 'Nueva Plaza'}</h3>
-            <form onSubmit={handleSubmitPlaza} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">Número / Código</label>
-                <input className="w-full border p-2 rounded focus:ring-primary" placeholder="Ej: A-01"
-                  value={plazaForm.Numero_Plaza} onChange={e => setPlazaForm({ ...plazaForm, Numero_Plaza: e.target.value })} required autoFocus />
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl p-8 animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-bold mb-7 flex items-center gap-3 text-gray-800">
+               <FaParking className="text-emerald-500" /> 
+               {editingPlaza ? 'Editar Espacio' : 'Añadir Espacio Manual'}
+            </h3>
+            
+            <form className="space-y-5" onSubmit={handleSubmitPlaza}>
+               <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Zona Destino</label>
+                  <SearchableSelect 
+                    options={zonas.map(z => ({ value: z.id_zona, label: z.nombre }))}
+                    value={plazaForm.Id_Zona} 
+                    onChange={(val) => {
+                       if (editingPlaza) setPlazaForm({ ...plazaForm, Id_Zona: val });
+                       else handleZonaChange(val);
+                    }}
+                    disabled={!!editingPlaza}
+                    placeholder="— Seleccionar Zona —"
+                    focusRingClass="focus:ring-emerald-500"
+                    selectedItemClass="bg-emerald-100 text-emerald-800"
+                  />
+                  {editingPlaza && <p className="text-[9px] text-emerald-500 font-bold mt-1 px-1 opacity-80 uppercase tracking-tighter">Zona bloqueada (con historial)</p>}
+               </div>
+
+               <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Identificador (Número)</label>
+                <input 
+                  type="text" 
+                  className="w-full border border-gray-100 rounded-xl px-4 py-4 text-2xl font-black text-emerald-600 outline-none focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 transition-all font-mono tracking-tighter text-center bg-gray-50/30" 
+                  placeholder="Ej: A-01"
+                  value={plazaForm.Numero_Plaza} 
+                  onChange={(e) => setPlazaForm({ ...plazaForm, Numero_Plaza: e.target.value })} 
+                />
               </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Zona</label>
-                <select className="w-full border p-2 rounded focus:ring-primary"
-                  value={plazaForm.Id_Zona} onChange={e => {
-                    // Si estamos editando, solo cambiar el ID pero no autogenerar el nombre
-                    if (editingPlaza) {
-                      setPlazaForm({ ...plazaForm, Id_Zona: e.target.value });
-                    } else {
-                      handleZonaChange(e.target.value);
-                    }
-                  }} required>
-                  <option value="">-- Seleccionar Zona --</option>
-                  {zonas.map(z => <option key={z.id_zona} value={z.id_zona}>{z.nombre}</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+
+              <div className="grid grid-cols-2 gap-5">
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1 flex items-center gap-1"><FaArrowsAltH /> Amplitud (m)</label>
-                  <input type="number" step="0.01" className="w-full border p-2 rounded" value={plazaForm.Amplitud} onChange={e => setPlazaForm({ ...plazaForm, Amplitud: e.target.value })} required />
+                  <label className="text-[10px] font-bold text-gray-400 uppercase mb-1.5 block tracking-widest text-center">Amplitud (m)</label>
+                  <div className="relative group">
+                    <input type="number" step="0.01" className="w-full pl-10 pr-4 py-3 border border-gray-100 rounded-xl text-base font-bold outline-none focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 transition-all" value={plazaForm.Amplitud} onChange={(e)=>setPlazaForm({...plazaForm, Amplitud: e.target.value})} />
+                    <FaArrowsAltH className="absolute left-3.5 top-4 text-gray-300 group-focus-within:text-emerald-500" />
+                  </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1 flex items-center gap-1"><FaArrowsAltV /> Longitud (m)</label>
-                  <input type="number" step="0.01" className="w-full border p-2 rounded" value={plazaForm.Longitud} onChange={e => setPlazaForm({ ...plazaForm, Longitud: e.target.value })} required />
+                  <label className="text-[10px] font-bold text-gray-400 uppercase mb-1.5 block tracking-widest text-center">Longitud (m)</label>
+                  <div className="relative group">
+                    <input type="number" step="0.01" className="w-full pl-10 pr-4 py-3 border border-gray-100 rounded-xl text-base font-bold outline-none focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 transition-all" value={plazaForm.Longitud} onChange={(e)=>setPlazaForm({...plazaForm, Longitud: e.target.value})} />
+                    <FaArrowsAltV className="absolute left-3.5 top-4 text-gray-300 group-focus-within:text-emerald-500" />
+                  </div>
                 </div>
               </div>
-              <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
-                <button type="button" onClick={() => setShowPlazaModal(false)} className="px-4 py-2 bg-gray-100 text-gray-600 rounded hover:bg-gray-200">Cancelar</button>
-                <button type="submit" className="px-4 py-2 bg-primary text-white rounded hover:bg-blue-700 shadow flex items-center gap-2">
-                  <FaSave /> {editingPlaza ? 'Actualizar' : 'Guardar'}
-                </button>
+
+              <div className="pt-6 flex flex-col gap-3">
+                 <button 
+                  type="submit" 
+                  className="w-full bg-emerald-500 hover:bg-emerald-600 text-white py-4 rounded-2xl font-black shadow-lg shadow-emerald-100 transition-all hover:shadow-xl active:scale-95 flex items-center justify-center gap-2 uppercase tracking-widest"
+                 >
+                    <FaSave /> {editingPlaza ? 'ACTUALIZAR DATOS' : 'CREAR PLAZA'}
+                 </button>
+                 <button 
+                  type="button" 
+                  onClick={() => setShowPlazaModal(false)} 
+                  className="w-full py-2 text-[10px] font-bold text-gray-400 hover:text-gray-600 rounded-xl transition-all uppercase tracking-widest"
+                 >
+                   CERRAR VENTANA
+                 </button>
               </div>
             </form>
           </div>

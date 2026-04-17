@@ -46,10 +46,20 @@ export default function Ocupacion() {
       const { data: estData } = await supabase.from('estado_plaza').select('id_estado, nombre');
       setEstadosCatalogo(estData?.map(e => ({ id: e.id_estado, nombre: e.nombre })) || []);
 
-      const { data: zonasData } = await supabase.from('zona').select('*').order('id_zona');
-      setZonas(zonasData || []);
+      const { data: zonasData } = await supabase
+        .from('zona')
+        .select('*, estado_zona(nombre)')
+        .order('id_zona');
+      
+      const zonasVivas = (zonasData || []).filter(z => !z.estado_zona || z.estado_zona.nombre !== 'Inactiva');
+      setZonas(zonasVivas);
 
-      const { data: plazasData } = await supabase.from('plaza').select('*').order('numero_plaza');
+      const idsZonasVivas = zonasVivas.map(z => z.id_zona);
+      const { data: plazasData } = await supabase
+        .from('plaza')
+        .select('*')
+        .in('id_zona', idsZonasVivas)
+        .order('numero_plaza');
 
       let plazasCompletas = (plazasData || []).map(p => {
         const estadoObj = (estData || []).find(e => e.id_estado === p.id_estado);

@@ -42,9 +42,19 @@ export default function Layout({ children }) {
     try {
       // 1. Obtener estados de plazas de la tabla correcta (estado_plaza)
       const { data: estados } = await supabase.from('estado_plaza').select('id_estado, nombre');
-      const { data: plazas } = await supabase.from('plaza').select('id_estado');
+      const { data: rawPlazas } = await supabase
+        .from('plaza')
+        .select(`
+            id_estado,
+            zona:id_zona(
+                estado_zona(nombre)
+            )
+        `);
 
-      if (!estados || !plazas) return;
+      if (!estados || !rawPlazas) return;
+
+      // Filtrar plazas de zonas que NO estén inactivas
+      const plazas = rawPlazas.filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
 
       const getId = (pattern) => estados.find(e => {
         const n = (e.nombre || '').trim().toUpperCase();

@@ -59,11 +59,19 @@ export default function AccesoManual() {
       const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
       const idEstLibrePlaza = epLibre?.id_estado || 1;
 
-      const { data: plazas } = await supabase.from('plaza').select('*').order('numero_plaza');
-      if (plazas) {
-        setTodasPlazas(plazas);
-        setPlazasLibres(plazas.filter(p => p.id_estado === idEstLibrePlaza));
+      // Obtener plazas filtrando zonas inactivas
+      const { data: rawPlazas } = await supabase
+        .from('plaza')
+        .select('*, zona:id_zona(estado_zona(nombre))')
+        .order('numero_plaza');
+      
+      const plazasVivas = (rawPlazas || []).filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
+
+      if (plazasVivas) {
+        setTodasPlazas(plazasVivas);
+        setPlazasLibres(plazasVivas.filter(p => p.id_estado === idEstLibrePlaza));
       }
+
       // 2. TODAS LAS PERSONAS (Solución Jarol)
       const { data: allP } = await supabase.from('persona').select('*').order('nombre');
       const pMap = {}; (allP || []).forEach(p => { pMap[p.id_persona] = p; });
