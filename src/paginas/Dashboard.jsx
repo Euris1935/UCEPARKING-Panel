@@ -35,60 +35,114 @@ export default function Dashboard() {
 
   const loadDashboardData = async () => {
     try {
-      // 1. Obtener catálogos de estados
-      const { data: estadosPlaza } = await supabase.from('estado_plaza').select('*');
-      const { data: estadosReserva } = await supabase.from('estado_reserva').select('*');
-
-      // 2. Obtener plazas e información de zona (para filtrar inactivas)
-      const { data: rawPlazas } = await supabase
-        .from('plaza')
-        .select('id_estado, id_zona, zona(estado_zona(nombre))');
+      // 1. Obtener catálogos y datos base
+      const [
+        { data: estadosPlaza },
+        { data: estadosReserva },
+        { data: rawPlazas },
+        { data: zonasData }
+      ] = await Promise.all([
+        supabase.from('estado_plaza').select('*'),
+        supabase.from('estado_reserva').select('*'),
+        supabase.from('plaza').select('*, zona(estado_zona(nombre))'),
+        supabase.from('zona').select('id_zona, estado_zona(nombre)')
+      ]);
 
       // Filtrar plazas de zonas inactivas
-      const plazas = (rawPlazas || []).filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
+      const plazasFiltradas = (rawPlazas || []).filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
 
-      // 3. Obtener Reservas ACTIVAS que aún no han vencido
-      const ahoraISO = new Date().toISOString();
-      const idEstadoReservaActiva = estadosReserva?.find(e => e.nombre === 'Activa')?.id_estado || 0;
-      const { count: reservasTablaCount } = await supabase
+      // 2. Obtener información de ocupación (Mapa de Ocupacion idéntico a Ocupacion.jsx)
+      const mapaOcupacion = {};
+
+      // 2.1 ACCESOS (Ocupación real)
+      const { data: accesosActivos } = await supabase
+        .from('acceso')
+        .select('id_plaza')
+        .is('salida_at', null);
+      
+      (accesosActivos || []).forEach(acc => {
+        if (acc.id_plaza) mapaOcupacion[acc.id_plaza] = { type: 'acceso' };
+      });
+
+      // 2.2 RESERVAS (Individurales y por Zona)
+      const idResActiva = estadosReserva?.find(e => e.nombre === 'Activa')?.id_estado || 1;
+      
+      const { data: reservasActivas } = await supabase
         .from('reserva')
-        .select('*', { count: 'exact', head: true })
-        .eq('id_estado', idEstadoReservaActiva)
-        .or(`fecha_hora_fin.is.null,fecha_hora_fin.gt.${ahoraISO}`);
+        .select('id_plaza')
+        .eq('id_estado', idResActiva);
+      
+      (reservasActivas || []).forEach(res => {
+        if (res.id_plaza) {
+          mapaOcupacion[res.id_plaza] = { type: 'reserva' };
+        }
+      });
 
-      const getId = (name) => estadosPlaza?.find(e => e.nombre.trim().toUpperCase() === name.toUpperCase())?.id_estado;
+      const { data: reservasZonasActivas } = await supabase
+        .from('reserva_zona')
+        .select('id_zona')
+        .eq('id_estado', idResActiva);
+      
+      if (reservasZonasActivas?.length > 0) {
+        reservasZonasActivas.forEach(rz => {
+          plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => {
+            if (!mapaOcupacion[p.id_plaza]) {
+              mapaOcupacion[p.id_plaza] = { type: 'reserva_zona' };
+            }
+          });
+        });
+      }
 
-      const idLibre = getId('Libre');
-      const idOcupada = getId('Ocupada');
-      const idReservada = getId('Reservada');
-      const idMantenimiento = getId('Mantenimiento') || getId('En Mantenimiento') || getId('Fuera de Servicio');
-      // Buscar estado asignado tolerando Asignada / Asignado / Assigned
-      const idAsignada = estadosPlaza?.find(e => e.nombre.trim().toUpperCase().startsWith('ASIGNAD'))?.id_estado;
+      // 2.3 ASIGNACIONES
+      const { data: asigData } = await supabase.from('asignacion')
+        .select('id_plaza')
+        .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
+      
+      (asigData || []).forEach(asig => {
+        if (asig.id_plaza) {
+          mapaOcupacion[asig.id_plaza] = { type: 'asignacion' };
+        }
+      });
 
-      // Cálculos
-      const total = plazas?.length || 0;
-      const ocupadasNum = plazas?.filter(p => p.id_estado === idOcupada).length || 0;
-      const reservadasEnMapa = plazas?.filter(p => p.id_estado === idReservada).length || 0;
-      const mantenimientoNum = plazas?.filter(p => p.id_estado === idMantenimiento).length || 0;
-      const asignadasNum = plazas?.filter(p => p.id_estado === idAsignada).length || 0;
-      const libresNum = plazas?.filter(p => p.id_estado === idLibre || p.id_estado === null).length || 0;
+      // 3. Procesar estados de plazas (Normalizar nombres y aplicar prioridad visual)
+      const plazasProcesadas = plazasFiltradas.map(p => {
+        const estadoObj = (estadosPlaza || []).find(e => e.id_estado === p.id_estado);
+        const rawNombre = estadoObj ? estadoObj.nombre.toUpperCase() : 'LIBRE';
+        
+        // Aplicar la misma lógica de "fuerza visual" que en Ocupacion.jsx
+        let finalNombre = rawNombre;
+        const info = mapaOcupacion[p.id_plaza];
+        if (info && rawNombre === 'LIBRE') {
+          if (info.type === 'acceso')     finalNombre = 'OCUPADA';
+          else if (info.type === 'reserva' || info.type === 'reserva_zona') finalNombre = 'RESERVADA';
+          else if (info.type === 'asignacion') finalNombre = 'ASIGNADA';
+        }
 
-      const reservasActivasNum = reservasTablaCount || 0;
-      const personasActivasNum = ocupadasNum + asignadasNum + reservasActivasNum;
+        return { ...p, Nombre_Final: finalNombre };
+      });
+
+      // 4. Calcular Estadísticas (Siguiendo exactamente los filtros de Ocupacion.jsx)
+      const libres = plazasProcesadas.filter(p => p.Nombre_Final === 'LIBRE' && !mapaOcupacion[p.id_plaza]).length;
+      const asignadas = plazasProcesadas.filter(p => p.Nombre_Final.startsWith('ASIGNAD') || mapaOcupacion[p.id_plaza]?.type === 'asignacion').length;
+      const ocupadas = plazasProcesadas.filter(p => p.Nombre_Final === 'OCUPADA' && mapaOcupacion[p.id_plaza]?.type !== 'asignacion').length;
+      const reservadas = plazasProcesadas.filter(p => (p.Nombre_Final === 'RESERVADA' || p.Nombre_Final === 'RESERVADO') && mapaOcupacion[p.id_plaza]?.type !== 'asignacion').length;
+      const mantenimiento = plazasProcesadas.filter(p => ['MANTENIMIENTO', 'FUERA DE SERVICIO', 'EN MANTENIMIENTO'].includes(p.Nombre_Final)).length;
+
+      const totalPersonas = ocupadas + asignadas + reservadas;
 
       setStats({
-        totalPlazas: total,
-        ocupadas: ocupadasNum,
-        reservadas: reservasActivasNum,   // Usar conteo real de reserva table, no estado plaza
-        libres: libresNum,
-        mantenimiento: mantenimientoNum,
-        asignadas: asignadasNum,
-        reservasActivas: reservasActivasNum,
-        personasActivas: personasActivasNum
+        totalPlazas: plazasProcesadas.length,
+        ocupadas,
+        reservadas,
+        libres,
+        asignadas,
+        mantenimiento,
+        reservasActivas: reservadas, 
+        personasActivas: totalPersonas
       });
 
     } catch (error) {
-      console.error("Error:", error.message);
+      console.error("Error cargando Dashboard:", error.message);
     } finally {
       setLoading(false);
     }

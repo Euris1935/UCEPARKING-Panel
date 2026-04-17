@@ -31,11 +31,13 @@ export default function Ocupacion() {
       }
     };
     getCurrentPersona();
-
     loadData();
-    const channel = supabase.channel('realtime_plaza')
+
+    // Suscripción tiempo real a cambios de plaza, asignación y ZONA
+    const channel = supabase.channel('realtime_ocupacion')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, () => loadData())
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, []);
@@ -51,7 +53,11 @@ export default function Ocupacion() {
         .select('*, estado_zona(nombre)')
         .order('id_zona');
       
-      const zonasVivas = (zonasData || []).filter(z => !z.estado_zona || z.estado_zona.nombre !== 'Inactiva');
+      // Filtrar zonas Inactivas pero PERMITIR Cerrada Temporalmente y En Mantenimiento
+      const zonasVivas = (zonasData || []).filter(z => {
+        const est = z.estado_zona?.nombre || '';
+        return est !== 'Inactiva';
+      });
       setZonas(zonasVivas);
 
       const idsZonasVivas = zonasVivas.map(z => z.id_zona);
@@ -100,36 +106,12 @@ export default function Ocupacion() {
       const idEstCompletadoRes = erData?.find(e => e.nombre === 'Completada')?.id_estado || 3;
       const idEstLibrePlaza = estData?.find(e => e.nombre === 'Libre')?.id_estado || 1;
 
-      const ahora = new Date();
-      const tzOffset = ahora.getTimezoneOffset() * 60000;
-      const ahoraString = new Date(ahora - tzOffset).toISOString().slice(0, 16);
-
       const { data: todasActivas } = await supabase.from('reserva').select('id_reserva, id_plaza, fecha_hora_inicio, fecha_hora_fin, id_persona').eq('id_estado', idResActiva);
-      
       let resData = (todasActivas || []);
 
-      const vencidas = resData.filter(r => {
-        const fechaFinDB = r.fecha_hora_fin ? r.fecha_hora_fin.replace(' ', 'T').slice(0, 16) : '';
-        return fechaFinDB !== '' && ahoraString >= fechaFinDB;
-      });
-
-      if (vencidas.length > 0) {
-          const plazasVencidasIds = new Set();
-          for (const rv of vencidas) {
-              await supabase.from('reserva').update({ id_estado: idEstCompletadoRes }).eq('id_reserva', rv.id_reserva);
-              if (rv.id_plaza) {
-                  await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', rv.id_plaza);
-                  plazasVencidasIds.add(rv.id_plaza);
-              }
-          }
-          // Actualizar en memoria para que no aparezcan en el mapa ni en el conteo
-          plazasCompletas = plazasCompletas.map(p =>
-              plazasVencidasIds.has(p.id_plaza) ? { ...p, Nombre_Estado_Rel: 'LIBRE' } : p
-          );
-          // Quitar vencidas de resData vivo para no sobreescribir mapas
-          resData = resData.filter(r => !vencidas.find(v => v.id_reserva === r.id_reserva));
-      }
-
+      // Ya no filtramos visualmente por tiempo. 
+      // Si la reserva está en la DB como Activa, mostramos el ocupante.
+      // Así evitamos que desaparezca el nombre antes de que cambie el color de la plaza.
       if (resData.length > 0) {
           const pIdsRes = resData.map(r => r.id_persona).filter(Boolean);
           const { data: resPersonas } = await supabase.from('persona').select('id_persona, nombre, apellido').in('id_persona', pIdsRes);
@@ -153,6 +135,34 @@ export default function Ocupacion() {
                 };
              }
           });
+      }
+
+      // 2.5 RESERVAS POR ZONA
+      const { data: reservasZonasActivas } = await supabase
+        .from('reserva_zona')
+        .select(`
+          id_reserva_zona, 
+          id_zona, 
+          tipo:tipo_reserva_zona ( nombre ),
+          persona (nombre, apellido)
+        `)
+        .eq('id_estado', idResActiva);
+
+      if (reservasZonasActivas && reservasZonasActivas.length > 0) {
+        reservasZonasActivas.forEach(rz => {
+           // Encontrar todas las plazas que pertenecen a esta zona
+           plazasCompletas.filter(p => p.id_zona === rz.id_zona).forEach(p => {
+              // Solo sobreescribimos si no hay una reserva individual (que es más específica)
+              if (!mapaOcupacion[p.id_plaza]) {
+                mapaOcupacion[p.id_plaza] = {
+                  type: 'reserva_zona',
+                  nombre: `ZONA RESERVADA: ${rz.tipo?.nombre || 'General'}`,
+                  persona: rz.persona ? `${rz.persona.nombre} ${rz.persona.apellido}` : 'Sistema',
+                  placa: 'RESERVA GRUPAL'
+                };
+              }
+           });
+        });
       }
 
       // 3. ASIGNACIONES (Fijas)
@@ -189,14 +199,32 @@ export default function Ocupacion() {
           });
       }
 
-      // FORCE PLAZA STATUS VISUALLY BASED ON mapaOcupacion
-      // Cubre casos de desincronización entre tabla acceso/reserva/asignacion y tabla plaza
+      // 4. SOBRESCRITURA VISUAL SEGÚN MAPA Y ESTADO DE ZONA
       plazasCompletas = plazasCompletas.map(p => {
+         const z = (zonasData || []).find(zona => zona.id_zona === p.id_zona);
+         const estZona = z?.estado_zona?.nombre || '';
+         
+         // Prioridad 1: Zona Cerrada o en Mantenimiento (Override total)
+         if (estZona === 'Cerrada Temporalmente') {
+           return { ...p, Nombre_Estado_Rel: 'CERRADA', _zonaBloqueada: true };
+         }
+         if (estZona === 'En Mantenimiento') {
+           return { ...p, Nombre_Estado_Rel: 'MANTENIMIENTO', _zonaBloqueada: true };
+         }
+
+         // Si la zona es Activa, nos aseguramos de no mostrar estados de bloqueo administrativo "huérfanos"
+         if (estZona === 'Activa' && (p.Nombre_Estado_Rel === 'MANTENIMIENTO' || p.Nombre_Estado_Rel === 'CERRADA')) {
+           return { ...p, Nombre_Estado_Rel: 'LIBRE' };
+         }
+
+         // Prioridad 2: Mapa de ocupación (Accesos, Reservas, Asignaciones)
          const info = mapaOcupacion[p.id_plaza];
          if (!info || p.Nombre_Estado_Rel !== 'LIBRE') return p;
+         
          if (info.type === 'acceso')     return { ...p, Nombre_Estado_Rel: 'OCUPADA' };
          if (info.type === 'reserva')    return { ...p, Nombre_Estado_Rel: 'RESERVADA' };
          if (info.type === 'asignacion') return { ...p, Nombre_Estado_Rel: 'ASIGNADO' };
+         
          return p;
       });
 
@@ -371,11 +399,12 @@ export default function Ocupacion() {
     changeStatus(plaza.id_plaza, nuevoEstado);
   };
 
-  const getCardColor = (estado, idPlaza) => {
+  const getCardColor = (estado, idPlaza, forcingStatus = null) => {
+    const statusToUse = (forcingStatus || estado)?.toUpperCase();
     const info = ocupacionInfo[idPlaza];
-    if (info?.type === 'asignacion') return 'bg-purple-50 border-purple-300 shadow-sm cursor-not-allowed';
+    if (!forcingStatus && info?.type === 'asignacion') return 'bg-purple-50 border-purple-300 shadow-sm cursor-not-allowed';
 
-    switch (estado) {
+    switch (statusToUse) {
       case 'LIBRE': return 'bg-green-50 border-green-200 hover:border-green-400 shadow-sm';
       case 'OCUPADA': return 'bg-red-50 border-red-200 hover:border-red-400 shadow-sm';
       case 'RESERVADA': return 'bg-yellow-50 border-yellow-200 hover:border-yellow-400 shadow-sm';
@@ -384,15 +413,17 @@ export default function Ocupacion() {
       case 'MANTENIMIENTO':
       case 'EN MANTENIMIENTO':
       case 'FUERA DE SERVICIO': return 'bg-orange-50 border-orange-200 hover:border-orange-400 shadow-sm';
+      case 'CERRADA': return 'bg-gray-100 border-gray-200 shadow-sm';
       default: return 'bg-gray-50 border-gray-200';
     }
   };
 
-  const getBadgeColor = (estado, idPlaza) => {
+  const getBadgeColor = (estado, idPlaza, forcingStatus = null) => {
+    const statusToUse = (forcingStatus || estado)?.toUpperCase();
     const info = ocupacionInfo[idPlaza];
-    if (info?.type === 'asignacion') return 'text-purple-800 bg-purple-200';
+    if (!forcingStatus && info?.type === 'asignacion') return 'text-purple-800 bg-purple-200';
 
-    switch (estado) {
+    switch (statusToUse) {
       case 'LIBRE': return 'text-green-700 bg-green-200';
       case 'OCUPADA': return 'text-red-700 bg-red-200';
       case 'RESERVADA': return 'text-yellow-800 bg-yellow-200';
@@ -401,15 +432,16 @@ export default function Ocupacion() {
       case 'MANTENIMIENTO':
       case 'EN MANTENIMIENTO':
       case 'FUERA DE SERVICIO': return 'text-orange-800 bg-orange-200';
+      case 'CERRADA': return 'text-gray-600 bg-gray-200';
       default: return 'text-gray-700 bg-gray-200';
     }
   };
 
   const stats = {
-    libres:       plazas.filter(p => p.Nombre_Estado_Rel === 'LIBRE').length,
-    ocupadas:     plazas.filter(p => p.Nombre_Estado_Rel === 'OCUPADA').length,
-    reservadas:   plazas.filter(p => p.Nombre_Estado_Rel === 'RESERVADA').length,
+    libres:       plazas.filter(p => p.Nombre_Estado_Rel === 'LIBRE' && !ocupacionInfo[p.id_plaza]).length,
     asignadas:    plazas.filter(p => p.Nombre_Estado_Rel.startsWith('ASIGNAD') || ocupacionInfo[p.id_plaza]?.type === 'asignacion').length,
+    ocupadas:     plazas.filter(p => p.Nombre_Estado_Rel === 'OCUPADA' && ocupacionInfo[p.id_plaza]?.type !== 'asignacion').length,
+    reservadas:   plazas.filter(p => (p.Nombre_Estado_Rel === 'RESERVADA' || p.Nombre_Estado_Rel === 'RESERVADO') && ocupacionInfo[p.id_plaza]?.type !== 'asignacion').length,
     mantenimiento:plazas.filter(p => ['MANTENIMIENTO', 'FUERA DE SERVICIO', 'EN MANTENIMIENTO'].includes(p.Nombre_Estado_Rel)).length
   };
 
@@ -444,28 +476,51 @@ export default function Ocupacion() {
             const plazasDeZona = plazas.filter(p => p.id_zona === zona.id_zona && p.numero_plaza.toLowerCase().includes(searchTerm.toLowerCase()));
             if (searchTerm && plazasDeZona.length === 0) return null;
 
+            const estZona = zonas.find(z => z.id_zona === zona.id_zona)?.estado_zona?.nombre || '';
+            const isForcedState = estZona === 'Cerrada Temporalmente' || estZona === 'En Mantenimiento';
+            const forcingStatus = estZona === 'Cerrada Temporalmente' ? 'CERRADA' : (estZona === 'En Mantenimiento' ? 'MANTENIMIENTO' : null);
+
             return (
               <section key={zona.id_zona} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                <div className="flex items-center gap-2 mb-6 border-b pb-2">
-                  <FaMapMarkerAlt className="text-primary text-xl" />
-                  <h3 className="text-xl font-bold text-gray-800">{zona.nombre}</h3>
+                <div className="flex items-center justify-between mb-6 border-b pb-2">
+                  <div className="flex items-center gap-2">
+                    <FaMapMarkerAlt className="text-primary text-xl" />
+                    <h3 className="text-xl font-bold text-gray-800">{zona.nombre}</h3>
+                  </div>
+                  {isForcedState && (
+                    <span className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest shadow-sm ${
+                      estZona.includes('Mante') ? 'bg-orange-500 text-white' : 'bg-gray-500 text-white'
+                    }`}>
+                      Zona {estZona.includes('Mante') ? 'en Mantenimiento' : 'Cerrada'}
+                    </span>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4">
                   {plazasDeZona.map(plaza => (
                     <div
                       key={plaza.id_plaza}
-                      className={`relative group p-4 rounded-lg border-2 cursor-pointer transition-all h-32 flex flex-col items-center justify-center text-center ${getCardColor(plaza.Nombre_Estado_Rel, plaza.id_plaza)}`}
-                      onClick={() => toggleOccupancy(plaza)}
+                      className={`relative group p-4 rounded-lg border-2 cursor-pointer transition-all h-32 flex flex-col items-center justify-center text-center ${getCardColor(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus)}`}
+                      onClick={() => {
+                        if (isForcedState) {
+                          return Swal.fire({
+                            title: 'Zona Bloqueada',
+                            text: `Esta plaza pertenece a una zona en estado "${estZona}". No puede ser manipulada manualmente hasta que la zona se active.`,
+                            icon: 'info'
+                          });
+                        }
+                        toggleOccupancy(plaza);
+                      }}
                     >
                       <h4 className="font-bold text-xl text-gray-800">{plaza.numero_plaza}</h4>
-                      <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel, plaza.id_plaza)}`}>
-                        {ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' ? 'ASIGNADA' : plaza.Nombre_Estado_Rel}
+                      <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus)}`}>
+                        {forcingStatus || (ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' ? 'ASIGNADA' : plaza.Nombre_Estado_Rel)}
                       </span>
-                      {(['OCUPADA', 'RESERVADA', 'RESERVADO', 'ASIGNADA', 'ASIGNADO'].includes(plaza.Nombre_Estado_Rel) || ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' || ocupacionInfo[plaza.id_plaza]?.type === 'reserva') && ocupacionInfo[plaza.id_plaza] && (
+                      {!isForcedState && (['OCUPADA', 'RESERVADA', 'RESERVADO', 'ASIGNADA', 'ASIGNADO'].includes(plaza.Nombre_Estado_Rel) || ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' || ocupacionInfo[plaza.id_plaza]?.type === 'reserva') && ocupacionInfo[plaza.id_plaza] && (
                         <div className={`mt-1 text-[9px] leading-tight ${
+                          (ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' || plaza.Nombre_Estado_Rel.startsWith('ASIGNAD')) ? 'text-purple-800' :
                           plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-red-700' : 
-                          plaza.Nombre_Estado_Rel === 'RESERVADA' ? 'text-yellow-800' : 'text-purple-800'
+                          (plaza.Nombre_Estado_Rel === 'RESERVADA' || plaza.Nombre_Estado_Rel === 'RESERVADO') ? 'text-yellow-800' : 'text-purple-800'
                         }`}>
                           {ocupacionInfo[plaza.id_plaza].placa && (
                             <div className="font-mono font-bold">{ocupacionInfo[plaza.id_plaza].placa}</div>

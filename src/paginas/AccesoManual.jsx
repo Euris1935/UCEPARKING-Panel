@@ -44,11 +44,13 @@ export default function AccesoManual() {
     init();
     loadData();
 
-    // Suscripción tiempo real a acceso y plaza
+    // Suscripción tiempo real a acceso, plaza y zona
     const ch = supabase.channel('rt_am')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'acceso' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
       .subscribe();
+
     return () => { supabase.removeChannel(ch); };
   }, []);
 
@@ -65,7 +67,10 @@ export default function AccesoManual() {
         .select('*, zona:id_zona(estado_zona(nombre))')
         .order('numero_plaza');
       
-      const plazasVivas = (rawPlazas || []).filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
+      const plazasVivas = (rawPlazas || []).filter(p => {
+        const est = p.zona?.estado_zona?.nombre || 'Activa';
+        return est === 'Activa';
+      });
 
       if (plazasVivas) {
         setTodasPlazas(plazasVivas);

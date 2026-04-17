@@ -53,6 +53,14 @@ export default function Sensores() {
     };
     init();
     loadData();
+
+    // Sincronización en tiempo real
+    const channel = supabase.channel('realtime_sensores')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'dispositivo' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
   const loadData = async () => {
@@ -84,14 +92,18 @@ export default function Sensores() {
         supabase.from('tipo_dispositivo').select('id_tipo, nombre').order('nombre'),
         supabase.from('marca').select('id_marca, nombre').order('nombre'),
         supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre'),
-        supabase.from('plaza').select('*').order('numero_plaza'),
+        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, estado_zona(nombre))').order('numero_plaza'),
         supabase.from('estado_dispositivo').select('id_estado, nombre').order('nombre')
       ]);
 
       setListaTipos(tTipos || []);
       setListaMarcas(tMarcas || []);
       setListaModelos(tModelos || []);
-      setPlazas(pData || []);
+      
+      // Filtrar plazas solo de zonas "Activas"
+      const plazasDisponibles = (pData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa');
+      setPlazas(plazasDisponibles);
+      
       setEstadosEquipo(eDisp || []);
 
       // Valores por defecto para nuevos registros

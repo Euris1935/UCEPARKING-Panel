@@ -125,6 +125,7 @@ export default function VehiculosTickets() {
     const ch = supabase.channel('rt_vt')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
       .subscribe((s) => { if (s === 'CHANNEL_ERROR') console.error('Error canal rt_vt'); });
     return () => { supabase.removeChannel(ch); clearInterval(intervaloRef.current); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -136,7 +137,16 @@ export default function VehiculosTickets() {
       const { data: epLibre } = await supabase
         .from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
       const idLibre = epLibre?.id_estado ?? 1;
-      const { data: plazas } = await supabase.from('plaza').select('*').eq('id_estado', idLibre);
+      const { data: plazasRaw } = await supabase
+        .from('plaza')
+        .select('*, zona:id_zona(estado_zona(nombre))')
+        .eq('id_estado', idLibre);
+      
+      const plazasVivas = (plazasRaw || []).filter(p => {
+        const est = p.zona?.estado_zona?.nombre || 'Activa';
+        return est === 'Activa';
+      });
+      setPlazasLibres(plazasVivas);
 
       // 2. Catálogo de estados
       const { data: stCat } = await supabase.from('estado_ticket').select('id_estado, nombre');
@@ -173,7 +183,7 @@ export default function VehiculosTickets() {
       const { data: marcas }  = await supabase.from('marca').select('*').order('nombre');
       const { data: colores } = await supabase.from('color').select('*').order('nombre');
 
-      setPlazasLibres(plazas || []);
+      // setPlazasLibres ya se hizo arriba
       setTickets(enrichedTickets);
       setTicketsActivos(enrichedTickets.filter(t => t._statusName?.toLowerCase() === 'activo').length);
       setVehiculos(vhs || []);

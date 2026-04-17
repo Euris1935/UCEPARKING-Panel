@@ -132,6 +132,7 @@ export default function Tickets() {
     const ch = supabase.channel('rt_tickets_page')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
       .subscribe();
     return () => { supabase.removeChannel(ch); clearInterval(intervalo); };
   }, []);
@@ -150,7 +151,10 @@ export default function Tickets() {
         .eq('id_estado', idEstLibrePlaza)
         .order('numero_plaza');
       
-      const plazas = (rawPlazas || []).filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
+      const plazas = (rawPlazas || []).filter(p => {
+        const est = p.zona?.estado_zona?.nombre || 'Activa';
+        return est === 'Activa';
+      });
 
       const { data: stCat } = await supabase.from('estado_ticket').select('id_estado, nombre');
       const stMap = {}; (stCat || []).forEach(s => { stMap[s.id_estado] = s.nombre; });

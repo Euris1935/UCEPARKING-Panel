@@ -1,4 +1,4 @@
-﻿
+
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
@@ -51,6 +51,15 @@ export default function Asignaciones() {
         };
         init();
         loadData();
+
+        // Sincronización en tiempo real
+        const channel = supabase.channel('realtime_asignaciones')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, () => loadData())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadData())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, () => loadData())
+            .subscribe();
+
+        return () => { supabase.removeChannel(channel); };
     }, []);
 
     const loadData = async () => {
@@ -110,25 +119,11 @@ export default function Asignaciones() {
                 return na.localeCompare(nb);
             });
 
-            // Calcular personas con acceso activo o reserva activa
-            const ahoraISO = new Date().toISOString();
-            const personasOcupadas = new Map();
-
-
-            const { data: erAct } = await supabase
-                .from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle();
-            const { data: resAct } = await supabase.from('reserva').select('id_persona')
-                .eq('id_estado', erAct?.id_estado || 1)
-                .or(`fecha_hora_fin.is.null,fecha_hora_fin.gt.${ahoraISO}`);
-            (resAct || []).forEach(r => {
-                if (r.id_persona) personasOcupadas.set(r.id_persona, 'Reserva activa');
-            });
-
-            // Marcar cada empleado con su estado de disponibilidad
+            // Calcular personas con disponibilidad (En Asignaciones ya no bloqueamos por tener reserva o acceso)
             const empConEstado = sortedEmpData.map(emp => ({
                 ...emp,
-                _ocupadoPorOtro: !ocupados.has(emp.id_empleado) && emp.id_persona && personasOcupadas.has(emp.id_persona),
-                _razon: (emp.id_persona && personasOcupadas.get(emp.id_persona)) || null
+                _ocupadoPorOtro: false,
+                _razon: null
             }));
             setEmpleadosList(empConEstado);
 
@@ -150,10 +145,13 @@ export default function Asignaciones() {
             const idEstLibrePlaza = epLibre?.id_estado || 1;
             const { data: plazaData } = await supabase
                 .from('plaza')
-                .select('id_plaza, numero_plaza')
+                .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
                 .eq('id_estado', idEstLibrePlaza)
                 .order('numero_plaza');
-            setPlazasList(plazaData || []);
+            
+            // Filtro dinámico según estado de la zona
+            const plazasDisponibles = (plazaData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa');
+            setPlazasList(plazasDisponibles);
 
         } catch (error) {
             console.error("Error general:", error.message);
@@ -197,8 +195,14 @@ export default function Asignaciones() {
         setIsPermanent(false);
         const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
         const idEstLibrePlaza = epLibre?.id_estado || 1;
-        const { data: plazaData } = await supabase.from('plaza').select('id_plaza, numero_plaza').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
-        setPlazasList(plazaData || []);
+        const { data: plazaData } = await supabase
+            .from('plaza')
+            .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
+            .eq('id_estado', idEstLibrePlaza)
+            .order('numero_plaza');
+        
+        const plazasDisponibles = (plazaData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa');
+        setPlazasList(plazasDisponibles);
         setShowModal(true);
     };
 
@@ -219,10 +223,16 @@ export default function Asignaciones() {
         const idEstLibrePlaza = epLibre?.id_estado || 1;
         const { data: plazaData } = await supabase
             .from('plaza')
-            .select('id_plaza, numero_plaza')
+            .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
             .or(`id_estado.eq.${idEstLibrePlaza},id_plaza.eq.${asig.id_plaza}`)
             .order('numero_plaza');
-        setPlazasList(plazaData || []);
+        
+        // Mantener la plaza actual aunque la zona esté bloqueada (para evitar errores en edición), 
+        // pero filtrar las demás.
+        const plazasDisponibles = (plazaData || []).filter(p => 
+            p.id_plaza === asig.id_plaza || (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa'
+        );
+        setPlazasList(plazasDisponibles);
         setShowModal(true);
     };
 

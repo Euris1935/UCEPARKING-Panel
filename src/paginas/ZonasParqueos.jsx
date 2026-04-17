@@ -245,12 +245,33 @@ export default function ZonasParqueo() {
 
         // 2. Propagación en cascada si el estado es Mantenimiento o Cerrada
         const nuevoEstado = estadosZona.find(e => e.id_estado === payload.id_estado);
-        if (nuevoEstado && (nuevoEstado.nombre.toLowerCase().includes('mantenimiento') || nuevoEstado.nombre.toLowerCase().includes('cerrada'))) {
-            const { data: stPlaza } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', nuevoEstado.nombre).maybeSingle();
+        const stNombre = nuevoEstado?.nombre || '';
+
+        if (stNombre.toLowerCase().includes('mantenimiento') || stNombre.toLowerCase().includes('cerrada')) {
+            const { data: stPlaza } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', stNombre).maybeSingle();
             if (stPlaza) {
                 const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
                 const idLibre = epLibre?.id_estado || 1;
+                // Dejamos marcadas como mantenimiento/cerrada solo las que estaban libres
                 await supabase.from('plaza').update({ id_estado: stPlaza.id_estado }).eq('id_zona', editingZone.id_zona).eq('id_estado', idLibre);
+            }
+        } else if (stNombre === 'Activa') {
+            // Si volvemos a Activa, liberamos las que estaban bloqueadas administrativamente
+            const { data: stLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+            const { data: stMant } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'En Mantenimiento').maybeSingle();
+            const { data: stCerr } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Cerrada Temporalmente').maybeSingle();
+            
+            if (stLibre) {
+                const idsParaLiberar = [];
+                if (stMant) idsParaLiberar.push(stMant.id_estado);
+                if (stCerr) idsParaLiberar.push(stCerr.id_estado);
+                
+                if (idsParaLiberar.length > 0) {
+                    await supabase.from('plaza')
+                        .update({ id_estado: stLibre.id_estado })
+                        .eq('id_zona', editingZone.id_zona)
+                        .in('id_estado', idsParaLiberar);
+                }
             }
         }
 
