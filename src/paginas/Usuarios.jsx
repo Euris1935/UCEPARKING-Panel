@@ -7,7 +7,7 @@ import RolesPermisosManager from '../componentes/RolesPermisosManager';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import {
-  FaSearch, FaEdit, FaTrash, FaUserTie, FaUsers,
+  FaSearch, FaEdit, FaSync, FaUserTie, FaUsers,
   FaShieldAlt, FaKey, FaCheck, FaTimes, FaUserCircle
 } from 'react-icons/fa';
 
@@ -39,6 +39,7 @@ export default function Usuarios() {
   const [activeTab, setActiveTab]   = useState('usuarios');
   const [usuarios, setUsuarios]     = useState([]);
   const [rolesList, setRolesList]   = useState([]);
+  const [catEstados, setCatEstados] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading]       = useState(false);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
@@ -48,9 +49,11 @@ export default function Usuarios() {
   const initialForm = { nombre: '', apellido: '', email: '', contrasena: '', telefono: '', sexo: 'M', fecha_nacimiento: '', direccion: '', rol_id: '' };
   const [formData, setFormData]     = useState(initialForm);
 
-  // Estado para cambio rápido de rol (inline)
-  const [changingRolFor, setChangingRolFor] = useState(null); // id_usuario
+  // Estado para cambio rápido de rol y estado (inline)
+  const [changingRolFor, setChangingRolFor] = useState(null); 
   const [newRolId, setNewRolId]             = useState('');
+  const [changingStatusFor, setChangingStatusFor] = useState(null);
+  const [newStatusChoice, setNewStatusChoice]     = useState('');
 
   const isUpdating = !!editingUser;
 
@@ -72,20 +75,22 @@ export default function Usuarios() {
     try {
       const [
         { data: rolesData },
+        { data: estadosData },
         { data: orgUsers, error: orgErr }
       ] = await Promise.all([
         supabase.from('rol').select('*').order('nombre'),
+        supabase.from('estado_usuario').select('*').order('id_estado'),
         supabase.rpc('get_usuarios_org')
       ]);
 
       if (orgErr) {
         console.error('Error get_usuarios_org:', orgErr);
-        await loadUsuariosFallback(rolesData || []);
+        await loadUsuariosFallback(rolesData || [], estadosData || []);
       } else {
         const listaNormalizada = (orgUsers || []).map(u => ({
           ...u,
-          id_usuario: u.id_usuario || u.id,
-          id_persona: u.id_persona || u.persona_id
+          id_usuario: u.id_usuario || u.id_usr || u.id, 
+          id_persona: u.id_persona || u.persona_id || u.id_per
         }));
 
         // Obtener `created_at` de respaldo si falta
@@ -93,20 +98,25 @@ export default function Usuarios() {
         const personaIds = listaNormalizada.map(u => u.id_persona).filter(Boolean);
         
         const [ { data: fUsr }, { data: fPer } ] = await Promise.all([
-            userIds.length > 0 ? supabase.from('usuario').select('id, created_at').in('id', userIds) : { data: [] },
+            personaIds.length > 0 ? supabase.from('usuario').select('id, id_persona, created_at, id_estado, estado:id_estado(nombre)').in('id_persona', personaIds) : { data: [] },
             personaIds.length > 0 ? supabase.from('persona').select('id_persona, created_at').in('id_persona', personaIds) : { data: [] }
         ]);
 
         listaNormalizada.forEach(u => {
-            const fu = fUsr?.find(x => String(x.id) === String(u.id_usuario));
+            const fu = fUsr?.find(x => String(x.id_persona) === String(u.id_persona));
             const fp = fPer?.find(x => String(x.id_persona) === String(u.id_persona));
+            
+            u.id_usuario = fu?.id || u.id_usuario; // Asegurar el UUID real de la tabla usuario
             u.created_at = u.created_at || fu?.created_at || fp?.created_at;
+            u.id_estado = fu?.id_estado || 1;
+            u.nombre_estado = fu?.estado?.nombre || 'Activo';
         });
         
         setUsuarios(listaNormalizada);
       }
 
       setRolesList(rolesData || []);
+      setCatEstados(estadosData || []);
     } catch (err) {
       console.error('loadData error:', err);
     } finally {
@@ -114,10 +124,10 @@ export default function Usuarios() {
     }
   };
 
-  const loadUsuariosFallback = async (rolesDisponibles) => {
+  const loadUsuariosFallback = async (rolesDisponibles, estadosDisponibles) => {
     try {
       const [{ data: usrs }, { data: pers }] = await Promise.all([
-        supabase.from('usuario').select('id, id_persona, id_rol, created_at'),
+        supabase.from('usuario').select('id, id_persona, id_rol, id_estado, created_at, estado:id_estado(nombre)'),
         supabase.from('persona').select('id_persona, nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion')
       ]);
       if (!usrs || usrs.length === 0) return;
@@ -128,6 +138,8 @@ export default function Usuarios() {
           id_usuario: u.id,
           id_persona: u.id_persona,
           id_rol:     u.id_rol,
+          id_estado:  u.id_estado || 1,
+          nombre_estado: u.estado?.nombre || 'Activo',
           nombre:     persona?.nombre          || 'Sin Nombre',
           apellido:   persona?.apellido        || '',
           email:      persona?.email           || '',
@@ -270,6 +282,89 @@ export default function Usuarios() {
       }
   };
 
+  const handleConfirmarCambioEstado = async (user) => {
+    try {
+      setLoading(true);
+      const targetUserId = user.id_usuario;
+      const targetPersonaId = user.id_persona;
+
+      // Intento 1: Por ID de Usuario (UUID Real de la tabla usuario)
+      let { data, error } = await supabase
+        .from('usuario')
+        .update({ id_estado: parseInt(newStatusChoice) })
+        .eq('id', targetUserId)
+        .select();
+
+      // Intento 2 (Fallback): Si no hubo error pero tampoco filas afectadas, probar por id_persona
+      if (!error && (!data || data.length === 0) && targetPersonaId) {
+        const fall = await supabase
+          .from('usuario')
+          .update({ id_estado: parseInt(newStatusChoice) })
+          .eq('id_persona', targetPersonaId)
+          .select();
+        data = fall.data;
+        error = fall.error;
+      }
+
+      if (error) throw error;
+      
+      if (!data || data.length === 0) {
+        throw new Error(`No se encontró el registro para actualizar.\nJSON Debug: { usr: "${targetUserId}", per: "${targetPersonaId}" }`);
+      }
+
+      Swal.fire({ title: 'Estado Actualizado', icon: 'success', timer: 1500, showConfirmButton: false });
+      
+      const stName = catEstados.find(s => s.id_estado === parseInt(newStatusChoice))?.nombre || 'Desconocido';
+      registrarLog('Cambio de Acceso', `Estado de cuenta para ${user.nombre} ${user.apellido} cambiado a ${stName}`);
+      
+      setChangingStatusFor(null);
+      await loadData();
+    } catch (err) {
+      Swal.fire('Error', err.message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (user) => {
+    const result = await Swal.fire({
+      title: '¿Gestionar acceso de usuario?',
+      html: `<b>${user.nombre} ${user.apellido}</b><br><small class="text-gray-500">¿Desea inhabilitar la cuenta o eliminarla permanentemente?</small>`,
+      icon: 'warning',
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: 'Inhabilitar Cuenta',
+      denyButtonText: 'Eliminar Físicamente',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#7c3aed',
+      denyButtonColor: '#f87171'
+    });
+
+    if (result.isConfirmed) {
+      const stInactivo = catEstados.find(s => s.nombre.toLowerCase().includes('inactivo'))?.id_estado;
+      if (stInactivo) {
+        setNewStatusChoice(stInactivo.toString());
+        await handleConfirmarCambioEstado(user);
+      } else {
+        Swal.fire('Error', 'No se encontró el estado "Inactivo" en el sistema.', 'error');
+      }
+    } else if (result.isDenied) {
+      const { error } = await supabase.rpc('eliminar_usuario_admin', { 
+        p_usuario_id: user.id_usuario 
+      });
+      if (error) {
+        if (error.code === 'PGRST202') {
+          return Swal.fire('SQL Requerido', 'La función eliminar_usuario_admin no existe. Ejecuta el SQL provisto.', 'warning');
+        }
+        Swal.fire('Error', error.message, 'error');
+      } else {
+        registrarLog('Usuario Eliminado', `Eliminación física de acceso para: ${user.nombre} (${user.email})`);
+        Swal.fire('Eliminado', 'Cuenta borrada permanentemente.', 'success');
+        loadData();
+      }
+    }
+  };
+
   // ── Cambio rápido de rol (inline) ─────────────────────────────────────────
   const handleIniciarCambioRol = (user) => {
     setChangingRolFor(user.id_usuario);
@@ -305,37 +400,20 @@ export default function Usuarios() {
     }
   };
 
-  const handleDelete = async (user) => {
-    const result = await Swal.fire({
-      title: '¿Eliminar acceso?',
-      text: 'Se eliminará el acceso del usuario. Sus datos personales se mantendrán en el historial.',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#d33',
-      confirmButtonText: 'Sí, eliminar acceso',
-      cancelButtonText: 'Cancelar'
+  const filteredUsers = usuarios
+    .filter(u =>
+      `${u.nombre} ${u.apellido} ${u.email || ''} ${u.nombre_rol || ''}`.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+    .sort((a, b) => {
+      // Activos primero
+      const isAActive = a.nombre_estado?.toLowerCase() === 'activo';
+      const isBActive = b.nombre_estado?.toLowerCase() === 'activo';
+      if (isAActive && !isBActive) return -1;
+      if (!isAActive && isBActive) return 1;
+      return 0;
     });
 
-    if (result.isConfirmed) {
-      const { error } = await supabase.rpc('eliminar_usuario_admin', { 
-        p_usuario_id: user.id_usuario 
-      });
-      if (error) {
-        if (error.code === 'PGRST202') {
-          return Swal.fire('SQL Requerido', 'La función eliminar_usuario_admin no existe. Ejecuta el SQL provisto.', 'warning');
-        }
-        Swal.fire('Error', error.message, 'error');
-      } else {
-        registrarLog('Usuario Eliminado', `Eliminación de acceso para: ${user.nombre} ${user.apellido} (${user.email})`);
-        Swal.fire('Eliminado', 'Acceso eliminado correctamente.', 'success');
-        loadData();
-      }
-    }
-  };
-
-  const filteredUsers = usuarios.filter(u =>
-    `${u.nombre} ${u.apellido} ${u.email || ''} ${u.nombre_rol || ''}`.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const activeCount = filteredUsers.filter(u => u.nombre_estado?.toLowerCase() === 'activo').length;
 
   const tabCls = (tab) =>
     `px-5 py-3 font-semibold text-sm transition-colors border-b-2 ${
@@ -389,7 +467,7 @@ export default function Usuarios() {
                 />
                 <FaSearch className="absolute left-3 top-2.5 text-gray-400" size={14} />
               </div>
-              <span className="text-xs text-gray-400 font-medium shrink-0">{filteredUsers.length} usuarios</span>
+              <span className="text-xs text-gray-400 font-medium shrink-0">{activeCount} usuarios activos</span>
             </div>
 
             {loading ? (
@@ -404,6 +482,7 @@ export default function Usuarios() {
                     <tr>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Usuario</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Rol</th>
+                      <th className="px-5 py-3 text-center text-xs font-bold text-gray-500 uppercase">Estado</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Fecha Creación</th>
                       <th className="px-5 py-3 text-right text-xs font-bold text-gray-500 uppercase">Acciones</th>
                     </tr>
@@ -417,11 +496,11 @@ export default function Usuarios() {
                       </tr>
                     ) : (
                       filteredUsers.map(u => (
-                        <tr key={u.id_usuario} className="hover:bg-gray-50 transition-colors">
+                        <tr key={u.id_usuario} className={`hover:bg-gray-50 transition-colors ${u.nombre_estado?.toLowerCase() !== 'activo' ? 'opacity-80 grayscale-[0.4]' : ''}`}>
                           {/* Columna: Usuario */}
                           <td className="px-5 py-3.5">
                             <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 font-bold text-sm">
+                              <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 font-bold text-sm shadow-sm">
                                 {(u.nombre?.[0] || '?').toUpperCase()}
                               </div>
                               <div className="min-w-0">
@@ -469,6 +548,48 @@ export default function Usuarios() {
                             )}
                           </td>
 
+                          {/* Columna: Estado */}
+                          <td className="px-5 py-3.5 text-center">
+                            {changingStatusFor === u.id_usuario ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <select
+                                  className="border border-green-300 rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-green-200 outline-none transition-all cursor-pointer bg-white"
+                                  value={newStatusChoice}
+                                  onChange={e => setNewStatusChoice(e.target.value)}
+                                  autoFocus
+                                >
+                                  {catEstados.map(s => (
+                                    <option key={s.id_estado} value={s.id_estado}>{s.nombre}</option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => handleConfirmarCambioEstado(u)}
+                                  className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition"
+                                  title="Confirmar"
+                                >
+                                  {loading ? <FaSync size={10} className="animate-spin" /> : <FaCheck size={10} />}
+                                </button>
+                                <button
+                                  onClick={() => setChangingStatusFor(null)}
+                                  className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300 transition"
+                                  title="Cancelar"
+                                >
+                                  <FaTimes size={10} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div 
+                                className={`inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                  u.nombre_estado?.toLowerCase() === 'activo' ? 'bg-green-100 text-green-700' :
+                                  u.nombre_estado?.toLowerCase().includes('inactivo') ? 'bg-gray-100 text-gray-600' :
+                                  'bg-red-100 text-red-700'
+                                }`}
+                              >
+                                {u.nombre_estado}
+                              </div>
+                            )}
+                          </td>
+
                           {/* Columna: Fecha Creación */}
                           <td className="px-5 py-3.5 text-xs text-gray-500 font-medium">
                             {u.created_at ? new Date(u.created_at).toLocaleString('es-DO', { 
@@ -478,13 +599,31 @@ export default function Usuarios() {
                           </td>
 
                           {/* Columna: Acciones */}
-                          <td className="px-5 py-3.5">
+                          <td className="px-5 py-3.5 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              {/* Cambio rápido de estado */}
+                              {canEdit && changingStatusFor !== u.id_usuario && (
+                                <button
+                                  onClick={() => {
+                                    setChangingStatusFor(u.id_usuario);
+                                    setNewStatusChoice(u.id_estado.toString());
+                                    setChangingRolFor(null);
+                                  }}
+                                  className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 font-bold transition"
+                                  title="Cambiar Estado"
+                                >
+                                  <FaSync size={10} /> Estado
+                                </button>
+                              )}
                               {/* Cambio rápido de rol */}
                               {canEdit && esAdmin && changingRolFor !== u.id_usuario && (
                                 <button
-                                  onClick={() => handleIniciarCambioRol(u)}
-                                  className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 font-semibold transition"
+                                  onClick={() => {
+                                    setChangingRolFor(u.id_usuario);
+                                    setNewRolId((u.id_rol || '').toString());
+                                    setChangingStatusFor(null);
+                                  }}
+                                  className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 font-bold transition"
                                   title="Cambiar Rol"
                                 >
                                   <FaShieldAlt size={10} /> Rol
@@ -494,19 +633,10 @@ export default function Usuarios() {
                               {canEdit && (
                                 <button
                                   onClick={() => handleEdit(u)}
-                                  className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-semibold transition"
+                                  className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold transition"
                                   title="Editar"
                                 >
                                   <FaEdit size={10} /> Editar
-                                </button>
-                              )}
-                              {canDelete && (
-                                <button
-                                  onClick={() => handleDelete(u)}
-                                  className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 border border-red-100 transition"
-                                  title="Eliminar acceso"
-                                >
-                                  <FaTrash size={11} />
                                 </button>
                               )}
                             </div>

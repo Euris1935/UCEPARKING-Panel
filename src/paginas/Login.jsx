@@ -23,22 +23,44 @@ export default function Login() {
     const { email, password } = formData;
 
     try {
-      // Iniciar sesión
-      const { data, error } = await supabase.auth.signInWithPassword({
+      // ── 1. Verificación Previa (Evita el parpadeo del Dashboard) ──
+      const { data: statusData } = await supabase.rpc('verificar_estado_por_email', { p_email_input: email });
+      
+      const userStatus = statusData?.[0];
+      // Nota: Si es ID 1 es Activo. Si es != 1 o nulo, bloqueamos si encontramos el registro.
+      if (userStatus && userStatus.v_id_estado !== 1) {
+        throw new Error('STATUS_INACTIVE');
+      }
+
+      // ── 2. Intento de Inicio de Sesión ──
+      const { error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
-      if (error) throw error;
+      if (authError) throw authError;
       
-      // Sesión exitosa — el RbacContext cargará los módulos/permisos automáticamente.
+      // Éxito: El cambio de estado de la sesión provocará que App.js redireccione.
+      // No mostramos mensaje de éxito para que la entrada sea fluida.
+      Swal.close(); 
     } catch (error) {
-      Swal.fire({
+      console.error('Login Error:', error);
+      
+      if (error.message === 'STATUS_INACTIVE') {
+        Swal.fire({
+          title: 'Acceso Denegado',
+          text: 'Este usuario no es un usuario activo del sistema.',
+          icon: 'warning',
+          confirmButtonColor: '#22c55e'
+        });
+      } else {
+        Swal.fire({
           title: 'Error de Acceso',
-          text: "Las credenciales son incorrectas. Por favor, revise su correo y contraseña nuevamente.",
+          text: 'Las credenciales son incorrectas. Por favor, revise su correo y contraseña nuevamente.',
           icon: 'error',
           confirmButtonColor: '#d33'
-      });
+        });
+      }
     } finally {
       setLoading(false);
     }

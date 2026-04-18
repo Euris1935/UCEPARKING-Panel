@@ -18,13 +18,27 @@ export default function Reportes() {
   const [descripcion, setDescripcion] = useState(''); 
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
+  const [tiposReporteList, setTiposReporteList] = useState([]);
 
   // Estados Previas
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [previewData, setPreviewData] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  useEffect(() => { loadReportes(); }, []);
+  useEffect(() => { 
+    loadReportes(); 
+    loadTiposReporte();
+  }, []);
+
+  const loadTiposReporte = async () => {
+    try {
+        const { data, error } = await supabase.from('tipo_reporte').select('*').order('nombre');
+        if (error) throw error;
+        setTiposReporteList(data || []);
+    } catch (error) {
+        console.error("Error cargando tipos de reporte:", error.message);
+    }
+  };
 
   const loadReportes = async () => {
     setIsRefreshing(true);
@@ -33,7 +47,8 @@ export default function Reportes() {
           .from('reporte')
           .select(`
             *,
-            persona (nombre, apellido)
+            persona (nombre, apellido),
+            tipo_reporte (nombre)
           `)
           .order('created_at', { ascending: false });
 
@@ -215,7 +230,7 @@ export default function Reportes() {
   };
 
   const filteredReportes = reportes.filter(r => 
-    (r.tipo || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (r.tipo_reporte?.nombre || r.tipo || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
     (`${r.persona?.nombre || ""} ${r.persona?.apellido || ""}`).toLowerCase().includes(searchTerm.toLowerCase())
   );
 
@@ -281,7 +296,7 @@ export default function Reportes() {
                                 <FaFileAlt className='text-lg'/> 
                             </div>
                             <div>
-                                <p className="font-bold text-gray-900 text-xs uppercase">{r.tipo_reporte}</p>
+                                <p className="font-bold text-gray-900 text-xs uppercase">{r.tipo_reporte?.nombre || r.tipo}</p>
                                 <p className="text-[10px] italic font-medium text-gray-400 max-w-xs truncate mt-0.5" title={r.descripcion}>
                                     {r.descripcion || "Sin descripción"}
                                 </p>
@@ -310,7 +325,7 @@ export default function Reportes() {
                             <FaSearch size={16}/>
                         </button>
                         <button 
-                            onClick={() => handleDownloadExcel(r.id_reporte, r.tipo_reporte)} 
+                            onClick={() => handleDownloadExcel(r.id_reporte, r.tipo_reporte?.nombre || r.tipo)} 
                             className="text-green-500 hover:text-green-700 hover:bg-green-50 p-2 rounded transition" 
                             title="Descargar Excel"
                         >
@@ -348,13 +363,7 @@ export default function Reportes() {
               <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo de Reporte *</label>
                   <SearchableSelect
-                      options={[
-                          { value: "GENERAL", label: "General (Ocupación, Accesos)" },
-                          { value: "EVENTOS", label: "Eventos (Tráfico, Hardware)" },
-                          { value: "OCUPACION", label: "Ocupación Diaria" },
-                          { value: "INCIDENCIAS", label: "Incidencias Técnicas" },
-                          { value: "ACTIVIDAD", label: "Actividad de Usuarios" }
-                      ]}
+                      options={tiposReporteList.map(t => ({ value: t.id_tipo.toString(), label: t.nombre }))}
                       value={tipoReporte}
                       onChange={val => setTipoReporte(val)}
                       placeholder="— Seleccionar Tipo —"

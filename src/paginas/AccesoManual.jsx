@@ -74,7 +74,14 @@ export default function AccesoManual() {
 
       if (plazasVivas) {
         setTodasPlazas(plazasVivas);
-        setPlazasLibres(plazasVivas.filter(p => p.id_estado === idEstLibrePlaza));
+        
+        // Blindaje: Solo considerar libres las que id_estado=Libre Y NO tienen contrato activo
+        const { data: asigsActivas } = await supabase.from('asignacion').select('id_plaza').eq('id_estado', 1);
+        const plazasAsignadasIds = new Set(asigsActivas?.map(a => a.id_plaza) || []);
+        
+        setPlazasLibres(plazasVivas.filter(p => 
+            p.id_estado === idEstLibrePlaza && !plazasAsignadasIds.has(p.id_plaza)
+        ));
       }
 
       // 2. TODAS LAS PERSONAS (Solución Jarol)

@@ -57,6 +57,10 @@ export default function Asignaciones() {
         };
         init();
         loadData();
+        checkExpiredAssignments(); // Ejecutar monitor al inicio
+
+        // Ejecutar limpieza cada 5 minutos
+        const timer = setInterval(checkExpiredAssignments, 300000);
 
         // Sincronización en tiempo real
         const channel = supabase.channel('realtime_asignaciones')
@@ -68,8 +72,54 @@ export default function Asignaciones() {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, () => loadData())
             .subscribe();
 
-        return () => { supabase.removeChannel(channel); };
+        return () => { 
+            supabase.removeChannel(channel); 
+            clearInterval(timer);
+        };
     }, []);
+    
+    /**
+     * Monitor de Autocierre de Asignaciones
+     * Busca contratos cuya fecha_fin ya pasó y los marca como Finalizada en la BD.
+     */
+    const checkExpiredAssignments = async () => {
+        try {
+            console.log("[AutoClose] Verificando asignaciones vencidas...");
+            const hoy = new Date().toISOString().split('T')[0];
+            
+            // 1. Buscar asignaciones activas (id_estado=1) cuya fecha_fin sea < hoy
+            const { data: vencidas, error } = await supabase
+                .from('asignacion')
+                .select('id_asignacion, id_plaza')
+                .eq('id_estado', 1)
+                .eq('organizacion_id', orgId)
+                .not('fecha_fin', 'is', null)
+                .lt('fecha_fin', hoy);
+            
+            if (error) throw error;
+            if (!vencidas || vencidas.length === 0) return;
+
+            console.log(`[AutoClose] Encontradas ${vencidas.length} asignaciones para cerrar.`);
+            const { data: eaFinalizada } = await supabase.from('estado_asignacion').select('id_estado').ilike('nombre', 'Finalizada').maybeSingle();
+            const idFinalizada = eaFinalizada?.id_estado || 2;
+            const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+            const idLibre = epLibre?.id_estado || 1;
+
+            for (const asig of vencidas) {
+                // Cerrar asignación
+                await supabase.from('asignacion').update({ id_estado: idFinalizada }).eq('id_asignacion', asig.id_asignacion);
+                // Liberar plaza
+                if (asig.id_plaza) {
+                    await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', asig.id_plaza);
+                }
+            }
+            
+            console.log("[AutoClose] Proceso completado.");
+            loadData();
+        } catch (e) {
+            console.error("[AutoClose] Error:", e.message);
+        }
+    };
 
     const loadData = async () => {
         setLoading(true);
@@ -370,72 +420,65 @@ export default function Asignaciones() {
         try {
             setLoading(true);
             
-            // 1. Si el nuevo estado sugiere liberar la plaza (Finalizada=2 o Suspendida=3)
-            if (nextStatus === 2 || nextStatus === 3) {
-                const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-                const idLibrePlaza = epLibre?.id_estado || 1;
-                
-                if (asig.id_plaza) {
-                    console.log(`Liberando plaza ${asig.id_plaza} due to status change to ${nextStatus}`);
-                    const { error: plzErr } = await supabase
-                        .from('plaza')
-                        .update({ id_estado: idLibrePlaza })
-                        .eq('id_plaza', asig.id_plaza);
-                    if (plzErr) console.error("Error liberando plaza:", plzErr);
-                } else {
-                    console.warn("No hay id_plaza en la asignación para liberar.");
-                }
-            }
-
-            // 2. Actualizar registro de asignación
+            // 1. Calcular payload de actualización de asignación primero
             const updatePayload = { 
                 id_estado: nextStatus,
-                notas: asig.notas // Notas manuales estrictas
+                notas: asig.notas
             };
             
-            // Si es finalizada, actualizamos la fecha fin respetando estrictamente la restricción de la DB (fin >= inicio)
-            if (nextStatus === 2) {
-                try {
-                    const dInicio = new Date(asig.fecha_inicio);
-                    const dHoy = new Date();
+            if (nextStatus === 2) { // Finalizada
+                    const strHoy = new Date().toISOString().split('T')[0];
+                    const strInicio = asig.fecha_inicio; // YYYY-MM-DD
                     
-                    // Si la fecha de inicio es inválida o es nula, usamos hoy
-                    if (isNaN(dInicio.getTime())) {
-                        updatePayload.fecha_fin = dHoy.toISOString();
-                    } else if (dHoy < dInicio) {
-                        // Si hoy es antes del inicio, forzamos fecha_fin = fecha_inicio para no violar el constraint
-                        updatePayload.fecha_fin = asig.fecha_inicio;
+                    // Comparación de cadenas simple (YYYY-MM-DD es lexicológicamente comparable)
+                    if (strInicio > strHoy) {
+                        // Si el inicio es en el futuro, forzamos el fin a ser igual al inicio para no violar el constraint
+                        updatePayload.fecha_fin = strInicio;
                     } else {
-                        // En cualquier otro caso, usamos el momento actual
-                        updatePayload.fecha_fin = dHoy.toISOString();
+                        // Caso normal: finaliza hoy
+                        updatePayload.fecha_fin = strHoy;
                     }
-                    console.log(`Debug Finalización: Inicio=${asig.fecha_inicio}, Fin=${updatePayload.fecha_fin}`);
-                } catch (e) {
-                    console.error("Error calculando fechas:", e);
-                    updatePayload.fecha_fin = new Date().toISOString(); 
-                }
+                    console.log(`[SimplifiedDate] Inicio: ${strInicio} -> Fin: ${updatePayload.fecha_fin}`);
             }
 
+            // 2. ACTUALIZAR ASIGNACIÓN PRIMERO (Si esto falla, no liberamos la plaza)
             const { error: upErr } = await supabase
                 .from('asignacion')
                 .update(updatePayload)
                 .eq('id_asignacion', asig.id_asignacion);
             
-            if (upErr) throw upErr;
+            if (upErr) {
+                console.error("Error al cerrar asignacion:", upErr);
+                throw new Error(`No se pudo cerrar el contrato: ${upErr.message}`);
+            }
+
+            // 3. SOLO SI EL CONTRATO SE CERRÓ: Liberar la plaza
+            if (nextStatus === 2 || nextStatus === 3) {
+                const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+                const idLibrePlaza = epLibre?.id_estado || 1;
+                
+                if (asig.id_plaza) {
+                    const { error: plzErr } = await supabase
+                        .from('plaza')
+                        .update({ id_estado: idLibrePlaza })
+                        .eq('id_plaza', asig.id_plaza);
+                    if (plzErr) console.error("Error liberando plaza (pos-contrato):", plzErr);
+                }
+            }
 
             Swal.fire({
                 title: 'Actualizado',
-                text: 'El estado se ha modificado correctamente.',
+                text: 'El contrato se ha cerrado y la plaza ha sido liberada.',
                 icon: 'success',
-                timer: 1500,
+                timer: 2000,
                 showConfirmButton: false
             });
 
-            registrarLog('Cambio de Estado', `Asignación ${asig.id_asignacion} cambiada de ${oldStatus} a ${nextStatus}`);
+            registrarLog('Finalización Contrato', `Asignación ${asig.id_asignacion} cerrada exitosamente.`);
             setChangingStatusFor(null);
             loadData();
         } catch (error) {
-            Swal.fire('Error', error.message, 'error');
+            Swal.fire('Error de Validación', error.message, 'error');
         } finally {
             setLoading(false);
         }

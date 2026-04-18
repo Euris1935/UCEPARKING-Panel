@@ -17,6 +17,11 @@ export default function Mantenimiento() {
 
     // Catalogos para el formulario
     const [dispositivos, setDispositivos] = useState([]);
+    const [allDispositivos, setAllDispositivos] = useState([]);
+    const [plazasList, setPlazasList] = useState([]);
+    const [allPlazas, setAllPlazas] = useState([]);
+    const [zonas, setZonas] = useState([]);
+    const [allZonas, setAllZonas] = useState([]);
     const [tecnicos, setTecnicos] = useState([]);
     const [tiposMantenimiento, setTiposMantenimiento] = useState([]);
     const [estadosMantenimiento, setEstadosMantenimiento] = useState([]);
@@ -26,9 +31,12 @@ export default function Mantenimiento() {
     const [editingId, setEditingId] = useState(null);
     const [resueltosIds, setResueltosIds] = useState(new Set()); // track locally
     const [dispositivosOcupados, setDispositivosOcupados] = useState(new Set()); // dispositivos con mantenimiento activo
+    const [targetType, setTargetType] = useState('dispositivo'); // 'zona', 'plaza', 'dispositivo'
     const [formData, setFormData] = useState({
         descripcion: '',
         id_dispositivo: '',
+        id_plaza: '',
+        id_zona: '',
         id_empleado: '',
         id_tipo: '',
         id_estado: '',
@@ -36,8 +44,9 @@ export default function Mantenimiento() {
         fecha_fin: ''
     });
 
-    const [currentPersonaId, setCurrentPersonaId] = useState(null);
-
+    const [currentPersonaId,    setCurrentPersonaId]    = useState(null);
+    const [changingStatusFor,   setChangingStatusFor]   = useState(null);
+    const [newStatusChoice,     setNewStatusChoice]     = useState('');
     useEffect(() => {
         const getPersona = async () => {
             const { data: { user } } = await supabase.auth.getUser();
@@ -63,6 +72,8 @@ export default function Mantenimiento() {
                 fecha_fin,
                 descripcion,
                 id_dispositivo,
+                id_zona,
+                id_plaza,
                 id_empleado,
                 id_tipo,
                 id_estado,
@@ -80,7 +91,8 @@ export default function Mantenimiento() {
                 )
             `)
                 .eq('organizacion_id', orgId)
-                .order('fecha_inicio', { ascending: false });
+                .order('fecha_inicio', { ascending: false })
+                .order('id_mantenimiento', { ascending: false });
 
             if (error) throw error;
             setMantenimientos(mantData || []);
@@ -99,16 +111,68 @@ export default function Mantenimiento() {
                 .order('ubicacion', { ascending: true });
 
             if (dispError) console.warn('Error cargando dispositivos:', dispError.message);
-            const { data: empData } = await supabase.from('empleado').select('id_empleado, persona(nombre, apellido)').eq('organizacion_id', orgId);
+            
+            // #RF11: Cargado final de Técnicos (Filtrado por Rol y Perfil)
+            let orgUsersList = [];
+            const { data: rpcUsers } = await supabase.rpc('get_usuarios_org');
+            
+            if (rpcUsers && rpcUsers.length > 0) {
+                orgUsersList = rpcUsers;
+            } else {
+                const { data: directUsers } = await supabase
+                    .from('usuario')
+                    .select('id_persona, id_rol, rol:id_rol(nombre), persona:id_persona(nombre, apellido)');
+                orgUsersList = (directUsers || []).map(u => ({
+                    id_persona: u.id_persona,
+                    nombre: u.persona?.nombre,
+                    apellido: u.persona?.apellido,
+                    nombre_rol: u.rol?.nombre
+                }));
+            }
+
+            const { data: allEmps } = await supabase
+                .from('empleado')
+                .select('id_empleado, id_persona')
+                .eq('organizacion_id', orgId);
+
+            const tecnicosFiltrados = orgUsersList.filter(u => {
+                const rName = (u.nombre_rol || '').toLowerCase();
+                const personaId = u.id_persona || u.persona_id || u.id_per;
+                const emp = (allEmps || []).find(e => String(e.id_persona) === String(personaId));
+                return rName.includes('tec') && emp;
+            }).map(u => {
+                const personaId = u.id_persona || u.persona_id || u.id_per;
+                const emp = (allEmps || []).find(e => String(e.id_persona) === String(personaId));
+                return {
+                    id_empleado: emp.id_empleado,
+                    nombre_label: `${u.nombre || ''} ${u.apellido || ''}`.trim(),
+                    disabled: false
+                };
+            });
+
+            // Catálogos Globales (para visualización en tabla)
+            const { data: fullZonas } = await supabase.from('zona').select('id_zona, nombre, id_estado, estado:estado_zona(nombre)').eq('organizacion_id', orgId);
+            const { data: fullPlazas } = await supabase.from('plaza').select('id_plaza, numero_plaza, id_zona, id_estado, estado:estado_plaza(nombre)').eq('organizacion_id', orgId);
+
+            // Filtros para Formulario (Solo zonas activas para nuevas solicitudes)
+            const zonasActivas = (fullZonas || []).filter(z => z.estado?.nombre === 'Activa');
+            const plazasLibres = (fullPlazas || []).filter(p => 
+                p.estado?.nombre === 'Libre' && zonasActivas.some(z => z.id_zona === p.id_zona)
+            );
+
             const { data: tipoData } = await supabase.from('tipo_mantenimiento').select('*').order('nombre');
             const { data: estData } = await supabase.from('estado_mantenimiento').select('*').order('nombre');
 
-            setDispositivos(dispData || []);
-            setTecnicos((empData || []).sort((a, b) => {
-                const na = `${a.persona?.nombre ?? ''} ${a.persona?.apellido ?? ''}`.toLowerCase();
-                const nb = `${b.persona?.nombre ?? ''} ${b.persona?.apellido ?? ''}`.toLowerCase();
-                return na.localeCompare(nb);
-            }));
+            setAllDispositivos(dispData || []);
+            setDispositivos((dispData || []).filter(d => d.id_estado === 1)); // Solo activos para nuevas solicitudes
+            
+            setAllPlazas(fullPlazas || []);
+            setPlazasList(plazasLibres);
+            
+            setAllZonas(fullZonas || []);
+            setZonas(zonasActivas);
+            
+            setTecnicos((tecnicosFiltrados || []).sort((a, b) => a.nombre_label.localeCompare(b.nombre_label)));
             setTiposMantenimiento(tipoData || []);
             setEstadosMantenimiento(estData || []);
 
@@ -144,9 +208,16 @@ export default function Mantenimiento() {
 
     const handleEdit = (item) => {
         setEditingId(item.id_mantenimiento);
+        let type = 'dispositivo';
+        if (item.id_zona) type = 'zona';
+        else if (item.id_plaza) type = 'plaza';
+        setTargetType(type);
+
         setFormData({
             descripcion: item.descripcion || '',
             id_dispositivo: item.id_dispositivo || '',
+            id_plaza: item.id_plaza || '',
+            id_zona: item.id_zona || '',
             id_empleado: item.id_empleado || '',
             id_tipo: item.id_tipo || '',
             id_estado: item.id_estado || '',
@@ -156,27 +227,46 @@ export default function Mantenimiento() {
         setShowModal(true);
     };
 
-    const handleDelete = async (id) => {
-        const result = await Swal.fire({
-            title: '¿Eliminar registro?',
-            text: "Esta acción no se puede deshacer.",
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonText: 'Sí, eliminar',
-            cancelButtonText: 'Cancelar',
-            confirmButtonColor: '#ef4444'
-        });
+    // Lógica de Sincronización en Cascada
+    const syncEntityStatus = async (target, id, isStarting) => {
+        try {
+            // Nombres de estados exactos según catálogos maestros
+            const statusZon = isStarting ? 'En Mantenimiento' : 'Activa';
+            const statusPla = isStarting ? 'En Mantenimiento' : 'Libre';
+            const statusDis = isStarting ? 'En Mantenimiento' : 'Activo';
 
-        if (result.isConfirmed) {
-            try {
-                const { error } = await supabase.from('mantenimiento').delete().eq('id_mantenimiento', id);
-                if (error) throw error;
-                Swal.fire('Eliminado', 'El registro ha sido borrado.', 'success');
-                loadData();
-            } catch (error) {
-                Swal.fire('Error', error.message, 'error');
+            if (target === 'zona') {
+                const { data: stZ } = await supabase.from('estado_zona').select('id_estado').ilike('nombre', statusZon).maybeSingle();
+                if (stZ) await supabase.from('zona').update({ id_estado: stZ.id_estado }).eq('id_zona', id);
+                
+                const { data: stP } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', statusPla).maybeSingle();
+                if (stP) {
+                    await supabase.from('plaza').update({ id_estado: stP.id_estado }).eq('id_zona', id);
+                    const { data: plazas } = await supabase.from('plaza').select('id_plaza').eq('id_zona', id);
+                    const plazaIds = (plazas || []).map(p => p.id_plaza);
+                    if (plazaIds.length > 0) {
+                        const { data: stD } = await supabase.from('estado_dispositivo').select('id_estado').ilike('nombre', statusDis).maybeSingle();
+                        if (stD) await supabase.from('dispositivo').update({ id_estado: stD.id_estado }).in('id_plaza', plazaIds);
+                    }
+                }
+            } else if (target === 'plaza') {
+                const { data: stP } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', statusPla).maybeSingle();
+                if (stP) await supabase.from('plaza').update({ id_estado: stP.id_estado }).eq('id_plaza', id);
+                
+                const { data: stD } = await supabase.from('estado_dispositivo').select('id_estado').ilike('nombre', statusDis).maybeSingle();
+                if (stD) await supabase.from('dispositivo').update({ id_estado: stD.id_estado }).eq('id_plaza', id);
+            } else if (target === 'dispositivo') {
+                const { data: stD } = await supabase.from('estado_dispositivo').select('id_estado').ilike('nombre', statusDis).maybeSingle();
+                if (stD) await supabase.from('dispositivo').update({ id_estado: stD.id_estado }).eq('id_dispositivo', id);
+                
+                // Buscar en el catálogo global para no perder la referencia de la plaza
+                const disp = allDispositivos.find(d => d.id_dispositivo === id);
+                if (disp?.id_plaza) {
+                    const { data: stP } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', statusPla).maybeSingle();
+                    if (stP) await supabase.from('plaza').update({ id_estado: stP.id_estado }).eq('id_plaza', disp.id_plaza);
+                }
             }
-        }
+        } catch (err) { console.warn('Error sync:', err.message); }
     };
 
     const handleSubmit = async (e) => {
@@ -188,10 +278,27 @@ export default function Mantenimiento() {
 
         setLoading(true);
         try {
-            const estadoCompletadoId = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('completado'))?.id_estado;
-            const estadoInicialId = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('pendiente'))?.id_estado || 1;
-            const nuevoEstadoId = parseInt(formData.id_estado);
-            const nombreEstadoActual = estadosMantenimiento.find(e => e.id_estado === nuevoEstadoId)?.nombre || 'Actualizado';
+            if (formData.fecha_fin && formData.fecha_fin < formData.fecha_inicio) {
+            setLoading(false);
+            return Swal.fire('Error', 'La fecha de finalización no puede ser anterior a la de inicio.', 'error');
+        }
+
+        const payload = {
+            descripcion: formData.descripcion,
+            fecha_inicio: formData.fecha_inicio,
+            id_dispositivo: targetType === 'dispositivo' ? parseInt(formData.id_dispositivo) : null,
+            id_plaza: targetType === 'plaza' ? parseInt(formData.id_plaza) : null,
+            id_zona: targetType === 'zona' ? parseInt(formData.id_zona) : null,
+            id_empleado: parseInt(formData.id_empleado),
+            id_tipo: parseInt(formData.id_tipo),
+            id_estado: editingId ? parseInt(formData.id_estado) : (estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('pendiente'))?.id_estado || 1),
+            fecha_fin: formData.fecha_fin || null,
+            organizacion_id: orgId
+        };
+
+        const isFinalState = estadosMantenimiento.find(e => e.id_estado === parseInt(payload.id_estado))?.nombre.toLowerCase().includes('completado') || 
+                            estadosMantenimiento.find(e => e.id_estado === parseInt(payload.id_estado))?.nombre.toLowerCase().includes('cancelado');
+            const nombreEstadoActual = estadosMantenimiento.find(e => e.id_estado === parseInt(payload.id_estado))?.nombre || 'Actualizado';
 
             // Mapear nombre del estado al tipo de evento correspondiente
             const ESTADO_A_EVENTO = {
@@ -205,17 +312,6 @@ export default function Mantenimiento() {
                 ? (Object.entries(ESTADO_A_EVENTO).find(([key]) => estadoLower.includes(key))?.[1] || 'Mantenimiento Iniciado')
                 : 'Mantenimiento Iniciado';
 
-            const payload = {
-                descripcion: formData.descripcion,
-                fecha_inicio: formData.fecha_inicio,
-                id_dispositivo: parseInt(formData.id_dispositivo),
-                id_empleado: parseInt(formData.id_empleado),
-                id_tipo: parseInt(formData.id_tipo),
-                id_estado: editingId ? nuevoEstadoId : estadoInicialId,
-                fecha_fin: formData.fecha_fin || null,
-                organizacion_id: orgId
-            };
-
             let error;
             if (editingId) {
                 const { error: updateError } = await supabase.from('mantenimiento').update(payload).eq('id_mantenimiento', editingId);
@@ -227,13 +323,19 @@ export default function Mantenimiento() {
 
             if (error) throw error;
 
+            // Sincronizar estados en cascada
+            const targetId = payload.id_dispositivo || payload.id_plaza || payload.id_zona;
+            if (targetId) {
+                await syncEntityStatus(targetType, targetId, !isFinalState);
+            }
+
             // Log automático (RF10)
-            const disp = dispositivos.find(d => d.id_dispositivo === parseInt(formData.id_dispositivo));
-            const idPlazaLog = disp?.id_plaza || null;
+            const disp = dispositivos.find(d => d.id_dispositivo === payload.id_dispositivo);
+            const idPlazaLog = payload.id_plaza || disp?.id_plaza || null;
             await registrarLog(
                 nombreEventoLog,
-                `${editingId ? 'Actualización' : 'Nueva solicitud'} de mantenimiento (Estado: ${nombreEstadoActual}): "${formData.descripcion}" en dispositivo ${disp?.tipo?.nombre || 'desconocido'}.`,
-                parseInt(formData.id_dispositivo),
+                `${editingId ? 'Actualización' : 'Nueva solicitud'} de mantenimiento (Estado: ${nombreEstadoActual}): "${formData.descripcion}" en ${targetType} ${targetId}.`,
+                payload.id_dispositivo,
                 idPlazaLog
             );
 
@@ -251,9 +353,12 @@ export default function Mantenimiento() {
     const closeModal = () => {
         setShowModal(false);
         setEditingId(null);
+        setTargetType('dispositivo');
         setFormData({
             descripcion: '',
             id_dispositivo: '',
+            id_plaza: '',
+            id_zona: '',
             id_empleado: '',
             id_tipo: '',
             id_estado: '',
@@ -262,55 +367,76 @@ export default function Mantenimiento() {
         });
     };
 
-    const handleResolve = async (id) => {
-        const { value: confirm } = await Swal.fire({
-            title: '¿Marcar como Resuelto?',
-            text: "El dispositivo volverá a estar operativo.",
-            icon: 'question',
-            showCancelButton: true,
-            confirmButtonText: 'Sí, finalizar'
-        });
+    const handleConfirmarCambioEstado = async (item) => {
+        if (!newStatusChoice) return setChangingStatusFor(null);
+        setLoading(true);
+        try {
+            const nuevoEstadoId = parseInt(newStatusChoice);
+            const statusObj = estadosMantenimiento.find(e => e.id_estado === nuevoEstadoId);
+            const statusName = statusObj?.nombre || 'Actualizado';
+            const statusLower = statusName.toLowerCase();
+            
+            // Determinar si es un estado final (completado/cancelado)
+            const isFinal = ['completado', 'cancelado'].some(s => statusLower.includes(s));
+            const fechaFin = isFinal ? new Date().toISOString() : null;
 
-        if (confirm) {
-            // Buscar ID de estado Completado (con fallback)
-            const idCompletado = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('completado'))?.id_estado || null;
-            const fechaFin = new Date().toISOString();
+            const { error } = await supabase
+                .from('mantenimiento')
+                .update({ 
+                    id_estado: nuevoEstadoId,
+                    fecha_fin: fechaFin
+                })
+                .eq('id_mantenimiento', item.id_mantenimiento);
 
-            const updatePayload = { 
-                fecha_fin: fechaFin
-            };
-            if (idCompletado) updatePayload.id_estado = idCompletado;
+            if (error) throw error;
 
-            const { error } = await supabase.from('mantenimiento').update(updatePayload).eq('id_mantenimiento', id);
-
-            if (!error) {
-                // Actualizar UI inmediatamente sin esperar reload
-                setResueltosIds(prev => new Set([...prev, id]));
-                setMantenimientos(prev => prev.map(m => 
-                    m.id === id ? { ...m, fecha_fin: fechaFin, id_estado: idCompletado || m.id_estado } : m
-                ));
-                
-                // Log automático (RF10)
-                const mant = mantenimientos.find(m => m.id === id);
-                const idDisp = mant?.dispositivo?.id_dispositivo || mant?.id_dispositivo || null;
-                const idPlaza = mant?.dispositivo?.id_plaza || null;
-                await registrarLog(
-                    'Mantenimiento Completado',
-                    `Mantenimiento ID-${id} marcado como COMPLETADO. Dispositivo: ${mant?.dispositivo?.tipo?.nombre || 'N/A'}.`,
-                    idDisp,
-                    idPlaza
-                );
-                Swal.fire('Listo', 'Mantenimiento finalizado.', 'success');
-                loadData();
+            // Sincronizar infraestructura en cascada
+            const type = item.id_zona ? 'zona' : (item.id_plaza ? 'plaza' : 'dispositivo');
+            const targetId = item.id_zona || item.id_plaza || item.id_dispositivo;
+            if (targetId) {
+                await syncEntityStatus(type, targetId, !isFinal);
             }
+
+            // Registrar Log
+            const ESTADO_A_EVENTO = {
+                'completado': 'Mantenimiento Completado',
+                'en progreso': 'Mantenimiento En Progreso',
+                'cancelado': 'Mantenimiento Cancelado',
+                'en espera': 'Mantenimiento En Espera',
+            };
+            const eventName = Object.entries(ESTADO_A_EVENTO).find(([key]) => statusLower.includes(key))?.[1] || 'Mantenimiento Iniciado';
+            
+            await registrarLog(
+                eventName,
+                `Cambio de estado rápido a "${statusName}" para mantenimiento ID-${item.id_mantenimiento}.`,
+                item.id_dispositivo,
+                item.dispositivo?.id_plaza || item.id_plaza
+            );
+
+            Swal.fire({
+                title: 'Estado Actualizado',
+                text: `Mantenimiento marcado como ${statusName}`,
+                icon: 'success',
+                timer: 1500,
+                showConfirmButton: false
+            });
+
+            setChangingStatusFor(null);
+            loadData();
+        } catch (err) {
+            Swal.fire('Error', err.message, 'error');
+        } finally {
+            setLoading(false);
         }
     };
 
     // Filtrado
     const filteredItems = mantenimientos.filter(m =>
         m.descripcion?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (m.empleado?.persona?.nombre + ' ' + m.empleado?.persona?.apellido).toLowerCase().includes(searchTerm.toLowerCase()) ||
-        m.dispositivo?.tipo?.nombre.toLowerCase().includes(searchTerm.toLowerCase())
+        (`${m.empleado?.persona?.nombre || ''} ${m.empleado?.persona?.apellido || ''}`).toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (m.dispositivo?.tipo?.nombre || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (zonas.find(z => z.id_zona === m.id_zona)?.nombre || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (plazasList.find(p => p.id_plaza === m.id_plaza)?.numero_plaza || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     return (
@@ -359,13 +485,13 @@ export default function Mantenimiento() {
                             <table className="min-w-full divide-y divide-gray-200">
                                 <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                                     <tr>
-                                        <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Dispositivo / Ubicación</th>
+                                        <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Objetivo / Ubicación</th>
                                         <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Problema</th>
                                         <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Tipo</th>
                                         <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Técnico</th>
                                         <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Fecha</th>
                                         <th className="px-6 py-3 text-left text-[10px] font-black text-gray-500 uppercase tracking-widest">Estado</th>
-                                        <th className="px-6 py-3 text-center text-[10px] font-black text-gray-500 uppercase tracking-widest">Acción</th>
+                                        <th className="px-6 py-3 text-center text-[10px] font-black text-gray-500 uppercase tracking-widest">Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
@@ -380,8 +506,16 @@ export default function Mantenimiento() {
                                             return (
                                                 <tr key={item.id_mantenimiento} className={`transition duration-150 ${isResuelto ? 'bg-gray-50 text-gray-400 opacity-75' : 'hover:bg-blue-50/20 group'}`}>
                                                     <td className="px-6 py-4">
-                                                        <div className="text-xs font-bold text-gray-900 uppercase">{item.dispositivo?.tipo?.nombre || 'Dispositivo Desconocido'}</div>
-                                                        <div className="text-[10px] text-gray-500 italic mt-0.5">{item.dispositivo?.ubicacion || 'Sin ubicación'}</div>
+                                                        <div className="text-xs font-bold text-gray-900 uppercase">
+                                                            {item.id_zona ? `ZONA: ${allZonas.find(z => z.id_zona === item.id_zona)?.nombre || 'N/A'}` :
+                                                             item.id_plaza ? `PLAZA: ${allPlazas.find(p => p.id_plaza === item.id_plaza)?.numero_plaza || 'N/A'}` :
+                                                             allDispositivos.find(d => d.id_dispositivo === item.id_dispositivo)?.tipo?.nombre || 'Dispositivo'}
+                                                        </div>
+                                                        <div className="text-[10px] text-gray-500 italic mt-0.5">
+                                                            {item.id_zona ? 'Mantenimiento de área completa' :
+                                                             item.id_plaza ? `Zona: ${allPlazas.find(p => p.id_plaza === item.id_plaza)?.id_zona ? allZonas.find(z => z.id_zona === allPlazas.find(p => p.id_plaza === item.id_plaza).id_zona)?.nombre : 'General'}` :
+                                                             allDispositivos.find(d => d.id_dispositivo === item.id_dispositivo)?.ubicacion || 'Sin ubicación'}
+                                                        </div>
                                                     </td>
                                                     <td className="px-6 py-4 text-xs font-medium text-gray-600 max-w-xs truncate" title={item.descripcion}>
                                                         {item.descripcion}
@@ -398,48 +532,75 @@ export default function Mantenimiento() {
                                                         {item.empleado?.persona?.nombre} {item.empleado?.persona?.apellido}
                                                     </td>
                                                     <td className="px-6 py-4 text-xs font-medium text-gray-500">
-                                                        <div className="flex items-center gap-1.5">
-                                                            <FaCalendarAlt className="text-gray-400" />
-                                                            {new Date(item.fecha_inicio).toLocaleDateString()}
+                                                        <div className="flex flex-col gap-1">
+                                                            <div className="flex items-center gap-1.5 text-gray-700 font-bold">
+                                                                <FaCalendarAlt className="text-blue-500" size={10} />
+                                                                {new Date(item.fecha_inicio).toLocaleDateString()}
+                                                            </div>
+                                                            {item.fecha_fin && (
+                                                                <div className="flex items-center gap-1.5 text-[10px] text-green-600 italic">
+                                                                    <FaCheckCircle size={10} />
+                                                                    Fin: {new Date(item.fecha_fin).toLocaleDateString()}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4">
-                                                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${isResuelto
-                                                            ? 'bg-green-50 text-green-700 border-green-200'
-                                                            : 'bg-yellow-50 text-yellow-700 border-yellow-200'
-                                                            }`}>
-                                                            {item.estado?.nombre || 'N/A'}
-                                                        </span>
+                                                        {changingStatusFor === item.id_mantenimiento ? (
+                                                            <div className="flex items-center gap-1">
+                                                                <select 
+                                                                    className="text-xs p-1 border rounded bg-white font-bold text-gray-700 outline-none focus:ring-1 focus:ring-blue-500"
+                                                                    value={newStatusChoice}
+                                                                    onChange={(e) => setNewStatusChoice(e.target.value)}
+                                                                >
+                                                                    <option value="">Estado...</option>
+                                                                    {estadosMantenimiento.map(est => (
+                                                                        <option key={est.id_estado} value={est.id_estado}>{est.nombre}</option>
+                                                                    ))}
+                                                                </select>
+                                                                <button 
+                                                                    onClick={() => handleConfirmarCambioEstado(item)}
+                                                                    className="p-1 text-green-600 hover:bg-green-50 rounded"
+                                                                    title="Confirmar"
+                                                                >
+                                                                    <FaCheckCircle size={14} />
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => setChangingStatusFor(null)}
+                                                                    className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                                                    title="Cancelar"
+                                                                >
+                                                                    <FaTimesCircle size={14} />
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${isResuelto
+                                                                ? 'bg-green-50 text-green-700 border-green-200'
+                                                                : 'bg-yellow-50 text-yellow-700 border-yellow-200'
+                                                                }`}>
+                                                                {item.estado?.nombre || 'N/A'}
+                                                            </span>
+                                                        )}
                                                     </td>
                                                     <td className="px-6 py-4 text-center">
                                                         <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                                                            {!isResuelto ? (
-                                                                <>
-                                                                    <button
-                                                                        onClick={() => handleResolve(item.id_mantenimiento)}
-                                                                        className="text-green-500 hover:text-green-700 transition"
-                                                                        title="Marcar como Resuelto"
-                                                                    >
-                                                                        <FaCheckCircle size={17} />
-                                                                    </button>
-                                                                    <button
-                                                                        onClick={() => handleEdit(item)}
-                                                                        className="text-blue-500 hover:text-blue-700 transition"
-                                                                        title="Editar"
-                                                                    >
-                                                                        <FaEdit size={17} />
-                                                                    </button>
-                                                                    <button
-                                                                        onClick={() => handleDelete(item.id_mantenimiento)}
-                                                                        className="text-red-400 hover:text-red-600 transition"
-                                                                        title="Eliminar"
-                                                                    >
-                                                                        <FaTrash size={15} />
-                                                                    </button>
-                                                                </>
-                                                            ) : (
-                                                                <span className="text-[10px] font-black text-gray-400 italic">FINALIZADO</span>
-                                                            )}
+                                                            <button
+                                                                onClick={() => {
+                                                                    setNewStatusChoice(item.id_estado);
+                                                                    setChangingStatusFor(item.id_mantenimiento);
+                                                                }}
+                                                                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold transition shadow-sm"
+                                                                title="Cambiar Estado Rápido"
+                                                            >
+                                                                <FaSync size={10} /> Estado
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleEdit(item)}
+                                                                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200 font-bold transition shadow-sm"
+                                                                title="Editar Detalles Completos"
+                                                            >
+                                                                <FaEdit size={10} /> Editar
+                                                            </button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -465,26 +626,89 @@ export default function Mantenimiento() {
                         </div>
 
                         <form onSubmit={handleSubmit} className="space-y-4">
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Dispositivo *</label>
-                                <SearchableSelect
-                                    options={dispositivos.map(d => {
-                                        const esMismoDispositivo = editingId && parseInt(formData.id_dispositivo) === d.id_dispositivo;
-                                        const ocupado = dispositivosOcupados.has(d.id_dispositivo) && !esMismoDispositivo;
-                                        return {
-                                            value: d.id_dispositivo,
-                                            label: `${d.tipo?.nombre || 'Disp.'} — ${d.ubicacion || 'Sin ubicación'} ${d.modelo ? `(${d.modelo.marca?.nombre} ${d.modelo.nombre})` : ''} ${ocupado ? '[OCUPADO]' : ''}`,
-                                            disabled: ocupado
-                                        };
-                                    })}
-                                    value={formData.id_dispositivo}
-                                    onChange={val => setFormData({ ...formData, id_dispositivo: val })}
-                                    placeholder="— Seleccionar Dispositivo —"
-                                    focusRingClass="focus:ring-blue-500"
-                                    selectedItemClass="bg-blue-100 text-blue-800"
-                                    className="bg-gray-50/50"
-                                />
+                            <div className="mb-4">
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2">Objetivo del Mantenimiento *</label>
+                                <div className="grid grid-cols-3 gap-1 p-1 bg-gray-100 rounded-lg">
+                                    {['dispositivo', 'plaza', 'zona'].map(type => (
+                                        <button
+                                            key={type}
+                                            type="button"
+                                            disabled={!!editingId} // Bloqueado en edición
+                                            onClick={() => setTargetType(type)}
+                                            className={`py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${
+                                                targetType === type ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                                            } ${editingId ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        >
+                                            {type}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
+
+                            {targetType === 'dispositivo' && (
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Dispositivo *</label>
+                                    <SearchableSelect
+                                        options={(editingId ? allDispositivos : dispositivos).map(d => {
+                                            const esMismoDispositivo = editingId && parseInt(formData.id_dispositivo) === d.id_dispositivo;
+                                            const ocupado = dispositivosOcupados.has(d.id_dispositivo) && !esMismoDispositivo;
+                                            return {
+                                                value: d.id_dispositivo,
+                                                label: `${d.tipo?.nombre || 'Disp.'} — ${d.ubicacion || 'Sin ubicación'} ${d.modelo ? `(${d.modelo.marca?.nombre} ${d.modelo.nombre})` : ''} ${ocupado ? '[OCUPADO]' : ''}`,
+                                                disabled: ocupado
+                                            };
+                                        })}
+                                        value={formData.id_dispositivo}
+                                        onChange={val => setFormData({ ...formData, id_dispositivo: val })}
+                                        disabled={!!editingId}
+                                        placeholder="— Seleccionar Dispositivo —"
+                                        focusRingClass="focus:ring-blue-500"
+                                        selectedItemClass="bg-blue-100 text-blue-800"
+                                        className="bg-gray-50/50"
+                                    />
+                                </div>
+                            )}
+
+                            {targetType === 'plaza' && (
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Plaza de Parqueo *</label>
+                                    <SearchableSelect
+                                        options={(editingId ? allPlazas : plazasList).map(p => ({
+                                            value: p.id_plaza,
+                                            label: `Plaza: ${p.numero_plaza} (${allZonas.find(z => z.id_zona === p.id_zona)?.nombre || 'N/A'})`
+                                        }))}
+                                        value={formData.id_plaza}
+                                        onChange={val => setFormData({ ...formData, id_plaza: val })}
+                                        disabled={!!editingId}
+                                        placeholder="— Seleccionar Plaza —"
+                                        focusRingClass="focus:ring-blue-500"
+                                        selectedItemClass="bg-blue-100 text-blue-800"
+                                        className="bg-gray-50/50"
+                                    />
+                                </div>
+                            )}
+
+                            {targetType === 'zona' && (
+                                <div>
+                                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Zona Completa *</label>
+                                    <SearchableSelect
+                                        options={(editingId ? allZonas : zonas).map(z => ({
+                                            value: z.id_zona,
+                                            label: `Zona: ${z.nombre}`
+                                        }))}
+                                        value={formData.id_zona}
+                                        onChange={val => setFormData({ ...formData, id_zona: val })}
+                                        disabled={!!editingId}
+                                        placeholder="— Seleccionar Zona —"
+                                        focusRingClass="focus:ring-blue-500"
+                                        selectedItemClass="bg-blue-100 text-blue-800"
+                                        className="bg-gray-50/50"
+                                    />
+                                    <p className="text-[9px] text-orange-600 font-bold mt-1 uppercase leading-tight italic">
+                                        ⚠️ Afectará a todas las plazas y sensores asignados a esta zona.
+                                    </p>
+                                </div>
+                            )}
 
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
@@ -502,7 +726,11 @@ export default function Mantenimiento() {
                                 <div>
                                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Técnico Asignado *</label>
                                     <SearchableSelect
-                                        options={tecnicos.map(t => ({ value: t.id_empleado, label: `${t.persona?.nombre} ${t.persona?.apellido}` }))}
+                                        options={tecnicos.map(t => ({ 
+                                            value: t.id_empleado, 
+                                            label: t.nombre_label,
+                                            disabled: t.disabled
+                                        }))}
                                         value={formData.id_empleado}
                                         onChange={val => setFormData({ ...formData, id_empleado: val })}
                                         placeholder="— Técnico —"

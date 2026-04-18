@@ -151,9 +151,13 @@ export default function Tickets() {
         .eq('id_estado', idEstLibrePlaza)
         .order('numero_plaza');
       
+      // Blindaje: Solo considerar libres las que id_estado=Libre Y NO tienen contrato activo
+      const { data: asigsActivas } = await supabase.from('asignacion').select('id_plaza').eq('id_estado', 1);
+      const plazasAsignadasIds = new Set(asigsActivas?.map(a => a.id_plaza) || []);
+
       const plazas = (rawPlazas || []).filter(p => {
         const est = p.zona?.estado_zona?.nombre || 'Activa';
-        return est === 'Activa';
+        return est === 'Activa' && !plazasAsignadasIds.has(p.id_plaza);
       });
 
       const { data: stCat } = await supabase.from('estado_ticket').select('id_estado, nombre');

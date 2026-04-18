@@ -386,18 +386,13 @@ export default function Ocupacion() {
 
   const handleSpecialState = (e, plaza, estadoDeseado) => {
     e.stopPropagation();
-    if (plaza.Nombre_Estado_Rel.startsWith('ASIGNAD') || ocupacionInfo[plaza.id_plaza]?.type === 'asignacion') {
-      Swal.fire({
-        title: `Plaza Asignada`,
-        html: `Esta plaza está <b>asignada a un empleado</b>.<br>Para cambiar su estado, use la página de <b>Asignaciones</b>.`,
-        icon: 'info',
-        confirmButtonColor: '#7c3aed',
-        confirmButtonText: 'Entendido'
-      });
-      return;
-    }
-    const nuevoEstado = plaza.Nombre_Estado_Rel === estadoDeseado ? 'LIBRE' : estadoDeseado;
-    changeStatus(plaza.id_plaza, nuevoEstado);
+    Swal.fire({
+      title: 'Gestión Centralizada',
+      text: 'Para poner una plaza en mantenimiento, use el módulo de Mantenimiento para registrar el técnico y la descripción del problema.',
+      icon: 'info',
+      confirmButtonColor: '#3b82f6',
+      confirmButtonText: 'Entendido'
+    });
   };
 
   const getCardColor = (estado, idPlaza, forcingStatus = null) => {
@@ -532,9 +527,7 @@ export default function Ocupacion() {
                         </div>
                       )}
 
-                      <div className="absolute bottom-2 left-0 right-0 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={(e) => handleSpecialState(e, plaza, 'EN MANTENIMIENTO')} className="p-1.5 bg-white text-orange-600 hover:bg-orange-50 rounded-full shadow" title="Mantenimiento"><FaExclamationTriangle size={12} /></button>
-                      </div>
+                      {/* Acción de mantenimiento removida para centralización */}
                     </div>
                   ))}
                 </div>

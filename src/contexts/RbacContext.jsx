@@ -24,12 +24,20 @@ export function RbacProvider({ children, session }) {
       // ── 1. Obtener rol_id del usuario (su propia fila — siempre accesible) ──
       const { data: usuarioData, error: uError } = await supabase
         .from('usuario')
-        .select('rol_id')
+        .select('rol_id, id_estado')
         .eq('id', session.user.id)
         .single();
 
       if (uError) {
         console.error('RbacContext: no se pudo leer usuarios:', uError.message);
+        setLoading(false);
+        return;
+      }
+
+      // ── 1.5. Bloqueo de seguridad por estado ──
+      if (usuarioData?.id_estado !== 1) {
+        console.warn('RbacContext: cuenta inhabilitada detectada.');
+        await supabase.auth.signOut();
         setLoading(false);
         return;
       }

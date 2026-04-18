@@ -195,10 +195,14 @@ export default function Reservaciones() {
           .eq('id_estado', idEstLibrePlaza)
           .order('numero_plaza');
 
-        // Filtrar plazas de zonas bloqueadas administrativamente
+        // Blindaje: Solo considerar disponibles las que id_estado=Libre Y NO tienen contrato activo
+        const { data: asigsActivas } = await supabase.from('asignacion').select('id_plaza').eq('id_estado', 1);
+        const plazasAsignadasIds = new Set(asigsActivas?.map(a => a.id_plaza) || []);
+
+        // Filtrar plazas de zonas bloqueadas administrativamente y excluir las ya asignadas a empleados
         const plazasDisponibles = (plazas || []).filter(p => {
           const est = p.zona?.estado_zona?.nombre || 'Activa';
-          return est === 'Activa';
+          return est === 'Activa' && !plazasAsignadasIds.has(p.id_plaza);
         });
 
         setPersonasList(personasConEstado);
@@ -363,19 +367,7 @@ export default function Reservaciones() {
     }
   };
 
-  const handleDelete = async (idReserva, idPlaza, estadoNombre) => {
-    const result = await Swal.fire({ title: '¿Eliminar?', text: "Se borrará definitivamente.", icon: 'error', showCancelButton: true });
-    if (result.isConfirmed) {
-        await supabase.from('reserva').delete().eq('id_reserva', idReserva);
-        if (estadoNombre === 'Activa' && idPlaza) {
-             const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-             const idEstLibrePlaza = epLibre?.id_estado || 1;
-             await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', idPlaza);
-        }
-        loadReservas();
-        loadAuxData();
-    }
-  };
+  // handleDelete y handleDeleteZona se mantienen como referencia pero ya no se usan en la UI para prevenir el borrado físico.
 
   const handleMarkCompletedZona = async (id, isAuto = false, forcedIds = null) => {
     try {
@@ -426,20 +418,7 @@ export default function Reservaciones() {
     }
   };
 
-  const handleDeleteZona = async (id) => {
-    const result = await Swal.fire({ title: '¿Eliminar?', text: "Se borrará definitivamente.", icon: 'error', showCancelButton: true });
-    if (result.isConfirmed) {
-        const { data: resInfo } = await supabase.from('reserva_zona').select('id_zona').eq('id_reserva_zona', id).single();
-        
-        await supabase.from('reserva_zona').delete().eq('id_reserva_zona', id);
-        
-        if (resInfo?.id_zona) {
-          await liberarPlazasZona(resInfo.id_zona);
-        }
-        
-        loadReservasZona();
-    }
-  };
+  // Se previene el borrado físico de zonas.
 
   const liberarPlazasZona = async (idZona) => {
     try {
@@ -732,11 +711,11 @@ export default function Reservaciones() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-50">
-                    {reservas.filter(r => `${r.persona?.nombre} ${r.persona?.apellido} ${r.plaza?.numero_plaza}`.toLowerCase().includes(searchTerm.toLowerCase())).map(r => {
+                      {reservas.filter(r => `${r.persona?.nombre} ${r.persona?.apellido} ${r.plaza?.numero_plaza}`.toLowerCase().includes(searchTerm.toLowerCase())).map(r => {
                       const nombreEstado = r.estado?.nombre;
                       const isActive = nombreEstado === 'Activa' || r.id_estado === 1;
                       return (
-                        <tr key={r.id_reserva} className="hover:bg-gray-50/50 transition-all text-sm">
+                        <tr key={r.id_reserva} className={`transition-all text-sm ${isActive ? 'hover:bg-gray-50/50' : 'bg-gray-50/30 opacity-60 grayscale-[0.4]'}`}>
                           <td className="px-6 py-4 font-bold text-gray-700">{r.persona?.nombre} {r.persona?.apellido}</td>
                           <td className="px-6 py-4"><span className="bg-blue-50 text-blue-600 px-2 py-1 rounded-lg font-black text-xs">#{r.plaza?.numero_plaza}</span></td>
                           <td className="px-6 py-4 text-gray-500 font-medium">
@@ -751,15 +730,14 @@ export default function Reservaciones() {
                           </td>
                           <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
                             {isActive ? (
-                              <>
+                               <>
                                 {canEdit && <button onClick={() => handleMarkCompleted(r.id_reserva, r.id_plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>}
                                 {canEdit && <button onClick={() => handleCancelReserva(r.id_reserva, r.id_plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>}
                                 {canEdit && <button onClick={() => handleEdit(r)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>}
-                              </>
+                               </>
                             ) : (
-                              <div className="text-gray-300 italic text-xs flex items-center gap-1"><FaLock size={12} /> Cerrada</div>
+                               <div className="text-gray-400 italic text-[10px] flex items-center gap-1 font-bold"><FaLock size={10} /> FINALIZADA</div>
                             )}
-                            {canDelete && <button onClick={() => handleDelete(r.id_reserva, r.id_plaza, nombreEstado)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>}
                           </td>
                         </tr>
                       );
@@ -786,7 +764,7 @@ export default function Reservaciones() {
                       const nombreEstado = rz.estado?.nombre;
                       const isActive = nombreEstado === 'Activa' || rz.id_estado === 1;
                       return (
-                        <tr key={rz.id_reserva_zona} className="hover:bg-gray-50/50 transition-all text-sm">
+                        <tr key={rz.id_reserva_zona} className={`transition-all text-sm ${isActive ? 'hover:bg-gray-50/50' : 'bg-gray-50/30 opacity-60 grayscale-[0.4]'}`}>
                           <td className="px-6 py-4">
                             <div className="flex flex-col">
                               <span className="font-bold text-gray-700">{rz.zona?.nombre}</span>
@@ -809,15 +787,14 @@ export default function Reservaciones() {
                           </td>
                           <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
                             {isActive ? (
-                              <>
+                               <>
                                 {canEdit && <button onClick={() => handleMarkCompletedZona(rz.id_reserva_zona)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>}
                                 {canEdit && <button onClick={() => handleCancelReservaZona(rz.id_reserva_zona)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>}
                                 {canEdit && <button onClick={() => handleEditZona(rz)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>}
-                              </>
+                               </>
                             ) : (
-                              <div className="text-gray-300 italic text-xs flex items-center gap-1"><FaLock size={12} /> Cerrada</div>
+                               <div className="text-gray-400 italic text-[10px] flex items-center gap-1 font-bold"><FaLock size={10} /> FINALIZADA</div>
                             )}
-                            {canDelete && <button onClick={() => handleDeleteZona(rz.id_reserva_zona)} className="text-red-500 hover:scale-110 ml-2" title="Eliminar"><FaTrash size={18}/></button>}
                           </td>
                         </tr>
                       );
