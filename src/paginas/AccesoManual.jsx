@@ -140,7 +140,7 @@ export default function AccesoManual() {
         return {
           ...acc,
           _personaNombre: per ? `${per.nombre} ${per.apellido}` : (acc.vehiculo?.placa || 'Desconocido'),
-          _personaTel: per?.telefono || '—',
+          _personaTel: per?.telefono || '— ',
           _marcaNombre: acc.vehiculo?.modelo?.marca?.nombre,
           _modeloNombre: acc.vehiculo?.modelo?.nombre
         };
@@ -212,7 +212,7 @@ export default function AccesoManual() {
       // 3. Log
       await registrarLog(
         'Entrada',
-        `Entrada manual: ${vehiculoSelect.placa} — ${vehiculoSelect.persona?.nombre} ${vehiculoSelect.persona?.apellido} — Plaza ${plazaSelect.numero_plaza}.`,
+        `Entrada manual: ${vehiculoSelect.placa} —  ${vehiculoSelect.persona?.nombre} ${vehiculoSelect.persona?.apellido} —  Plaza ${plazaSelect.numero_plaza}.`,
         plazaSelect.id_plaza
       );
 
@@ -255,6 +255,10 @@ export default function AccesoManual() {
     });
     if (!result.isConfirmed && !result.isDenied) return;
 
+    if (!orgId) {
+      return Swal.fire('Error', 'No se ha detectado el contexto de la organización.', 'error');
+    }
+
     const barreraSalida = result.isConfirmed ? 'main' : 'vip';
 
     try {
@@ -283,7 +287,7 @@ export default function AccesoManual() {
       const nombreSalida = `${acc.vehiculo?.persona?.nombre || ''} ${acc.vehiculo?.persona?.apellido || ''}`.trim() || 'Desconocido';
       await registrarLog(
         'Salida',
-        `Salida manual: ${nombreSalida} — ${acc.vehiculo?.placa} — Plaza ${plazaEncontrada?.numero_plaza || 'N/A'}.`,
+        `Salida manual: ${nombreSalida} —  ${acc.vehiculo?.placa} —  Plaza ${plazaEncontrada?.numero_plaza || 'N/A'}.`,
         acc.id_plaza
       );
 
@@ -336,7 +340,7 @@ export default function AccesoManual() {
   };
 
   const formatearFecha = (iso) => {
-    if (!iso) return '—';
+    if (!iso) return '— ';
     return new Date(iso).toLocaleString('es-DO', {
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: true

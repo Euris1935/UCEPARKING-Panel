@@ -5,7 +5,8 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import {
     FaSearch, FaPlus, FaUserTie, FaTrash, FaSuitcase,
-    FaCalendarAlt, FaCar, FaEdit, FaSync, FaTimesCircle
+    FaCalendarAlt, FaCar, FaEdit, FaSync, FaTimesCircle,
+    FaCheck, FaTimes
 } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
@@ -32,6 +33,11 @@ export default function Asignaciones() {
     const [vehiculosMap, setVehiculosMap] = useState({});
     const [vehiculoVinculado, setVehiculoVinculado] = useState(null);
 
+    // Estados para cambio de estado "in-place"
+    const [changingStatusFor, setChangingStatusFor] = useState(null);
+    const [newStatusChoice, setNewStatusChoice] = useState(null);
+    const [estadosAsigList, setEstadosAsigList] = useState([]);
+
     const initialForm = {
         Id_Empleado: '',
         Id_Plaza: '',
@@ -54,7 +60,10 @@ export default function Asignaciones() {
 
         // Sincronización en tiempo real
         const channel = supabase.channel('realtime_asignaciones')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, () => loadData())
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, () => {
+                console.log("Cambio en asignación detectado");
+                loadData();
+            })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadData())
             .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, () => loadData())
             .subscribe();
@@ -66,11 +75,11 @@ export default function Asignaciones() {
         setLoading(true);
         setIsRefreshing(true);
         try {
-            // 1. Cargar asignaciones
+            // 1. Cargar asignaciones (Más recientes primero por fecha de creación)
             const { data: asigData, error: asigError } = await supabase
                 .from('asignacion')
                 .select('*')
-                .order('fecha_inicio', { ascending: false });
+                .order('created_at', { ascending: false });
             if (asigError) {
                 console.error("Error cargando asignaciones:", asigError);
                 setAsignaciones([]);
@@ -93,11 +102,28 @@ export default function Asignaciones() {
                 .from('plaza')
                 .select('id_plaza, numero_plaza');
 
-            // 4. Unir datos manualmente
+            // 4. Unir datos manualmente y calcular estado derivado
+            const hoy = new Date();
+            hoy.setHours(0, 0, 0, 0);
+
             const asignacionesConDatos = asigData.map(asig => {
                 const emp = todosEmpleadosOrdenados?.find(e => e.id_empleado === asig.id_empleado);
                 const plz = todasPlazas?.find(p => p.id_plaza === asig.id_plaza);
-                return { ...asig, empleado: emp || null, plaza: plz || null };
+                
+                // Lógica de auto-vencimiento en el frontend
+                let estadoFinal = asig.id_estado;
+                if (asig.id_estado === 1 && asig.fecha_fin) {
+                    const fFin = new Date(asig.fecha_fin);
+                    fFin.setHours(0, 0, 0, 0);
+                    if (fFin < hoy) estadoFinal = 2; // Mostrar como finalizada si ya venció
+                }
+
+                return { 
+                    ...asig, 
+                    empleado: emp || null, 
+                    plaza: plz || null,
+                    _estadoCalculado: estadoFinal 
+                };
             });
             setAsignaciones(asignacionesConDatos || []);
 
@@ -119,7 +145,7 @@ export default function Asignaciones() {
                 return na.localeCompare(nb);
             });
 
-            // Calcular personas con disponibilidad (En Asignaciones ya no bloqueamos por tener reserva o acceso)
+            // Restablecer lista de empleados para el componente SearchableSelect
             const empConEstado = sortedEmpData.map(emp => ({
                 ...emp,
                 _ocupadoPorOtro: false,
@@ -152,6 +178,10 @@ export default function Asignaciones() {
             // Filtro dinámico según estado de la zona
             const plazasDisponibles = (plazaData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa');
             setPlazasList(plazasDisponibles);
+
+            // 8. Cargar catálogo de estados de asignación
+            const { data: catEst } = await supabase.from('estado_asignacion').select('*').order('id_estado');
+            setEstadosAsigList(catEst || []);
 
         } catch (error) {
             console.error("Error general:", error.message);
@@ -299,6 +329,9 @@ export default function Asignaciones() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        if (!orgId) {
+            return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+        }
         if (!formData.Id_Empleado || !formData.Id_Plaza) {
             return Swal.fire('Error', 'Debe seleccionar empleado y plaza', 'warning');
         }
@@ -324,27 +357,128 @@ export default function Asignaciones() {
         }
     };
 
-    const handleLiberarAsignacion = async (asig) => {
-        const result = await Swal.fire({
-            title: 'Liberar Plaza?',
-            text: 'Se eliminara la asignacion y la plaza quedara libre.',
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonText: 'Si, liberar',
-            confirmButtonColor: '#d33'
-        });
-        if (result.isConfirmed) {
-            try {
-                const { error } = await supabase.from('asignacion').delete().eq('id_asignacion', asig.id_asignacion);
-                if (error) throw error;
+    const handleConfirmarCambioEstado = async (asig) => {
+        if (!orgId) return;
+        const oldStatus = asig.id_estado;
+        const nextStatus = parseInt(newStatusChoice);
+
+        if (oldStatus === nextStatus) {
+            setChangingStatusFor(null);
+            return;
+        }
+
+        try {
+            setLoading(true);
+            
+            // 1. Si el nuevo estado sugiere liberar la plaza (Finalizada=2 o Suspendida=3)
+            if (nextStatus === 2 || nextStatus === 3) {
                 const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
                 const idLibrePlaza = epLibre?.id_estado || 1;
-                await supabase.from('plaza').update({ id_estado: idLibrePlaza }).eq('id_plaza', asig.id_plaza);
-                Swal.fire('Liberado', 'La plaza esta disponible nuevamente.', 'success');
-                registrarLog('Vehiculo Eliminado', `Eliminacion de asignacion: empleado ${asig.empleado?.persona?.nombre} ${asig.empleado?.persona?.apellido} en plaza ${asig.plaza?.numero_plaza}`);
+                
+                if (asig.id_plaza) {
+                    console.log(`Liberando plaza ${asig.id_plaza} due to status change to ${nextStatus}`);
+                    const { error: plzErr } = await supabase
+                        .from('plaza')
+                        .update({ id_estado: idLibrePlaza })
+                        .eq('id_plaza', asig.id_plaza);
+                    if (plzErr) console.error("Error liberando plaza:", plzErr);
+                } else {
+                    console.warn("No hay id_plaza en la asignación para liberar.");
+                }
+            }
+
+            // 2. Actualizar registro de asignación
+            const updatePayload = { 
+                id_estado: nextStatus,
+                notas: asig.notas // Notas manuales estrictas
+            };
+            
+            // Si es finalizada, actualizamos la fecha fin respetando estrictamente la restricción de la DB (fin >= inicio)
+            if (nextStatus === 2) {
+                try {
+                    const dInicio = new Date(asig.fecha_inicio);
+                    const dHoy = new Date();
+                    
+                    // Si la fecha de inicio es inválida o es nula, usamos hoy
+                    if (isNaN(dInicio.getTime())) {
+                        updatePayload.fecha_fin = dHoy.toISOString();
+                    } else if (dHoy < dInicio) {
+                        // Si hoy es antes del inicio, forzamos fecha_fin = fecha_inicio para no violar el constraint
+                        updatePayload.fecha_fin = asig.fecha_inicio;
+                    } else {
+                        // En cualquier otro caso, usamos el momento actual
+                        updatePayload.fecha_fin = dHoy.toISOString();
+                    }
+                    console.log(`Debug Finalización: Inicio=${asig.fecha_inicio}, Fin=${updatePayload.fecha_fin}`);
+                } catch (e) {
+                    console.error("Error calculando fechas:", e);
+                    updatePayload.fecha_fin = new Date().toISOString(); 
+                }
+            }
+
+            const { error: upErr } = await supabase
+                .from('asignacion')
+                .update(updatePayload)
+                .eq('id_asignacion', asig.id_asignacion);
+            
+            if (upErr) throw upErr;
+
+            Swal.fire({
+                title: 'Actualizado',
+                text: 'El estado se ha modificado correctamente.',
+                icon: 'success',
+                timer: 1500,
+                showConfirmButton: false
+            });
+
+            registrarLog('Cambio de Estado', `Asignación ${asig.id_asignacion} cambiada de ${oldStatus} a ${nextStatus}`);
+            setChangingStatusFor(null);
+            loadData();
+        } catch (error) {
+            Swal.fire('Error', error.message, 'error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSincronizarPlazas = async () => {
+        const result = await Swal.fire({
+            title: 'Sincronizar Plazas',
+            text: '¿Deseas buscar y liberar plazas que no tienen asignaciones activas?',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, sincronizar'
+        });
+
+        if (result.isConfirmed) {
+            try {
+                setLoading(true);
+                // 1. Obtener estados
+                const { data: epData } = await supabase.from('estado_plaza').select('id_estado, nombre');
+                const idLibre = epData?.find(e => e.nombre === 'Libre')?.id_estado || 1;
+                const idAsignada = epData?.find(e => e.nombre === 'Asignada')?.id_estado || 2;
+
+                // 2. Obtener plazas marcadas como asignadas
+                const { data: plazasAsignadas } = await supabase.from('plaza').select('id_plaza').eq('id_estado', idAsignada);
+                
+                // 3. Obtener asignaciones realmente activas (id_estado = 1)
+                const { data: asignacionesActivas } = await supabase.from('asignacion').select('id_plaza').eq('id_estado', 1);
+                const plazasConAsigReal = new Set(asignacionesActivas?.map(a => a.id_plaza));
+
+                let corregidas = 0;
+                for (const p of (plazasAsignadas || [])) {
+                    if (!plazasConAsigReal.has(p.id_plaza)) {
+                        await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', p.id_plaza);
+                        corregidas++;
+                    }
+                }
+
+                Swal.fire('Sincronización Completa', `Se detectaron y liberaron ${corregidas} plazas huérfanas.`, 'success');
                 loadData();
             } catch (error) {
                 Swal.fire('Error', error.message, 'error');
+            } finally {
+                setLoading(false);
             }
         }
     };
@@ -388,14 +522,16 @@ export default function Asignaciones() {
                                 />
                                 <FaSearch className="absolute left-3 top-2.5 text-gray-400 text-xs" />
                             </div>
-                            <button
-                                onClick={loadData}
-                                disabled={isRefreshing}
-                                className="p-2 text-purple-600 hover:bg-purple-50 rounded-full transition disabled:opacity-50"
-                                title="Refrescar lista"
-                            >
-                                <FaSync className={isRefreshing ? 'animate-spin' : ''} />
-                            </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={loadData}
+                                        disabled={isRefreshing}
+                                        className="p-2 text-purple-600 hover:bg-purple-50 rounded-full transition disabled:opacity-50"
+                                        title="Refrescar lista"
+                                    >
+                                        <FaSync className={isRefreshing ? 'animate-spin' : ''} />
+                                    </button>
+                                </div>
                         </div>
                         <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                             <table className="min-w-full divide-y divide-gray-200">
@@ -406,6 +542,7 @@ export default function Asignaciones() {
                                         <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Creacion</th>
                                         <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Inicio</th>
                                         <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Fecha Fin</th>
+                                        <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Estado</th>
                                         <th className="px-6 py-3 text-left text-xs font-bold text-purple-800 uppercase">Notas</th>
                                         <th className="px-6 py-3 text-right text-xs font-bold text-purple-800 uppercase">Acciones</th>
                                     </tr>
@@ -414,53 +551,120 @@ export default function Asignaciones() {
                                     {filteredData.length === 0 ? (
                                         <tr><td colSpan="7" className="text-center py-8 text-gray-500 italic">No hay asignaciones registradas.</td></tr>
                                     ) : (
-                                        filteredData.map(item => (
-                                            <tr key={item.id_asignacion} className="hover:bg-purple-50/20 transition">
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center gap-2">
-                                                    <div className="bg-purple-100 p-2 rounded-full text-purple-600"><FaUserTie /></div>
-                                                    {item.empleado
-                                                        ? `${item.empleado.persona?.nombre || ''} ${item.empleado.persona?.apellido || ''}`.trim()
-                                                        : <span className="text-gray-400 italic font-normal">Sin datos</span>
-                                                    }
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-purple-700">
-                                                    {item.plaza?.numero_plaza || 'N/A'}
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                    <div className="flex items-center gap-1">
-                                                        <FaCalendarAlt className="text-gray-400" />
-                                                        {item.created_at ? new Date(item.created_at).toLocaleString('es-DO', {
-                                                            day: '2-digit', month: '2-digit', year: 'numeric',
-                                                            hour: '2-digit', minute: '2-digit', hour12: true
-                                                        }) : '-'}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                    <div className="flex items-center gap-1">
-                                                        <FaCalendarAlt className="text-gray-400" />
-                                                        {item.fecha_inicio ? new Date(item.fecha_inicio).toLocaleDateString() : '-'}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                    {item.fecha_fin
-                                                        ? <span className="flex items-center gap-1"><FaCalendarAlt className="text-red-400" />{new Date(item.fecha_fin).toLocaleDateString()}</span>
-                                                        : <span className="flex items-center gap-1 font-bold text-green-600"><FaCalendarAlt className="text-green-600" /> Indeterminada</span>}
-                                                </td>
-                                                <td className="px-6 py-4 text-sm text-gray-500 italic max-w-xs truncate">
-                                                    {item.notas || '-'}
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-right">
-                                                    <div className="flex items-center justify-end gap-2">
-                                                        <button onClick={() => handleOpenEdit(item)} className="text-blue-600 hover:bg-blue-50 px-3 py-1 rounded border border-blue-200 text-xs font-bold transition">
-                                                            <FaEdit className="inline mr-1" /> Editar
-                                                        </button>
-                                                        <button onClick={() => handleLiberarAsignacion(item)} className="text-red-600 hover:bg-red-50 px-3 py-1 rounded border border-red-200 text-xs font-bold transition">
-                                                            <FaTrash className="inline mr-1" /> Liberar
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
+                                        filteredData.map(item => {
+                                            const est = item._estadoCalculado;
+                                            const isClosed = est !== 1;
+                                            
+                                            // Clases dinámicas para la fila
+                                            let rowClass = "hover:bg-purple-50/20 transition";
+                                            if (est === 2) rowClass = "bg-gray-50/50 grayscale-[0.4] opacity-80 opacity-60";
+                                            if (est === 3) rowClass = "bg-amber-50/30 opacity-80";
+
+                                            return (
+                                                <tr key={item.id_asignacion} className={rowClass}>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 flex items-center gap-2">
+                                                        <div className={`p-2 rounded-full ${isClosed ? 'bg-gray-200 text-gray-500' : 'bg-purple-100 text-purple-600'}`}>
+                                                            <FaUserTie />
+                                                        </div>
+                                                        <div className={isClosed ? 'text-gray-400 italic' : ''}>
+                                                            {item.empleado
+                                                                ? `${item.empleado.persona?.nombre || ''} ${item.empleado.persona?.apellido || ''}`.trim()
+                                                                : <span className="text-gray-400 italic font-normal">Sin datos</span>
+                                                            }
+                                                        </div>
+                                                    </td>
+                                                    <td className={`px-6 py-4 whitespace-nowrap text-sm font-bold ${isClosed ? 'text-gray-400' : 'text-purple-700'}`}>
+                                                        {item.plaza?.numero_plaza || 'N/A'}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
+                                                        <div className="flex items-center gap-1">
+                                                            <FaCalendarAlt />
+                                                            {item.created_at ? new Date(item.created_at).toLocaleString('es-DO', {
+                                                                day: '2-digit', month: '2-digit', year: 'numeric'
+                                                            }) : '-'}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                        <div className="flex items-center gap-1">
+                                                            <FaCalendarAlt className="text-gray-400" />
+                                                            {item.fecha_inicio ? new Date(item.fecha_inicio).toLocaleDateString() : '-'}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                        {item.fecha_fin
+                                                            ? <span className="flex items-center gap-1"><FaCalendarAlt className={isClosed ? "text-gray-300" : "text-red-400"} />{new Date(item.fecha_fin).toLocaleDateString()}</span>
+                                                            : <span className={`flex items-center gap-1 font-bold ${isClosed ? 'text-gray-300' : 'text-green-600'}`}><FaCalendarAlt /> Fija</span>}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        {changingStatusFor === item.id_asignacion ? (
+                                                            <div className="flex items-center gap-1 animate-fadeIn">
+                                                                <select 
+                                                                    className="border border-purple-300 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-purple-200 focus:border-purple-500 outline-none transition-all cursor-pointer bg-white"
+                                                                    value={newStatusChoice}
+                                                                    onChange={e => setNewStatusChoice(e.target.value)}
+                                                                >
+                                                                    {estadosAsigList.map(e => (
+                                                                        <option key={e.id_estado} value={e.id_estado}>{e.nombre}</option>
+                                                                    ))}
+                                                                </select>
+                                                                <button 
+                                                                    onClick={() => handleConfirmarCambioEstado(item)} 
+                                                                    className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm"
+                                                                    title="Confirmar cambio"
+                                                                >
+                                                                    {loading ? <FaSync size={12} className="animate-spin" /> : <FaCheck size={12} />}
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => setChangingStatusFor(null)} 
+                                                                    className="p-1.5 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition"
+                                                                    title="Cancelar"
+                                                                >
+                                                                    <FaTimes size={12} />
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <>
+                                                                {est === 1 && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-green-100 text-green-700 uppercase tracking-wider">Activa</span>}
+                                                                {est === 2 && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-200 text-gray-600 uppercase tracking-wider">Finalizada</span>}
+                                                                {est === 3 && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 uppercase tracking-wider">Suspendida</span>}
+                                                            </>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-sm text-gray-400 italic max-w-xs truncate">
+                                                        {item.notas || '-'}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-right">
+                                                        <div className="flex items-center justify-end gap-2">
+                                                            {!isClosed ? (
+                                                                <>
+                                                                    {/* Botón Editar */}
+                                                                    <button 
+                                                                        onClick={() => handleOpenEdit(item)} 
+                                                                        className="px-2.5 py-1.5 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 text-xs font-bold transition flex items-center gap-1"
+                                                                    >
+                                                                        <FaEdit /> <span>Editar</span>
+                                                                    </button>
+
+                                                                    {/* Botón Estado */}
+                                                                    <button 
+                                                                        onClick={() => {
+                                                                            setChangingStatusFor(item.id_asignacion);
+                                                                            setNewStatusChoice(item.id_estado);
+                                                                        }} 
+                                                                        disabled={changingStatusFor === item.id_asignacion}
+                                                                        className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold transition flex items-center gap-1 ${changingStatusFor === item.id_asignacion ? 'bg-gray-50 text-gray-300 border-gray-100' : 'text-purple-600 hover:bg-purple-50 border-purple-200'}`}
+                                                                    >
+                                                                        <FaSync /> <span>Estado</span>
+                                                                    </button>
+                                                                </>
+                                                            ) : (
+                                                                <span className="text-gray-300 text-[10px] font-bold uppercase italic select-none px-2 py-1 bg-gray-50 rounded italic border border-gray-100">Sin acciones</span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
                                     )}
                                 </tbody>
                             </table>

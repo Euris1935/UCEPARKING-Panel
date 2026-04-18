@@ -207,7 +207,8 @@ export default function VehiculosTickets() {
         descripcion:     descripcion,
         id_plaza:        idPlaza,
         id_persona:      currentPersonaId,
-        id_origen_evento: (await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Vehículos y Tickets').single()).data?.id_origen || null
+        id_origen_evento: (await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Vehículos y Tickets').single()).data?.id_origen || null,
+        organizacion_id: currentOrgId
       }]);
     } catch (e) { console.warn('Log error:', e.message); }
   };
@@ -237,6 +238,9 @@ export default function VehiculosTickets() {
 
   const handleEmitirTicket = async (e) => {
     e.preventDefault();
+    if (!currentOrgId) {
+      return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+    }
     if (!visitanteForm.placa.trim()) return Swal.fire('Atención','La placa es obligatoria.','warning');
     if (!visitanteForm.id_plaza)     return Swal.fire('Atención','Seleccione una plaza.','warning');
     setLoading(true);
@@ -294,7 +298,7 @@ export default function VehiculosTickets() {
           fecha_hora_emision:     ahora,
           fecha_hora_vencimiento: vencimiento,
           descripcion:            visitanteForm.descripcion || '',
-          ...(currentOrgId ? { organizacion_id: currentOrgId } : {})
+          organizacion_id:        currentOrgId
         }])
         .select('*, plaza:id_plaza_asignada(numero_plaza), estado_ticket(nombre)')
         .single();
@@ -443,6 +447,9 @@ export default function VehiculosTickets() {
 
   const handleVehPersonalSubmit = async (e) => {
     e.preventDefault();
+    if (!currentOrgId) {
+      return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+    }
     try {
       const { error } = await supabase.from('vehiculo').insert([{
         id_persona: vehPersonalForm.persona_id,

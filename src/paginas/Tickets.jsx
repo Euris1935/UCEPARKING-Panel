@@ -264,6 +264,11 @@ export default function Tickets() {
 
   const handleEmitirTicket = async (e) => {
     e.preventDefault();
+    
+    if (!orgId) {
+      return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+    }
+
     if (!visitanteForm.placa.trim()) return Swal.fire('Atención', 'La placa es obligatoria.', 'warning');
     const placaLimpia = visitanteForm.placa.replace(/[^A-Z0-9]/gi, '');
     if (placaLimpia.length > 7) return Swal.fire('Atención', 'La placa no debe superar los 7 caracteres (1 letra y 6 números).', 'warning');
@@ -331,7 +336,7 @@ export default function Tickets() {
         fecha_hora_emision: ahora, 
         fecha_hora_vencimiento: vencimiento,
         descripcion: visitanteForm.descripcion.trim() || '',
-        ...(orgId ? { organizacion_id: orgId } : {})
+        organizacion_id: orgId
       }]).select('*, estado_ticket(nombre), plaza(numero_plaza)').single();
       
       if (tErr) throw tErr;

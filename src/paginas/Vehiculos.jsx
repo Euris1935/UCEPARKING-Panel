@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaCar, FaSave, FaTrash, FaEdit, FaSyncAlt, FaSearch } from 'react-icons/fa';
+import { FaCar, FaSave, FaTrash, FaEdit, FaSyncAlt, FaSearch, FaSync, FaCheck, FaTimes } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
@@ -30,6 +30,11 @@ export default function Vehiculos() {
   });
   const [editandoVehiculo, setEditandoVehiculo] = useState(null);
   const [editVehiculoForm, setEditVehiculoForm] = useState({ placa: '', id_marca: '', id_modelo: '', id_color: '' });
+
+  // Estados para catálogo y edición in-place
+  const [estadosVehiculosList, setEstadosVehiculosList] = useState([]);
+  const [changingStatusFor, setChangingStatusFor] = useState(null);
+  const [newStatusChoice, setNewStatusChoice] = useState('');
 
   useEffect(() => {
     const init = async () => {
@@ -78,6 +83,11 @@ export default function Vehiculos() {
       setListaMarcas(catMarcas || []);
       setListaModelos(catModelos || []);
       setListaColores(catColores || []);
+      
+      // Catálogo de estados de vehículo
+      const { data: catEst } = await supabase.from('estado_vehiculo').select('id_estado, nombre').order('id_estado');
+      setEstadosVehiculosList(catEst || []);
+
       setPersonasSistema(Array.from(mapa.values()).sort((a, b) =>
         `${a.nombre} ${a.apellido}`.toLowerCase().localeCompare(`${b.nombre} ${b.apellido}`.toLowerCase())
       ));
@@ -102,6 +112,9 @@ export default function Vehiculos() {
 
   const handleVehiculoPersonalSubmit = async (e) => {
     e.preventDefault();
+    if (!orgId) {
+      return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+    }
     if (!vehiculoPersonalForm.persona_id) return Swal.fire('Atención', 'Seleccione un propietario.', 'warning');
     const placaLimpia = vehiculoPersonalForm.placa.replace(/[^A-Z0-9]/gi, '');
     if (placaLimpia.length > 7) return Swal.fire('Atención', 'La placa no debe superar los 7 caracteres (1 letra y 6 números).', 'warning');
@@ -141,36 +154,58 @@ export default function Vehiculos() {
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
 
-  const handleEliminarVehiculo = async (vehiculo) => {
-    // Buscar si tiene un ticket activo usando la nueva tabla estado_ticket
-    const { data: estActivo } = await supabase.from('estado_ticket').select('id_estado').eq('nombre', 'Activo').maybeSingle();
-    
-    const { data: ticketsActivos } = await supabase.from('ticket').select('id_ticket').eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', estActivo?.id_estado || 1);
-    if (ticketsActivos && ticketsActivos.length > 0) return Swal.fire('No se puede eliminar', `Este vehículo tiene ${ticketsActivos.length} ticket(s) activo(s). Registre la salida primero.`, 'warning');
+  const handleConfirmarCambioEstado = async (vehiculo) => {
+    if (!orgId) return;
+    const oldStatus = vehiculo.id_estado;
+    const nextStatus = parseInt(newStatusChoice);
 
-    const result = await Swal.fire({ title: '¿Eliminar vehículo?', html: `Placa: <b>${vehiculo.placa}</b><br><small>Se eliminarán también sus registros de acceso históricos.</small>`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Sí, eliminar' });
-    
+    if (oldStatus === nextStatus) {
+        setChangingStatusFor(null);
+        return;
+    }
+
     try {
-      if (result.isConfirmed) {
-        const { error } = await supabase.from('vehiculo').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
-        if (error) {
-          if (error.message.includes('registro_acceso_vehiculo_fk')) {
-            // Soft delete: Desvincular de la persona para ocultarlo, conservando el historial
-            const { error: updErr } = await supabase.from('vehiculo').update({ id_persona: null }).eq('id_vehiculo', vehiculo.id_vehiculo);
-            if (updErr) throw updErr;
-            Swal.fire('Eliminado de forma segura', 'El vehículo fue removido de la flota (su historial de accesos antiguos se conserva internamente).', 'success');
-            registrarLog('Vehículo Removido', `Vehículo con placa ${vehiculo.placa} desvinculado por tener historial.`);
-            loadData();
-          } else {
-            Swal.fire('Error', error.message, 'error');
-          }
-        } else {
-          Swal.fire('Eliminado', 'Vehículo borrado correctamente.', 'success');
-          registrarLog('Vehículo Eliminado', `Vehículo con placa ${vehiculo.placa} eliminado del sistema.`);
-          loadData();
-        }
-      }
-    } catch (err) { Swal.fire('Error al eliminar', err.message, 'error'); }
+        setLoading(true);
+        const { error: upErr } = await supabase
+            .from('vehiculo')
+            .update({ id_estado: nextStatus })
+            .eq('id_vehiculo', vehiculo.id_vehiculo);
+        
+        if (upErr) throw upErr;
+
+        Swal.fire({
+            title: 'Actualizado',
+            text: 'Estado del vehículo actualizado correctamente.',
+            icon: 'success',
+            timer: 1500,
+            showConfirmButton: false
+        });
+
+        registrarLog('Cambio de Estado', `Vehículo ${vehiculo.placa} cambiado de estado ${oldStatus} a ${nextStatus}`);
+        setChangingStatusFor(null);
+        loadData();
+    } catch (error) {
+        Swal.fire('Error', error.message, 'error');
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const handleEliminarVehiculo = async (vehiculo) => {
+    // Soft Delete Moderno: Ahora simplemente lo inhabilitamos
+    const result = await Swal.fire({ 
+        title: '¿Inhabilitar vehículo?', 
+        html: `La placa <b>${vehiculo.placa}</b> dejará de estar habilitada pero se conservará en el sistema.`, 
+        icon: 'warning', 
+        showCancelButton: true, 
+        confirmButtonColor: '#d33', 
+        confirmButtonText: 'Sí, inhabilitar' 
+    });
+    
+    if (result.isConfirmed) {
+        setNewStatusChoice('2'); // ID 2: Inhabilitado
+        handleConfirmarCambioEstado({ ...vehiculo });
+    }
   };
 
   return (
@@ -183,7 +218,7 @@ export default function Vehiculos() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
         {/* Formulario */}
         {canCreate && (
-        <section className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
+        <section className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
           <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-gray-800">
             <FaCar className="text-purple-600" /> Vincular Vehículo Personal
           </h3>
@@ -206,7 +241,7 @@ export default function Vehiculos() {
                 required
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
                 <SearchableSelect
@@ -244,11 +279,18 @@ export default function Vehiculos() {
         )}
 
         {/* Tabla flota */}
-        <section className={`${canCreate ? 'lg:col-span-3' : 'lg:col-span-5'} bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden flex flex-col`}>
+        <section className={`${canCreate ? 'lg:col-span-4' : 'lg:col-span-5'} bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden flex flex-col`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between p-5 border-b gap-4">
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
               <FaCar className="text-purple-600" /> Flota Registrada
-              <span className="ml-2 bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-full">{vehiculos.length} vehículos</span>
+              <div className="flex items-center gap-1.5 ml-2">
+                <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter">
+                  {vehiculos.filter(v => v.id_estado === 1).length} Habilitados
+                </span>
+                <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter">
+                  {vehiculos.length} Total
+                </span>
+              </div>
             </h3>
             <div className="flex items-center gap-2 w-full sm:w-auto">
               <div className="relative flex-1 sm:w-64">
@@ -274,6 +316,7 @@ export default function Vehiculos() {
                   <th className="px-5 py-3 text-left">Placa</th>
                   <th className="px-5 py-3 text-left">Marca / Modelo / Color</th>
                   <th className="px-5 py-3 text-left">Registro</th>
+                  <th className="px-5 py-3 text-center">Estado</th>
                   <th className="px-5 py-3 text-center">Acción</th>
                 </tr>
               </thead>
@@ -283,25 +326,93 @@ export default function Vehiculos() {
                     const matchPlaca = (v.placa || '').toLowerCase().includes(searchFlota.toLowerCase());
                     return matchName || matchPlaca;
                 }).length === 0
-                  ? <tr><td colSpan="5" className="text-center py-10 text-gray-400">No hay vehículos que coincidan.</td></tr>
+                  ? <tr><td colSpan="6" className="text-center py-10 text-gray-400">No hay vehículos que coincidan.</td></tr>
                   : vehiculos.filter(v => {
                         const matchName = `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`.toLowerCase().includes(searchFlota.toLowerCase());
                         const matchPlaca = (v.placa || '').toLowerCase().includes(searchFlota.toLowerCase());
                         return matchName || matchPlaca;
-                    }).map(v => (
-                    <tr key={v.id_vehiculo} className="hover:bg-gray-50 transition-all">
-                      <td className="px-5 py-4 font-medium text-gray-800">{v.persona?.nombre} {v.persona?.apellido}</td>
-                      <td className="px-5 py-4"><span className="font-mono font-bold bg-gray-900 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span></td>
+                  }).map(v => (
+                    <tr key={v.id_vehiculo} className={`transition-all ${(v.id_estado || 1) !== 1 ? 'bg-gray-50/50 opacity-60 grayscale-[0.3]' : 'hover:bg-gray-50'}`}>
+                      <td className="px-5 py-4 font-medium text-gray-800">
+                        <div className="flex flex-col">
+                            <span>{v.persona?.nombre} {v.persona?.apellido}</span>
+                            {(v.id_estado || 1) !== 1 && <span className="text-[9px] font-bold text-gray-400 uppercase italic">Registro no operativo</span>}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${(v.id_estado || 1) === 1 ? 'bg-gray-900 text-white shadow-sm' : 'bg-gray-300 text-gray-600'}`}>
+                            {v.placa}
+                        </span>
+                      </td>
                       <td className="px-5 py-4 text-gray-500 text-xs">{[v.modelo?.marca?.nombre, v.modelo?.nombre, v.color?.nombre].filter(Boolean).join(' · ') || '—'}</td>
                       <td className="px-5 py-4 text-xs text-gray-400">{new Date(v.created_at).toLocaleDateString('es-DO')}</td>
+                      
+                      <td className="px-5 py-4 text-center">
+                        {changingStatusFor === v.id_vehiculo ? (
+                            <div className="flex items-center justify-center gap-1 animate-fadeIn">
+                                <select 
+                                    className="border border-purple-300 rounded-lg px-2 py-1.5 text-[10px] focus:ring-2 focus:ring-purple-200 focus:border-purple-500 outline-none transition-all cursor-pointer bg-white"
+                                    value={newStatusChoice}
+                                    onChange={e => setNewStatusChoice(e.target.value)}
+                                >
+                                    {estadosVehiculosList.map(e => (
+                                        <option key={e.id_estado} value={e.id_estado}>{e.nombre}</option>
+                                    ))}
+                                </select>
+                                <button 
+                                    onClick={() => handleConfirmarCambioEstado(v)} 
+                                    className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm"
+                                    title="Confirmar"
+                                >
+                                    {loading ? <FaSync size={10} className="animate-spin" /> : <FaCheck size={10} />}
+                                </button>
+                                <button 
+                                    onClick={() => setChangingStatusFor(null)} 
+                                    className="p-1.5 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition"
+                                    title="Cancelar"
+                                >
+                                    <FaTimes size={10} />
+                                </button>
+                            </div>
+                        ) : (
+                            <div 
+                                className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider cursor-default ${
+                                    (v.id_estado || 1) === 1 ? 'bg-green-100 text-green-700' :
+                                    v.id_estado === 2 ? 'bg-red-100 text-red-700' :
+                                    v.id_estado === 3 ? 'bg-orange-100 text-orange-700' :
+                                    'bg-gray-100 text-gray-600'
+                                }`}
+                            >
+                                {estadosVehiculosList.find(e => e.id_estado === (v.id_estado || 1))?.nombre || 'Indefinido'}
+                            </div>
+                        )}
+                      </td>
+
                       <td className="px-5 py-4 text-center">
                         <div className="flex gap-1 justify-center">
-                          {canEdit && <button onClick={() => { 
-                            setEditandoVehiculo(v); 
-                            const idMarca = v.id_modelo ? listaModelos.find(m => m.id_modelo === v.id_modelo)?.id_marca : '';
-                            setEditVehiculoForm({ placa: v.placa, id_marca: idMarca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); 
-                          }} className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition" title="Editar"><FaEdit size={14} /></button>}
-                          {canDelete && <button onClick={() => handleEliminarVehiculo(v)} className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition" title="Eliminar"><FaTrash size={14} /></button>}
+                          {canEdit && (
+                            <button 
+                                onClick={() => { 
+                                    setEditandoVehiculo(v); 
+                                    const idMarca = v.id_modelo ? listaModelos.find(m => m.id_modelo === v.id_modelo)?.id_marca : '';
+                                    setEditVehiculoForm({ placa: v.placa, id_marca: idMarca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); 
+                                }} 
+                                className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-lg transition" 
+                                title="Editar"
+                            >
+                                <FaEdit size={14} />
+                            </button>
+                          )}
+                          <button 
+                            onClick={() => {
+                                setChangingStatusFor(v.id_vehiculo);
+                                setNewStatusChoice((v.id_estado || 1).toString());
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg border border-purple-200 text-purple-600 hover:bg-purple-50 text-[10px] font-bold transition flex items-center gap-1"
+                            title="Cambiar Estado"
+                          >
+                            <FaSync size={10} /> <span>Estado</span>
+                          </button>
                         </div>
                       </td>
                     </tr>

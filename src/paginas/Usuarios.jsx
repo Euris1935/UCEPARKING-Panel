@@ -193,6 +193,9 @@ export default function Usuarios() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!orgId) {
+      return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+    }
     const { nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion, rol_id, contrasena } = formData;
 
       if (!rol_id || !nombre || !apellido) {

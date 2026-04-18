@@ -166,12 +166,16 @@ export default function Empleados() {
       return Swal.fire('Atención', 'Selecciona un usuario del sistema.', 'warning');
     }
 
+    if (!adminOrgId) {
+      return Swal.fire('Error', 'No se ha detectado su organización de administración. Por favor, recargue la página o verifique su perfil.', 'error');
+    }
+
     try {
       Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
 
       const payload = {
         departamento_id: parseInt(departamento_id),
-        ...(adminOrgId ? { organizacion_id: adminOrgId } : {}),
+        organizacion_id: adminOrgId,
       };
 
       if (isUpdating) {

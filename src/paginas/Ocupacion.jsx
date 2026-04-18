@@ -165,9 +165,10 @@ export default function Ocupacion() {
         });
       }
 
-      // 3. ASIGNACIONES (Fijas)
+      // 3. ASIGNACIONES (Fijas y Activas)
       const { data: asigData } = await supabase.from('asignacion')
          .select('id_plaza, id_empleado')
+         .eq('id_estado', 1) // Solo las que están marcadas como Activas
          .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
          
       if (asigData && asigData.length > 0) {

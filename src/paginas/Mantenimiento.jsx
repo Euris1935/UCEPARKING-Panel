@@ -181,6 +181,11 @@ export default function Mantenimiento() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        
+        if (!orgId) {
+            return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+        }
+
         setLoading(true);
         try {
             const estadoCompletadoId = estadosMantenimiento.find(e => e.nombre?.toLowerCase().includes('completado'))?.id_estado;
