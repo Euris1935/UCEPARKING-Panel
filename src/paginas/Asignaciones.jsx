@@ -38,10 +38,16 @@ export default function Asignaciones() {
     const [newStatusChoice, setNewStatusChoice] = useState(null);
     const [estadosAsigList, setEstadosAsigList] = useState([]);
 
+    const getNowLocalISO = () => {
+        const now = new Date();
+        const offset = now.getTimezoneOffset() * 60000;
+        return new Date(now.getTime() - offset).toISOString().slice(0, 16);
+    };
+
     const initialForm = {
         Id_Empleado: '',
         Id_Plaza: '',
-        Fecha_Inicio: new Date().toISOString().split('T')[0],
+        Fecha_Inicio: getNowLocalISO(),
         Fecha_Fin: '',
         Notas: ''
     };
@@ -85,16 +91,16 @@ export default function Asignaciones() {
     const checkExpiredAssignments = async () => {
         try {
             console.log("[AutoClose] Verificando asignaciones vencidas...");
-            const hoy = new Date().toISOString().split('T')[0];
+            const ahora = new Date().toISOString();
             
-            // 1. Buscar asignaciones activas (id_estado=1) cuya fecha_fin sea < hoy
+            // 1. Buscar asignaciones activas (id_estado=1) cuya fecha_fin ya pasó
             const { data: vencidas, error } = await supabase
                 .from('asignacion')
                 .select('id_asignacion, id_plaza')
                 .eq('id_estado', 1)
                 .eq('organizacion_id', orgId)
                 .not('fecha_fin', 'is', null)
-                .lt('fecha_fin', hoy);
+                .lt('fecha_fin', ahora);
             
             if (error) throw error;
             if (!vencidas || vencidas.length === 0) return;
@@ -153,8 +159,7 @@ export default function Asignaciones() {
                 .select('id_plaza, numero_plaza');
 
             // 4. Unir datos manualmente y calcular estado derivado
-            const hoy = new Date();
-            hoy.setHours(0, 0, 0, 0);
+            const ahora = new Date();
 
             const asignacionesConDatos = asigData.map(asig => {
                 const emp = todosEmpleadosOrdenados?.find(e => e.id_empleado === asig.id_empleado);
@@ -164,8 +169,7 @@ export default function Asignaciones() {
                 let estadoFinal = asig.id_estado;
                 if (asig.id_estado === 1 && asig.fecha_fin) {
                     const fFin = new Date(asig.fecha_fin);
-                    fFin.setHours(0, 0, 0, 0);
-                    if (fFin < hoy) estadoFinal = 2; // Mostrar como finalizada si ya venció
+                    if (fFin < ahora) estadoFinal = 2; // Mostrar como finalizada si ya venció
                 }
 
                 return { 
@@ -270,7 +274,7 @@ export default function Asignaciones() {
 
     const handleOpenCreate = async () => {
         setEditingAsignacion(null);
-        setFormData(initialForm);
+        setFormData({ ...initialForm, Fecha_Inicio: getNowLocalISO() });
         setVehiculoVinculado(null);
         setIsPermanent(false);
         const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
@@ -294,8 +298,8 @@ export default function Asignaciones() {
         setFormData({
             Id_Empleado: String(asig.id_empleado || ''),
             Id_Plaza: String(asig.id_plaza || ''),
-            Fecha_Inicio: asig.fecha_inicio || new Date().toISOString().split('T')[0],
-            Fecha_Fin: asig.fecha_fin || '',
+            Fecha_Inicio: asig.fecha_inicio ? new Date(new Date(asig.fecha_inicio).getTime() - new Date(asig.fecha_inicio).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '',
+            Fecha_Fin: asig.fecha_fin ? new Date(new Date(asig.fecha_fin).getTime() - new Date(asig.fecha_fin).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '',
             Notas: asig.notas || ''
         });
         setIsPermanent(!asig.fecha_fin);
@@ -340,8 +344,8 @@ export default function Asignaciones() {
         const { error: insertError } = await supabase.from('asignacion').insert([{
             id_empleado: parseInt(formData.Id_Empleado),
             id_plaza: parseInt(formData.Id_Plaza),
-            fecha_inicio: formData.Fecha_Inicio,
-            fecha_fin: isPermanent ? null : (formData.Fecha_Fin || null),
+            fecha_inicio: new Date(formData.Fecha_Inicio).toISOString(),
+            fecha_fin: isPermanent || !formData.Fecha_Fin ? null : new Date(formData.Fecha_Fin).toISOString(),
             notas: formData.Notas,
             id_estado: idEstadoAsig,
             organizacion_id: orgId
@@ -364,8 +368,8 @@ export default function Asignaciones() {
             .update({
                 id_empleado: parseInt(formData.Id_Empleado),
                 id_plaza: plazaNueva,
-                fecha_inicio: formData.Fecha_Inicio,
-                fecha_fin: isPermanent ? null : (formData.Fecha_Fin || null),
+                fecha_inicio: new Date(formData.Fecha_Inicio).toISOString(),
+                fecha_fin: isPermanent || !formData.Fecha_Fin ? null : new Date(formData.Fecha_Fin).toISOString(),
                 notas: formData.Notas,
             })
             .eq('id_asignacion', editingAsignacion.id_asignacion);
@@ -427,18 +431,14 @@ export default function Asignaciones() {
             };
             
             if (nextStatus === 2) { // Finalizada
-                    const strHoy = new Date().toISOString().split('T')[0];
-                    const strInicio = asig.fecha_inicio; // YYYY-MM-DD
+                    const momentAhora = new Date();
+                    const momentInicio = new Date(asig.fecha_inicio);
                     
-                    // Comparación de cadenas simple (YYYY-MM-DD es lexicológicamente comparable)
-                    if (strInicio > strHoy) {
-                        // Si el inicio es en el futuro, forzamos el fin a ser igual al inicio para no violar el constraint
-                        updatePayload.fecha_fin = strInicio;
-                    } else {
-                        // Caso normal: finaliza hoy
-                        updatePayload.fecha_fin = strHoy;
-                    }
-                    console.log(`[SimplifiedDate] Inicio: ${strInicio} -> Fin: ${updatePayload.fecha_fin}`);
+                    // Asegurar que la fecha de fin sea mayor o igual al inicio para cumplir con el constraint
+                    const fechaFinFinal = momentAhora > momentInicio ? momentAhora.toISOString() : momentInicio.toISOString();
+                    updatePayload.fecha_fin = fechaFinFinal;
+                    
+                    console.log(`[StatusChange] Inicio: ${asig.fecha_inicio} -> Fin: ${updatePayload.fecha_fin}`);
             }
 
             // 2. ACTUALIZAR ASIGNACIÓN PRIMERO (Si esto falla, no liberamos la plaza)
@@ -628,15 +628,32 @@ export default function Asignaciones() {
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                        <div className="flex items-center gap-1">
-                                                            <FaCalendarAlt className="text-gray-400" />
-                                                            {item.fecha_inicio ? new Date(item.fecha_inicio).toLocaleDateString() : '-'}
+                                                        <div className="flex flex-col">
+                                                            <div className="flex items-center gap-1">
+                                                                <FaCalendarAlt className="text-gray-400" />
+                                                                {item.fecha_inicio ? new Date(item.fecha_inicio).toLocaleDateString() : '-'}
+                                                            </div>
+                                                            <span className="text-[10px] text-gray-400 ml-5 font-mono">
+                                                                {item.fecha_inicio ? new Date(item.fecha_inicio).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' }) : ''}
+                                                            </span>
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                        {item.fecha_fin
-                                                            ? <span className="flex items-center gap-1"><FaCalendarAlt className={isClosed ? "text-gray-300" : "text-red-400"} />{new Date(item.fecha_fin).toLocaleDateString()}</span>
-                                                            : <span className={`flex items-center gap-1 font-bold ${isClosed ? 'text-gray-300' : 'text-green-600'}`}><FaCalendarAlt /> Fija</span>}
+                                                        {item.fecha_fin ? (
+                                                            <div className="flex flex-col">
+                                                                <span className="flex items-center gap-1">
+                                                                    <FaCalendarAlt className={isClosed ? "text-gray-300" : "text-red-400"} />
+                                                                    {new Date(item.fecha_fin).toLocaleDateString()}
+                                                                </span>
+                                                                <span className="text-[10px] text-gray-400 ml-5 font-mono">
+                                                                    {new Date(item.fecha_fin).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}
+                                                                </span>
+                                                            </div>
+                                                        ) : (
+                                                            <span className={`flex items-center gap-1 font-bold ${isClosed ? 'text-gray-300' : 'text-green-600'}`}>
+                                                                <FaCalendarAlt /> Fija
+                                                            </span>
+                                                        )}
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap">
                                                         {changingStatusFor === item.id_asignacion ? (
@@ -797,7 +814,7 @@ export default function Asignaciones() {
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
                                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Inicio *</label>
-                                        <input type="date" className="w-full border rounded-lg p-2 text-sm focus:ring-purple-500 bg-gray-50 outline-none"
+                                        <input type="datetime-local" className="w-full border rounded-lg p-2 text-sm focus:ring-purple-500 bg-gray-50 outline-none"
                                             value={formData.Fecha_Inicio}
                                             onChange={(e) => setFormData({ ...formData, Fecha_Inicio: e.target.value })}
                                             required />
@@ -818,7 +835,7 @@ export default function Asignaciones() {
                                                 Fija
                                             </label>
                                         </div>
-                                        <input type="date"
+                                        <input type="datetime-local"
                                             className={`w-full border rounded-lg p-2 text-sm focus:ring-purple-500 bg-gray-50 outline-none ${isPermanent ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : ''}`}
                                             value={formData.Fecha_Fin}
                                             onChange={(e) => setFormData({ ...formData, Fecha_Fin: e.target.value })}
