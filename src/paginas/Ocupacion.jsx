@@ -51,7 +51,7 @@ export default function Ocupacion() {
       const { data: zonasData } = await supabase
         .from('zona')
         .select('*, estado_zona(nombre)')
-        .order('id_zona');
+        .order('nombre');
       
       // Filtrar zonas Inactivas pero PERMITIR Cerrada Temporalmente y En Mantenimiento
       const zonasVivas = (zonasData || []).filter(z => {

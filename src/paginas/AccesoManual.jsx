@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaCar } from 'react-icons/fa';
+import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaCar, FaHistory } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
 
@@ -18,6 +18,7 @@ export default function AccesoManual() {
   const [todasPlazas, setTodasPlazas] = useState([]);
   const [plazasLibres, setPlazasLibres] = useState([]);
   const [accesosActivos, setAccesosActivos] = useState([]);
+  const [accesosHistorial, setAccesosHistorial] = useState([]);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchOptions, setSearchOptions] = useState([]);
@@ -154,6 +155,27 @@ export default function AccesoManual() {
         };
       });
       setAccesosActivos(enrichedActivos);
+
+      // 6. Accesos Historial (ya salieron)
+      const { data: historial } = await supabase
+        .from('acceso')
+        .select('*, vehiculo(*, modelo(nombre, marca(nombre)), color(nombre))')
+        .not('salida_at', 'is', null)
+        .is('ticket_id', null)
+        .order('salida_at', { ascending: false })
+        .limit(100);
+
+      const enrichedHistorial = (historial || []).map(acc => {
+        const per = pMap[acc.vehiculo?.id_persona];
+        return {
+          ...acc,
+          _personaNombre: per ? `${per.nombre} ${per.apellido}` : (acc.vehiculo?.placa || 'Desconocido'),
+          _personaTel: per?.telefono || '— ',
+          _marcaNombre: acc.vehiculo?.modelo?.marca?.nombre,
+          _modeloNombre: acc.vehiculo?.modelo?.nombre
+        };
+      });
+      setAccesosHistorial(enrichedHistorial);
 
     } catch (err) { console.error('Error loadData:', err); } finally { setIsRefreshing(false); }
   };
@@ -361,7 +383,7 @@ export default function AccesoManual() {
       className={`flex items-center gap-2 pb-3 px-4 font-bold text-sm border-b-4 transition-all ${activeTab === id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-400 hover:text-gray-600'
         }`}
     >
-      {icon} {label}
+      {label}
       {id === 'activos' && accesosActivos.length > 0 && (
         <span className="ml-1 bg-indigo-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{accesosActivos.length}</span>
       )}
@@ -392,8 +414,9 @@ export default function AccesoManual() {
       </header>
 
       <div className="flex gap-2 border-b border-gray-200 mb-8">
-        {tabBtn('entrada', 'Nueva Entrada Manual', <FaDoorOpen />)}
+        {tabBtn('entrada', 'Nueva Entrada', <FaDoorOpen />)}
         {tabBtn('activos', 'Accesos Activos', <FaList />)}
+        {tabBtn('historial', 'Historial', <FaHistory />)}
       </div>
 
       {activeTab === 'entrada' && (
@@ -537,9 +560,18 @@ export default function AccesoManual() {
         </section>
       )}
 
-      {activeTab === 'activos' && (
+      {(activeTab === 'activos' || activeTab === 'historial') && (
         <section className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
           <div className="p-5 border-b flex justify-between items-center bg-gray-50">
+            <div>
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                {activeTab === 'activos' ? <FaList className="text-green-600" /> : <FaHistory className="text-indigo-600" />} 
+                {activeTab === 'activos' ? 'Vehículos Adentro' : 'Historial de Accesos Manuales'}
+              </h3>
+              <p className="text-[10px] text-gray-400">
+                {activeTab === 'activos' ? 'Lista de vehículos con acceso manual activo que aún no han salido.' : 'Registro de todos los accesos manuales finalizados recientemente.'}
+              </p>
+            </div>
             <div className="flex items-center gap-2">
               <div className="relative w-64">
                 <input
@@ -560,7 +592,7 @@ export default function AccesoManual() {
               </button>
             </div>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
             <table className="w-full text-left text-sm whitespace-nowrap">
               <thead className="bg-gray-100 text-gray-600 uppercase text-xs font-bold">
                 <tr>
@@ -569,24 +601,26 @@ export default function AccesoManual() {
                   <th className="py-3 px-4">Teléfono</th>
                   <th className="py-3 px-4">Plaza</th>
                   <th className="py-3 px-4">Hora Entrada</th>
-                  <th className="py-3 px-4 text-center">Acciones</th>
+                  {activeTab === 'historial' && <th className="py-3 px-4">Hora Salida</th>}
+                  <th className="py-3 px-4 text-center">{activeTab === 'historial' ? 'Estado' : 'Acciones'}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {(() => {
                   const busq = busquedaActivos.toLowerCase();
-                  const filtrados = accesosActivos.filter(acc => {
+                  const listado = activeTab === 'activos' ? accesosActivos : accesosHistorial;
+                  const filtrados = listado.filter(acc => {
                     return acc.vehiculo?.placa?.toLowerCase().includes(busq) ||
                       acc._personaNombre?.toLowerCase().includes(busq) ||
                       acc._personaTel?.toLowerCase().includes(busq);
                   });
                   if (filtrados.length === 0) {
-                    return <tr><td colSpan="6" className="text-center py-8 text-gray-400">No hay accesos manuales activos</td></tr>;
+                    return <tr><td colSpan={activeTab === 'historial' ? '7' : '6'} className="text-center py-8 text-gray-400">No se encontraron registros.</td></tr>;
                   }
                   return filtrados.map((acc) => (
                     <tr key={acc.id_registro} className="hover:bg-gray-50 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-indigo-700 text-base">{acc.vehiculo?.placa}</td>
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 text-nowrap">
                         <div className="font-semibold text-gray-800">
                           {acc._personaNombre}
                         </div>
@@ -596,18 +630,27 @@ export default function AccesoManual() {
                         {acc._personaTel}
                       </td>
                       <td className="py-3 px-4">
-                        <span className="bg-gray-200 text-gray-800 px-2 py-1 rounded font-bold text-xs">
+                        <span className="bg-gray-200 text-gray-800 px-2 py-1 rounded font-bold text-xs whitespace-nowrap">
                           {todasPlazas.find(p => p.id_plaza === acc.id_plaza)?.numero_plaza || 'N/A'}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-gray-600">{formatearFecha(acc.entrada_at)}</td>
+                      <td className="py-3 px-4 text-gray-600 text-xs">{formatearFecha(acc.entrada_at)}</td>
+                      {activeTab === 'historial' && (
+                        <td className="py-3 px-4 text-gray-600 text-xs">{formatearFecha(acc.salida_at)}</td>
+                      )}
                       <td className="py-3 px-4 text-center">
-                        <button
-                          onClick={() => handleRegistrarSalida(acc)}
-                          className="bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1.5 rounded-lg font-bold text-xs transition flex items-center gap-1 mx-auto"
-                        >
-                          <FaSignOutAlt /> Registrar Salida
-                        </button>
+                        {activeTab === 'activos' ? (
+                          <button
+                            onClick={() => handleRegistrarSalida(acc)}
+                            className="bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1.5 rounded-lg font-bold text-xs transition flex items-center gap-1 mx-auto shadow-sm"
+                          >
+                            <FaSignOutAlt /> Registrar Salida
+                          </button>
+                        ) : (
+                          <span className="bg-green-100 text-green-700 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                            Completado
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ));

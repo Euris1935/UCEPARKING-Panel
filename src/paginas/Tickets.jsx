@@ -6,7 +6,7 @@ import Swal from 'sweetalert2';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   FaTicketAlt, FaUserPlus, FaPrint, FaSignOutAlt,
-  FaClipboardCheck, FaSyncAlt, FaBan, FaTimes, FaUserTag
+  FaClipboardCheck, FaSyncAlt, FaBan, FaTimes, FaUserTag, FaHistory
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import SearchableSelect from '../componentes/SearchableSelect';
@@ -135,7 +135,7 @@ export default function Tickets() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
       .subscribe();
     return () => { supabase.removeChannel(ch); clearInterval(intervalo); };
-  }, []);
+  }, [activeTab]);
 
   const loadData = async () => {
     setIsRefreshing(true);
@@ -144,22 +144,19 @@ export default function Tickets() {
       const idEstLibrePlaza = epLibre?.id_estado || 1;
 
       const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+      const hoyISO = hoy.toISOString();
 
-      const { data: rawPlazas } = await supabase
-        .from('plaza')
-        .select('*, zona:id_zona(estado_zona(nombre))')
-        .eq('id_estado', idEstLibrePlaza)
-        .order('numero_plaza');
+      let query = supabase.from('ticket').select('*, plaza:id_plaza_asignada(numero_plaza)');
       
-      // Blindaje: Solo considerar libres las que id_estado=Libre Y NO tienen contrato activo
-      const { data: asigsActivas } = await supabase.from('asignacion').select('id_plaza').eq('id_estado', 1);
-      const plazasAsignadasIds = new Set(asigsActivas?.map(a => a.id_plaza) || []);
+      if (activeTab === 'historial') {
+        query = query.lt('fecha_hora_emision', hoyISO);
+      } else {
+        query = query.gte('fecha_hora_emision', hoyISO);
+      }
 
-      const plazas = (rawPlazas || []).filter(p => {
-        const est = p.zona?.estado_zona?.nombre || 'Activa';
-        return est === 'Activa' && !plazasAsignadasIds.has(p.id_plaza);
-      });
+      const { data: tks } = await query.order('fecha_hora_emision', { ascending: false });
 
+      // --- Mapeos Auxiliares ---
       const { data: stCat } = await supabase.from('estado_ticket').select('id_estado, nombre');
       const stMap = {}; (stCat || []).forEach(s => { stMap[s.id_estado] = s.nombre; });
 
@@ -183,12 +180,6 @@ export default function Tickets() {
           vMap[v.id_visitante] = { ...v, persona: pMap[v.id_persona] };
         });
       }
-
-      const { data: tks } = await supabase
-        .from('ticket')
-        .select('*, plaza:id_plaza_asignada(numero_plaza)')
-        .gte('fecha_hora_emision', hoy.toISOString())
-        .order('fecha_hora_emision', { ascending: false });
 
       const closedIds = (tks || []).filter(t => stMap[t.id_estado]?.toLowerCase() === 'cerrado').map(t => t.id_ticket);
       let exitMap = {};
@@ -214,6 +205,21 @@ export default function Tickets() {
       const { data: catMarcas } = await supabase.from('marca').select('id_marca, nombre').order('nombre');
       const { data: catModelos } = await supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre');
       const { data: catColores } = await supabase.from('color').select('id_color, nombre').order('nombre');
+
+      // Re-consulta de plazas para el formulario (siempre necesarias)
+      const { data: rawPlazas } = await supabase
+        .from('plaza')
+        .select('*, zona:id_zona(estado_zona(nombre))')
+        .eq('id_estado', idEstLibrePlaza)
+        .order('numero_plaza');
+      
+      const { data: asigsActivas } = await supabase.from('asignacion').select('id_plaza').eq('id_estado', 1);
+      const plazasAsignadasIds = new Set(asigsActivas?.map(a => a.id_plaza) || []);
+
+      const plazas = (rawPlazas || []).filter(p => {
+        const est = p.zona?.estado_zona?.nombre || 'Activa';
+        return est === 'Activa' && !plazasAsignadasIds.has(p.id_plaza);
+      });
 
       setPlazasLibres(plazas || []);
       setTickets(ticketsEnriquecidos);
@@ -460,6 +466,7 @@ export default function Tickets() {
       <div className="flex gap-2 border-b border-gray-200 mb-8">
         {canCreate && tabBtn('entrada', 'Nueva Entrada', <FaTicketAlt />)}
         {tabBtn('activos', 'Tickets Activos', <FaClipboardCheck />)}
+        {tabBtn('historial', 'Historial', <FaHistory />)}
       </div>
 
       {canCreate && activeTab === 'entrada' && (
@@ -559,12 +566,17 @@ export default function Tickets() {
         </div>
       )}
 
-      {activeTab === 'activos' && (
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+      {(activeTab === 'activos' || activeTab === 'historial') && (
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden text-nowrap">
           <div className="flex flex-col md:flex-row items-center justify-between p-5 border-b gap-4 bg-gray-50/50">
             <div>
-              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaClipboardCheck className="text-green-600" /> Lista de Tickets del Día</h3>
-              <p className="text-[10px] text-gray-500 font-medium">Gestiona y visualiza todos los movimientos de hoy</p>
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <FaClipboardCheck className="text-green-600" /> 
+                {activeTab === 'historial' ? 'Historial de Tickets Emitidos' : 'Lista de Tickets del Día'}
+              </h3>
+              <p className="text-[10px] text-gray-500 font-medium">
+                {activeTab === 'historial' ? 'Visualiza todos los registros cargados en el sistema' : 'Gestiona y visualiza todos los movimientos de hoy'}
+              </p>
             </div>
             <div className="flex items-center gap-2 w-full md:w-auto">
               <div className="relative w-full md:w-64">
@@ -588,9 +600,9 @@ export default function Tickets() {
             </div>
           </div>
           {tickets.length === 0
-            ? <div className="text-center py-16 text-gray-400"><FaTicketAlt className="mx-auto text-4xl mb-3 opacity-20" /><p>No hay tickets registrados hoy.</p></div>
+            ? <div className="text-center py-16 text-gray-400"><FaTicketAlt className="mx-auto text-4xl mb-3 opacity-20" /><p>No hay tickets registrados {activeTab === 'historial' ? 'anteriormente' : 'hoy'}.</p></div>
             : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
                 <table className="min-w-full text-sm">
                   <thead className="bg-gray-100/50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">
                     <tr>
@@ -664,7 +676,7 @@ export default function Tickets() {
                                 >
                                   <FaPrint size={14} />
                                 </button>
-                                {sLower === 'activo' && (
+                                {activeTab !== 'historial' && sLower === 'activo' && (
                                   <>
                                     <button 
                                       onClick={() => handleCerrarTicket(t)} 
