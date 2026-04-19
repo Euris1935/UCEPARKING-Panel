@@ -104,34 +104,29 @@ export default function Ocupacion() {
       const { data: erData } = await supabase.from('estado_reserva').select('id_estado, nombre');
       const idResActiva = erData?.find(e => e.nombre === 'Activa')?.id_estado || 1;
       const idEstCompletadoRes = erData?.find(e => e.nombre === 'Completada')?.id_estado || 3;
-      const idEstLibrePlaza = estData?.find(e => e.nombre === 'Libre')?.id_estado || 1;
 
-      const { data: todasActivas } = await supabase.from('reserva').select('id_reserva, id_plaza, fecha_hora_inicio, fecha_hora_fin, id_persona').eq('id_estado', idResActiva);
-      let resData = (todasActivas || []);
+      const { data: todasActivas } = await supabase
+        .from('reserva')
+        .select(`
+          id_reserva, id_plaza, fecha_hora_inicio, fecha_hora_fin, id_persona, id_vehiculo,
+          vehiculo ( placa )
+        `)
+        .eq('id_estado', idResActiva);
+      
+      const resData = (todasActivas || []);
 
-      // Ya no filtramos visualmente por tiempo. 
-      // Si la reserva está en la DB como Activa, mostramos el ocupante.
-      // Así evitamos que desaparezca el nombre antes de que cambie el color de la plaza.
       if (resData.length > 0) {
           const pIdsRes = resData.map(r => r.id_persona).filter(Boolean);
           const { data: resPersonas } = await supabase.from('persona').select('id_persona, nombre, apellido').in('id_persona', pIdsRes);
-
-          // Obtener vehículos vinculados a las personas que reservaron
-          const { data: vehRes } = pIdsRes.length > 0
-            ? await supabase.from('vehiculo').select('id_persona, placa').in('id_persona', pIdsRes)
-            : { data: [] };
-          const vehResMap = {};
-          (vehRes || []).forEach(v => { if (!vehResMap[v.id_persona]) vehResMap[v.id_persona] = v; });
           
           resData.forEach(res => {
              const p = resPersonas?.find(x => String(x.id_persona) === String(res.id_persona));
              if (p && res.id_plaza) {
-                const vh = vehResMap[res.id_persona];
                 mapaOcupacion[res.id_plaza] = {
                    ...mapaOcupacion[res.id_plaza],
                    type: 'reserva',
                    nombre: `${p.nombre} ${p.apellido}`.trim(),
-                   placa: vh?.placa || null
+                   placa: res.vehiculo?.placa || null
                 };
              }
           });
@@ -167,8 +162,8 @@ export default function Ocupacion() {
 
       // 3. ASIGNACIONES (Fijas y Activas)
       const { data: asigData } = await supabase.from('asignacion')
-         .select('id_plaza, id_empleado')
-         .eq('id_estado', 1) // Solo las que están marcadas como Activas
+         .select('id_plaza, id_empleado, id_vehiculo, vehiculo(placa)')
+         .eq('id_estado', 1)
          .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
          
       if (asigData && asigData.length > 0) {
@@ -177,24 +172,15 @@ export default function Ocupacion() {
             .from('empleado')
             .select('id_empleado, id_persona, persona(nombre, apellido)')
             .in('id_empleado', empIds);
-
-          // Obtener vehículos vinculados a cada persona empleada
-          const personaIds = (empPersonas || []).map(e => e.id_persona).filter(Boolean);
-          const { data: vehAsig } = personaIds.length > 0
-            ? await supabase.from('vehiculo').select('id_persona, placa').in('id_persona', personaIds)
-            : { data: [] };
-          const vehAsigMap = {};
-          (vehAsig || []).forEach(v => { if (!vehAsigMap[v.id_persona]) vehAsigMap[v.id_persona] = v; });
           
           asigData.forEach(asig => {
              const emp = empPersonas?.find(x => x.id_empleado === asig.id_empleado);
              if (emp?.persona && asig.id_plaza) {
-                const vh = emp.id_persona ? vehAsigMap[emp.id_persona] : null;
                 mapaOcupacion[asig.id_plaza] = {
                    ...mapaOcupacion[asig.id_plaza],
                    type: 'asignacion',
                    nombre: `${emp.persona.nombre} ${emp.persona.apellido}`.trim(),
-                   placa: vh?.placa || null
+                   placa: asig.vehiculo?.placa || null
                 };
              }
           });

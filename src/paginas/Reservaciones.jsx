@@ -37,12 +37,14 @@ export default function Reservaciones() {
 
   const [personasList, setPersonasList] = useState([]); 
   const [plazasList, setPlazasList] = useState([]);
+  const [vehiculosMap, setVehiculosMap] = useState({}); // id_persona -> [vehiculos]
   const [tiposReservaZona, setTiposReservaZona] = useState([]);
   const [zonasDisponibles, setZonasDisponibles] = useState([]);
   
   const initialForm = {
     id_persona: '',
     Id_Plaza: '',
+    id_vehiculo: '',
     id_zona: '',
     id_tipo_reserva: '',
     descripcion: '',
@@ -204,6 +206,20 @@ export default function Reservaciones() {
           const est = p.zona?.estado_zona?.nombre || 'Activa';
           return est === 'Activa' && !plazasAsignadasIds.has(p.id_plaza);
         });
+
+        // Traer vehículos habilitados
+        const { data: vehData } = await supabase
+          .from('vehiculo')
+          .select('id_vehiculo, id_persona, placa, modelo(nombre, marca(nombre)), color(nombre)')
+          .eq('id_estado', 1);
+        const vMap = {};
+        (vehData || []).forEach(v => {
+          if (v.id_persona) {
+            if (!vMap[v.id_persona]) vMap[v.id_persona] = [];
+            vMap[v.id_persona].push(v);
+          }
+        });
+        setVehiculosMap(vMap);
 
         setPersonasList(personasConEstado);
         setPlazasList(plazasDisponibles);
@@ -503,6 +519,7 @@ export default function Reservaciones() {
             const payload = {
                 id_persona: formData.id_persona,
                 id_plaza: parseInt(formData.Id_Plaza),
+                id_vehiculo: formData.id_vehiculo ? parseInt(formData.id_vehiculo) : null,
                 fecha_hora_inicio: new Date(formData.Fecha_Hora_Inicio).toISOString(),
                 fecha_hora_fin: new Date(formData.Fecha_Hora_Fin).toISOString(),
                 id_estado: idEstActivaRes,
@@ -590,6 +607,7 @@ export default function Reservaciones() {
     setFormData({
       id_persona: res.id_persona,
       Id_Plaza: res.id_plaza,
+      id_vehiculo: res.id_vehiculo ? String(res.id_vehiculo) : '',
       Fecha_Hora_Inicio: toInputFormat(res.fecha_hora_inicio),
       Fecha_Hora_Fin: toInputFormat(res.fecha_hora_fin)
     });
@@ -839,8 +857,9 @@ export default function Reservaciones() {
                    />
                  </div>
 
-                 {activeTab === 'personas' ? (
-                    <div>
+                 {activeTab === 'personas' && (
+                    <>
+                    <div className="mb-4">
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Plaza *</label>
                       <SearchableSelect
                         options={plazasList.map(p => ({ value: p.id_plaza, label: p.numero_plaza }))}
@@ -852,7 +871,35 @@ export default function Reservaciones() {
                         className="bg-gray-50/50 text-sm"
                       />
                     </div>
-                 ) : (
+                    
+                    {formData.id_persona && (
+                      <div className="animate-fadeIn">
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Vehículo Habilitado *</label>
+                        {vehiculosMap[formData.id_persona]?.length > 0 ? (
+                          <SearchableSelect
+                            options={vehiculosMap[formData.id_persona].map(v => ({
+                              value: v.id_vehiculo,
+                              label: `${v.placa} - ${v.modelo?.marca?.nombre || ''} ${v.modelo?.nombre || ''}`,
+                              subtitle: v.color?.nombre || 'Sin color'
+                            }))}
+                            value={formData.id_vehiculo}
+                            onChange={(val) => setFormData({...formData, id_vehiculo: val})}
+                            placeholder="— Seleccionar Vehículo —"
+                            focusRingClass="focus:ring-blue-500"
+                            selectedItemClass="bg-blue-100 text-blue-800"
+                            className="bg-gray-50/50 text-sm"
+                          />
+                        ) : (
+                          <div className="p-2 bg-red-50 border border-red-100 rounded-lg">
+                            <p className="text-[10px] text-red-500 font-bold italic">Esta persona no tiene vehículos habilitados para reservar.</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    </>
+                 )}
+
+                 {activeTab === 'zonas' && (
                    <>
                     <div className="grid grid-cols-2 gap-3">
                       <div>

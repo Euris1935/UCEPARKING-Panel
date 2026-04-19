@@ -47,6 +47,7 @@ export default function Asignaciones() {
     const initialForm = {
         Id_Empleado: '',
         Id_Plaza: '',
+        Id_Vehiculo: '',
         Fecha_Inicio: getNowLocalISO(),
         Fecha_Fin: '',
         Notas: ''
@@ -207,14 +208,16 @@ export default function Asignaciones() {
             }));
             setEmpleadosList(empConEstado);
 
-            // 6. Mapa de vehículos por persona_id
+            // 6. Mapa de vehículos habilitados por persona_id
             const { data: vehData } = await supabase
                 .from('vehiculo')
-                .select('id_vehiculo, id_persona, placa, modelo(nombre, marca(nombre)), color(nombre)');
+                .select('id_vehiculo, id_persona, placa, modelo(nombre, marca(nombre)), color(nombre)')
+                .eq('id_estado', 1); // Solo Habilitados
             const mapa = {};
             (vehData || []).forEach(v => {
-                if (v.id_persona && !mapa[v.id_persona]) {
-                    mapa[v.id_persona] = v;
+                if (v.id_persona) {
+                    if (!mapa[v.id_persona]) mapa[v.id_persona] = [];
+                    mapa[v.id_persona].push(v);
                 }
             });
             setVehiculosMap(mapa);
@@ -262,14 +265,18 @@ export default function Asignaciones() {
     };
 
     const handleEmpleadoChange = (idEmpleado) => {
-        setFormData(prev => ({ ...prev, Id_Empleado: idEmpleado }));
+        setFormData(prev => ({ ...prev, Id_Empleado: idEmpleado, Id_Vehiculo: '' }));
         if (!idEmpleado) {
             setVehiculoVinculado(null);
             return;
         }
         const empleado = empleadosList.find(e => String(e.id_empleado) === String(idEmpleado));
-        const vehiculo = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || null) : null;
-        setVehiculoVinculado(vehiculo);
+        const vehiculos = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || []) : [];
+        
+        if (vehiculos.length === 1) {
+            setFormData(prev => ({ ...prev, Id_Vehiculo: String(vehiculos[0].id_vehiculo) }));
+        }
+        setVehiculoVinculado(vehiculos);
     };
 
     const handleOpenCreate = async () => {
@@ -293,11 +300,12 @@ export default function Asignaciones() {
     const handleOpenEdit = async (asig) => {
         setEditingAsignacion(asig);
         const empleado = empleadosList.find(e => e.id_empleado === asig.id_empleado);
-        const vehiculo = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || null) : null;
-        setVehiculoVinculado(vehiculo);
+        const vehiculos = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || []) : [];
+        setVehiculoVinculado(vehiculos);
         setFormData({
             Id_Empleado: String(asig.id_empleado || ''),
             Id_Plaza: String(asig.id_plaza || ''),
+            Id_Vehiculo: String(asig.id_vehiculo || ''),
             Fecha_Inicio: asig.fecha_inicio ? new Date(new Date(asig.fecha_inicio).getTime() - new Date(asig.fecha_inicio).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '',
             Fecha_Fin: asig.fecha_fin ? new Date(new Date(asig.fecha_fin).getTime() - new Date(asig.fecha_fin).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '',
             Notas: asig.notas || ''
@@ -329,10 +337,10 @@ export default function Asignaciones() {
     };
 
     const handleCreate = async () => {
-        if (!vehiculoVinculado) {
+        if (!formData.Id_Vehiculo) {
             return Swal.fire({
-                title: 'Sin vehiculo registrado',
-                text: 'No se puede crear la asignacion. El empleado seleccionado no tiene un vehiculo registrado en el sistema.',
+                title: 'Vehículo requerido',
+                text: 'Debe seleccionar un vehículo habilitado para completar la asignación.',
                 icon: 'warning',
                 confirmButtonText: 'Entendido'
             });
@@ -344,6 +352,7 @@ export default function Asignaciones() {
         const { error: insertError } = await supabase.from('asignacion').insert([{
             id_empleado: parseInt(formData.Id_Empleado),
             id_plaza: parseInt(formData.Id_Plaza),
+            id_vehiculo: parseInt(formData.Id_Vehiculo),
             fecha_inicio: new Date(formData.Fecha_Inicio).toISOString(),
             fecha_fin: isPermanent || !formData.Fecha_Fin ? null : new Date(formData.Fecha_Fin).toISOString(),
             notas: formData.Notas,
@@ -368,6 +377,7 @@ export default function Asignaciones() {
             .update({
                 id_empleado: parseInt(formData.Id_Empleado),
                 id_plaza: plazaNueva,
+                id_vehiculo: parseInt(formData.Id_Vehiculo),
                 fecha_inicio: new Date(formData.Fecha_Inicio).toISOString(),
                 fecha_fin: isPermanent || !formData.Fecha_Fin ? null : new Date(formData.Fecha_Fin).toISOString(),
                 notas: formData.Notas,
@@ -770,26 +780,35 @@ export default function Asignaciones() {
                                 </div>
 
                                 {formData.Id_Empleado && (
-                                    <div className={`rounded-lg p-3 border flex items-start gap-3 ${vehiculoVinculado ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200'}`}>
-                                        <div className={`mt-0.5 p-1.5 rounded-full ${vehiculoVinculado ? 'bg-purple-100 text-purple-600' : 'bg-gray-200 text-gray-400'}`}>
-                                            <FaCar size={13} />
+                                    <div className={`rounded-lg p-3 border space-y-3 ${vehiculoVinculado && vehiculoVinculado.length > 0 ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200'}`}>
+                                        <div className="flex items-start gap-3">
+                                            <div className={`mt-0.5 p-1.5 rounded-full ${vehiculoVinculado && vehiculoVinculado.length > 0 ? 'bg-purple-100 text-purple-600' : 'bg-gray-200 text-gray-400'}`}>
+                                                <FaCar size={13} />
+                                            </div>
+                                            {vehiculoVinculado && vehiculoVinculado.length > 0 ? (
+                                                <div className="flex-1">
+                                                    <p className="text-[10px] font-bold text-purple-700 uppercase tracking-wide mb-1">Seleccionar Vehículo Habilitado *</p>
+                                                    <SearchableSelect
+                                                        options={vehiculoVinculado.map(v => ({
+                                                            value: v.id_vehiculo,
+                                                            label: `${v.placa} - ${v.modelo?.marca?.nombre || ''} ${v.modelo?.nombre || ''}`,
+                                                            subtitle: v.color?.nombre || 'Sin color'
+                                                        }))}
+                                                        value={formData.Id_Vehiculo}
+                                                        onChange={(val) => setFormData(f => ({ ...f, Id_Vehiculo: val }))}
+                                                        placeholder="— Seleccionar Vehículo —"
+                                                        focusRingClass="focus:ring-purple-500"
+                                                        selectedItemClass="bg-purple-200 text-purple-900"
+                                                        className="bg-white"
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <div>
+                                                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-0.5">Sin vehículos habilitados</p>
+                                                    <p className="text-xs text-red-400 font-medium">Este empleado no tiene vehículos activos en el sistema.</p>
+                                                </div>
+                                            )}
                                         </div>
-                                        {vehiculoVinculado ? (
-                                            <div>
-                                                <p className="text-[10px] font-bold text-purple-700 uppercase tracking-wide mb-0.5">Vehiculo Vinculado</p>
-                                                <p className="text-sm font-bold text-gray-800 font-mono">{vehiculoVinculado.placa}</p>
-                                                {(vehiculoVinculado.modelo?.marca?.nombre || vehiculoVinculado.color?.nombre) && (
-                                                    <p className="text-xs text-gray-500">
-                                                        {[vehiculoVinculado.modelo?.marca?.nombre, vehiculoVinculado.color?.nombre].filter(Boolean).join(' - ')}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        ) : (
-                                            <div>
-                                                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-0.5">Sin vehiculo vinculado</p>
-                                                <p className="text-xs text-gray-400">Este empleado no tiene vehiculo registrado.</p>
-                                            </div>
-                                        )}
                                     </div>
                                 )}
 

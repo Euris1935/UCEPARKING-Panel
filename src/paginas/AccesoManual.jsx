@@ -90,8 +90,11 @@ export default function AccesoManual() {
       const pMap = {}; (allP || []).forEach(p => { pMap[p.id_persona] = p; });
       setPersonas(allP || []);
 
-      // 3. Vehículos y Visitantes
-      const { data: vhs } = await supabase.from('vehiculo').select('*, modelo(nombre, marca(nombre)), color(nombre)');
+      // 3. Vehículos y Visitantes (Solo habilitados)
+      const { data: vhs } = await supabase
+        .from('vehiculo')
+        .select('*, modelo(nombre, marca(nombre)), color(nombre)')
+        .eq('id_estado', 1);
       const vhsEnriquecidos = (vhs || []).map(v => ({ ...v, persona: pMap[v.id_persona] || null }));
       setVehiculos(vhsEnriquecidos);
 
