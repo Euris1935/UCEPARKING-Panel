@@ -433,7 +433,10 @@ export default function Tickets() {
 
       const { error: tkErr } = await supabase.from('ticket').update({ id_estado: idEstAnuTk }).eq('id_ticket', ticket.id_ticket);
       if (tkErr) throw tkErr;
-      await supabase.from('plaza').update({ id_estado: idEstLibPlaza }).eq('id_plaza', ticket.id_plaza_asignada);
+      await Promise.all([
+        supabase.from('plaza').update({ id_estado: idEstLibPlaza }).eq('id_plaza', ticket.id_plaza_asignada),
+        supabase.from('acceso').update({ salida_at: new Date().toISOString() }).eq('ticket_id', ticket.id_ticket).is('salida_at', null)
+      ]);
       await registrarLog('TICKET_ANULADO', `Ticket anulado: ${ticket.placa_capturada} — Plaza ${ticket.plaza?.numero_plaza}.`, ticket.id_plaza_asignada);
       Swal.fire('Anulado', 'El ticket fue anulado y la plaza quedó libre.', 'success');
       loadData();
@@ -638,12 +641,14 @@ export default function Tickets() {
                               {t.plaza?.numero_plaza || '—'}
                             </td>
                             <td className="px-5 py-4 text-[11px] text-gray-500 font-medium">
-                              {new Date(t.fecha_hora_emision).toLocaleString('es-DO', { hour: '2-digit', minute: '2-digit' })}
+                              {new Date(t.fecha_hora_emision).toLocaleString('es-DO', { day: 'numeric', month: 'numeric', year: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true })}
                             </td>
-                            <td className="px-5 py-4 text-[11px] text-gray-400 italic">
-                              {t.fecha_hora_vencimiento 
-                                ? new Date(t.fecha_hora_vencimiento).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })
-                                : (t._horaSalida ? new Date(t._horaSalida).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' }) : '—')}
+                            <td className="px-5 py-4 text-[11px] text-gray-400">
+                              {(t._statusName?.toLowerCase() === 'cerrado' && t._horaSalida)
+                                ? new Date(t._horaSalida).toLocaleString('es-DO', { day: 'numeric', month: 'numeric', year: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true })
+                                : t.fecha_hora_vencimiento 
+                                  ? new Date(t.fecha_hora_vencimiento).toLocaleString('es-DO', { day: 'numeric', month: 'numeric', year: '2-digit', hour: 'numeric', minute: '2-digit', hour12: true })
+                                  : '—'}
                             </td>
                             <td className="px-5 py-4 text-xs font-bold text-amber-600">
                               {sLower === 'activo'

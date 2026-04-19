@@ -140,6 +140,7 @@ export default function AccesoManual() {
         .from('acceso')
         .select('*, vehiculo(*, modelo(nombre, marca(nombre)), color(nombre))')
         .is('salida_at', null)
+        .is('ticket_id', null)
         .order('entrada_at', { ascending: false });
 
       const enrichedActivos = (activos || []).map(acc => {
