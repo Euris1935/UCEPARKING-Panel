@@ -46,7 +46,7 @@ export default function Usuarios() {
 
   // Estado para edición completa (formulario lateral)
   const [editingUser, setEditingUser] = useState(null); // objeto completo o null
-  const initialForm = { nombre: '', apellido: '', email: '', contrasena: '', telefono: '', sexo: 'M', fecha_nacimiento: '', direccion: '', rol_id: '' };
+  const initialForm = { nombre: '', apellido: '', email: '', contrasena: '', telefono: '', cedula: '', sexo: '', fecha_nacimiento: '', direccion: '', rol_id: '' };
   const [formData, setFormData]     = useState(initialForm);
 
   // Estado para cambio rápido de rol y estado (inline)
@@ -99,7 +99,7 @@ export default function Usuarios() {
         
         const [ { data: fUsr }, { data: fPer } ] = await Promise.all([
             personaIds.length > 0 ? supabase.from('usuario').select('id, id_persona, created_at, id_estado, estado:id_estado(nombre)').in('id_persona', personaIds) : { data: [] },
-            personaIds.length > 0 ? supabase.from('persona').select('id_persona, created_at').in('id_persona', personaIds) : { data: [] }
+            personaIds.length > 0 ? supabase.from('persona').select('id_persona, created_at, email, telefono, cedula, sexo, fecha_nacimiento, direccion').in('id_persona', personaIds) : { data: [] }
         ]);
 
         listaNormalizada.forEach(u => {
@@ -110,6 +110,14 @@ export default function Usuarios() {
             u.created_at = u.created_at || fu?.created_at || fp?.created_at;
             u.id_estado = fu?.id_estado || 1;
             u.nombre_estado = fu?.estado?.nombre || 'Activo';
+            
+            // Enriquecer con datos de persona
+            u.email = u.email || fp?.email || '';
+            u.telefono = u.telefono || fp?.telefono || '';
+            u.cedula = u.cedula || fp?.cedula || '';
+            u.sexo = u.sexo || fp?.sexo || '';
+            u.fecha_nacimiento = u.fecha_nacimiento || fp?.fecha_nacimiento || '';
+            u.direccion = u.direccion || fp?.direccion || '';
         });
         
         setUsuarios(listaNormalizada);
@@ -128,7 +136,7 @@ export default function Usuarios() {
     try {
       const [{ data: usrs }, { data: pers }] = await Promise.all([
         supabase.from('usuario').select('id, id_persona, id_rol, id_estado, created_at, estado:id_estado(nombre)'),
-        supabase.from('persona').select('id_persona, nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion')
+        supabase.from('persona').select('id_persona, nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, direccion')
       ]);
       if (!usrs || usrs.length === 0) return;
       const lista = usrs.map(u => {
@@ -147,6 +155,8 @@ export default function Usuarios() {
           sexo:       persona?.sexo            || 'M',
           fecha_nacimiento: persona?.fecha_nacimiento || '',
           direccion:  persona?.direccion       || '',
+          cedula:     persona?.cedula          || '',
+          sexo:       persona?.sexo            || '',
           nombre_rol: rol?.nombre              || 'Sin Rol',
           created_at: u.created_at
         };
@@ -174,8 +184,19 @@ export default function Usuarios() {
 
   // ── Formulario ────────────────────────────────────────────────────────────
   const handleChange = (e) => {
-    const val = e.target.name === 'rol_id' ? parseInt(e.target.value) : e.target.value;
-    setFormData(prev => ({ ...prev, [e.target.name]: val }));
+    const { name, value } = e.target;
+    let val = name === 'rol_id' ? parseInt(value) : value;
+
+    // Formateo automático de cédula
+    if (name === 'cedula') {
+      const digits = value.replace(/\D/g, '');
+      let fmt = digits;
+      if (digits.length > 3) fmt = digits.slice(0, 3) + '-' + digits.slice(3);
+      if (digits.length > 10) fmt = digits.slice(0, 3) + '-' + digits.slice(3, 10) + '-' + digits.slice(10, 11);
+      val = fmt;
+    }
+
+    setFormData(prev => ({ ...prev, [name]: val }));
   };
 
   const handleEdit = (user) => {
@@ -189,7 +210,8 @@ export default function Usuarios() {
       apellido: user.apellido,
       email: user.email || '',
       telefono: user.telefono || '',
-      sexo: user.sexo || 'M',
+      cedula: user.cedula || '',
+      sexo: user.sexo || '',
       fecha_nacimiento: user.fecha_nacimiento || '',
       direccion: user.direccion || '',
       rol_id: user.id_rol || '',
@@ -208,7 +230,7 @@ export default function Usuarios() {
     if (!orgId) {
       return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
     }
-    const { nombre, apellido, email, telefono, sexo, fecha_nacimiento, direccion, rol_id, contrasena } = formData;
+    const { nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, direccion, rol_id, contrasena } = formData;
 
       if (!rol_id || !nombre || !apellido) {
         return Swal.fire('Faltan datos', 'Nombre, Apellido y Rol son obligatorios', 'warning');
@@ -220,7 +242,7 @@ export default function Usuarios() {
         if (isUpdating) {
           if (editingUser.id_persona) {
             const { error: pErr } = await supabase.from('persona')
-              .update({ nombre, apellido, telefono, email, sexo, fecha_nacimiento: fecha_nacimiento || null, direccion })
+              .update({ nombre, apellido, telefono, email, cedula, sexo, fecha_nacimiento: fecha_nacimiento || null, direccion })
               .eq('id_persona', editingUser.id_persona);
             if (pErr) console.warn('persona update:', pErr.message);
           }
@@ -268,6 +290,11 @@ export default function Usuarios() {
           // Validación del resultado interno de la función
           if (resultado && resultado.success === false) {
             throw new Error(resultado.error || 'Error desconocido en la base de datos');
+          }
+
+          // Actualización de Cédula post-creación (si aplica)
+          if (cedula && resultado?.id_persona) {
+             await supabase.from('persona').update({ cedula }).eq('id_persona', resultado.id_persona);
           }
 
           registrarLog('Usuario Creado', `Creación de usuario: ${nombre} ${apellido} (${email})`);
@@ -657,7 +684,12 @@ export default function Usuarios() {
                 <FaUserCircle className="text-green-600" />
                 {isUpdating ? 'Editar Usuario' : 'Nuevo Usuario'}
               </h3>
-              <form className="space-y-3" onSubmit={handleSubmit}>
+              <form 
+                key={isUpdating ? `edit-${editingUser.id_usuario}` : 'create'}
+                className="space-y-3" 
+                onSubmit={handleSubmit}
+                autoComplete="off"
+              >
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-xs text-gray-500 ml-0.5 font-medium">Nombre *</label>
@@ -675,11 +707,13 @@ export default function Usuarios() {
                   <div>
                     <label className="text-xs text-gray-500 ml-0.5 font-medium">Email *</label>
                     <input placeholder="correo@ejemplo.com" type="email" name="email" value={formData.email} onChange={handleChange} required
+                      autoComplete="off"
                       className="w-full border border-gray-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none mt-0.5" />
                   </div>
                   <div>
                     <label className="text-xs text-gray-500 ml-0.5 font-medium">Contraseña *</label>
                     <input placeholder="Mín. 6 caracteres" type="password" name="contrasena" value={formData.contrasena} onChange={handleChange} required
+                      autoComplete="new-password"
                       className="w-full border border-gray-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none mt-0.5" />
                   </div>
                 </>}
@@ -687,17 +721,30 @@ export default function Usuarios() {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-xs text-gray-500 ml-0.5 font-medium">Teléfono</label>
-                    <input placeholder="0987654321" name="telefono" value={formData.telefono} onChange={handleChange}
+                    <input placeholder="809-000-0000" name="telefono" value={formData.telefono} onChange={handleChange}
                       className="w-full border border-gray-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none mt-0.5" />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500 ml-0.5 font-medium">Sexo</label>
-                    <select name="sexo" value={formData.sexo} onChange={handleChange}
-                      className="w-full border border-gray-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none mt-0.5">
-                      <option value="M">Masculino</option>
-                      <option value="F">Femenino</option>
-                    </select>
+                    <label className="text-xs text-gray-500 ml-0.5 font-medium">Cédula</label>
+                    <input 
+                      placeholder="000-0000000-0" 
+                      name="cedula" 
+                      value={formData.cedula} 
+                      onChange={handleChange}
+                      maxLength={13}
+                      className="w-full border border-gray-200 p-2 rounded-lg text-sm font-mono focus:ring-2 focus:ring-green-300 outline-none mt-0.5" 
+                    />
                   </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-500 ml-0.5 font-medium">Sexo</label>
+                  <select name="sexo" value={formData.sexo} onChange={handleChange}
+                    className="w-full border border-gray-200 p-2 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none mt-0.5">
+                    <option value="">-- Seleccionar sexo --</option>
+                    <option value="M">Masculino</option>
+                    <option value="F">Femenino</option>
+                  </select>
                 </div>
 
                 <div>
