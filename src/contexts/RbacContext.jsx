@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 
 const RbacContext = createContext();
@@ -8,9 +8,14 @@ export function RbacProvider({ children, session }) {
   const [permisos, setPermisos] = useState([]);
   const [esAdmin, setEsAdmin]   = useState(false);
   const [loading, setLoading]   = useState(true);
+  const loadingRef = useRef(false);
+  const lastSessionId = useRef(null);
 
   const loadRbac = async () => {
-    if (!session?.user) {
+    const currentUserId = session?.user?.id;
+    
+    if (!currentUserId) {
+      console.log('[Rbac] ℹ️ No hay sesión activa. Limpiando permisos.');
       setModulos([]);
       setPermisos([]);
       setEsAdmin(false);
@@ -18,42 +23,63 @@ export function RbacProvider({ children, session }) {
       return;
     }
 
+    // Evitar doble carga si ya se está procesando el mismo usuario
+    if (loadingRef.current && lastSessionId.current === currentUserId) {
+      console.log('[Rbac] ⏳ Ya hay una validación en curso para este usuario. Omitiendo.');
+      return;
+    }
+
+    console.log(`[Rbac] 🚀 Iniciando validación de privilegios para: ${session.user.email}`);
+    loadingRef.current = true;
+    lastSessionId.current = currentUserId;
+
+    // Salvaguarda: Forzar finalización de carga después de 6 segundos para no trabar la UI
+    const timeoutId = setTimeout(() => {
+      if (loadingRef.current) {
+        console.error('[Rbac] ⚠️ Tiempo de espera agotado (6s). Desbloqueando interfaz forzosamente.');
+        setLoading(false);
+        loadingRef.current = false;
+      }
+    }, 6000);
+
     try {
-      // Si ya cargamos los permisos previamente para el mismo usuario, 
-      // evitamos reiniciar el loading para no interrumpir la navegación.
-      if (modulos.length === 0 && !loading) {
-          setLoading(true);
+      if (modulos.length === 0) {
+        setLoading(true);
       }
 
       // 1. Obtener rol_id del usuario
       const { data: usuarioData, error: uError } = await supabase
         .from('usuario')
         .select('rol_id, id_estado')
-        .eq('id', session.user.id)
+        .eq('id', currentUserId)
         .maybeSingle();
 
       if (uError) {
-        console.error('RbacContext: Error fetching user record:', uError);
-        setLoading(false);
-        return;
+        console.error('[Rbac] ❌ Error consultando perfil de usuario:', uError);
+        throw uError;
       }
 
       if (!usuarioData) {
-        console.warn('RbacContext: No record found in "usuario" table for UID:', session.user.id);
-        setLoading(false);
+        console.warn('[Rbac] ⚠️ No se encontró registro en la tabla "usuario" para:', currentUserId);
+        setModulos([]);
+        setPermisos([]);
         return;
       }
 
-      console.log('RbacContext: User found, checking status and roles:', usuarioData);
+      console.log('[Rbac] 👤 Perfil encontrado. Verificando roles y estado...');
 
-      if (usuarioData?.id_estado !== 1 && usuarioData?.id_estado !== null) {
-        setLoading(false);
+      const effectiveStatus = usuarioData?.id_estado ?? 1; // NULL se trata como activo (1)
+
+      if (effectiveStatus !== 1) {
+        console.warn('[Rbac] 🔒 Usuario inactivo o bloqueado. ID_ESTADO:', usuarioData?.id_estado);
+        setModulos([]);
         return;
       }
 
       const rolId = usuarioData?.rol_id;
       if (!rolId) {
-        setLoading(false);
+        console.warn('[Rbac] ⚠️ El usuario no tiene un rol asignado.');
+        setModulos([]);
         return;
       }
 
@@ -64,8 +90,11 @@ export function RbacProvider({ children, session }) {
         .eq('id_rol', rolId)
         .maybeSingle();
 
-      const nombreRol = rolData?.nombre?.toLowerCase() || '';
-      const _esAdmin = nombreRol.includes('admin') || nombreRol.includes('administrador');
+      const nombreRol = rolData?.nombre || 'Desconocido';
+      const nombreRolRef = nombreRol.toLowerCase();
+      const _esAdmin = nombreRolRef.includes('admin') || nombreRolRef.includes('administrador');
+      
+      console.log(`[Rbac] ✅ Rol detectado: ${nombreRol} (${_esAdmin ? 'Acceso Total' : 'Acceso Restringido'})`);
       setEsAdmin(_esAdmin);
 
       if (_esAdmin) {
@@ -73,9 +102,9 @@ export function RbacProvider({ children, session }) {
           .from('modulo')
           .select('*')
           .eq('activo', true);
+        console.log(`[Rbac] 📦 Cargados ${modulosData?.length || 0} módulos para Administrador.`);
         setModulos(modulosData || []);
         setPermisos([]);
-        setLoading(false);
         return;
       }
 
@@ -102,13 +131,17 @@ export function RbacProvider({ children, session }) {
         permisosExtraidos.push({ accion: permisoObj.accion, id_modulo: permisoObj.id_modulo, nombre_modulo: moduloObj.nombre });
       });
 
+      console.log(`[Rbac] 📦 Cargados ${modulosAccesibles.length} módulos y ${permisosExtraidos.length} acciones.`);
       setModulos(modulosAccesibles);
       setPermisos(permisosExtraidos);
 
     } catch (error) {
-      console.error('Rbac Error:', error);
+      console.error('[Rbac] ❌ Fallo crítico en validación:', error);
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
+      loadingRef.current = false;
+      console.log('[Rbac] 🏁 Validación completada.');
     }
   };
 

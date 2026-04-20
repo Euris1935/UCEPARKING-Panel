@@ -18,7 +18,6 @@ import { ESTADO_PLAZA, ESTADO_RESERVA } from '../lib/constants';
 export default function Reservaciones() {
   const { tienePermiso } = useRbac();
   const { orgId, loadingOrg } = useOrg();
-  const [serverTimeOffset, setServerTimeOffset] = useState(0); // Diferencia entre local y servidor
 
   const canCreate = tienePermiso('Reservas', 'crear');
   const canEdit = tienePermiso('Reservas', 'editar');
@@ -74,27 +73,6 @@ export default function Reservaciones() {
       return () => { supabase.removeChannel(r_channel); };
     }
   }, [orgId]);
-
-  useEffect(() => {
-    const syncTime = async () => {
-      try {
-        const start = Date.now();
-        const response = await fetch('https://qvidbkkrxiwcvletaqfp.supabase.co/rest/v1/', { 
-          method: 'HEAD',
-          headers: { 'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2aWRia2tyeGl3Y3ZsZXRhcWZwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUxMjM1MjUsImV4cCI6MjA4MDY5OTUyNX0.GoLdf7fcyoTtl7-idGKY3aWkL7h3P7xs-1Qk7Lrgs7A' } 
-        });
-        const serverDateStr = response.headers.get('date');
-        if (serverDateStr) {
-          const serverTime = new Date(serverDateStr).getTime();
-          const localTime = start + (Date.now() - start) / 2;
-          setServerTimeOffset(serverTime - localTime);
-          console.log(`[TimeSync] Sincronizado. Offset: ${serverTime - localTime}ms`);
-        }
-      } catch (err) { console.warn('[TimeSync] Fallo:', err); }
-    };
-    syncTime();
-  }, []);
-
   useEffect(() => {
     loadAllData();
   }, [activeTab]);
@@ -125,7 +103,7 @@ export default function Reservaciones() {
             supabase.from('reserva').select('*, persona(id_persona, nombre, apellido), plaza(id_plaza, numero_plaza), estado:estado_reserva(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
             supabase.from('reserva_zona').select('*, zona(id_zona, nombre), tipo:tipo_reserva_zona(nombre), persona(id_persona, nombre, apellido), estado:estado_reserva(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
             supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle(),
-            supabase.rpc('get_usuarios_org').eq('organizacion_id', orgId),
+            supabase.rpc('get_usuarios_org'),
             supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle(),
             supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1),
             supabase.from('zona').select('id_zona, nombre, estado_zona(nombre)').eq('organizacion_id', orgId).order('nombre'),
@@ -185,14 +163,10 @@ export default function Reservaciones() {
     }
   }, [formData.id_zona, activeTab]);
 
-
-
-  // La función registrarLog local ha sido eliminada para usar la global.
-
   // --- 3. LÓGICA DE PRECISIÓN PARA AUTO-COMPLETADO ---
   const checkExpiredReservations = async () => {
-    // Usamos el tiempo sincronizado con el servidor
-    const ahora = new Date(Date.now() + serverTimeOffset);
+    // Usamos el tiempo local como referencia simplificada
+    const ahora = new Date();
     
     // Fallback seguro para IDs
     const idEstVencida = ESTADO_RESERVA.VENCIDA;
@@ -214,7 +188,7 @@ export default function Reservaciones() {
         const fechaFin = new Date(r.fecha_hora_fin);
         // Margen de seguridad de 60 segundos para evitar desfases de reloj
         const expired = ahora.getTime() >= (fechaFin.getTime() + 60000);
-        if (expired) console.log(`[AutoExpire] Reserva ${r.id_reserva} vencida. Ahora (ServerSync): ${ahora.toISOString()}, Fin: ${fechaFin.toISOString()}, Offset: ${serverTimeOffset}ms`);
+        if (expired) console.log(`[AutoExpire] Reserva ${r.id_reserva} vencida. Ahora: ${ahora.toISOString()}, Fin: ${fechaFin.toISOString()}`);
         return expired;
       });
       for (const res of vencidas) {

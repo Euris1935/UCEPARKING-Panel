@@ -28,8 +28,10 @@ export default function Login() {
       const { data: statusData } = await supabase.rpc('verificar_estado_por_email', { p_email_input: email });
       
       const userStatus = statusData?.[0];
-      // Nota: Si es ID 1 es Activo. Si es != 1 o nulo, bloqueamos si encontramos el registro.
-      if (userStatus && userStatus.v_id_estado !== ESTADO_USUARIO.ACTIVO) {
+      // Si el estado es NULL, tratamos como ACTIVO (1) provisionalmente para evitar bloqueos
+      const effectiveStatus = userStatus?.v_id_estado ?? ESTADO_USUARIO.ACTIVO;
+
+      if (userStatus && effectiveStatus !== ESTADO_USUARIO.ACTIVO) {
         throw new Error('STATUS_INACTIVE');
       }
 

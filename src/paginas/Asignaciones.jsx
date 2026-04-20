@@ -124,7 +124,6 @@ export default function Asignaciones() {
                 { data: asigData },
                 { data: todosEmpleados },
                 { data: todasPlazas },
-                { data: epLibre },
                 { data: catEst }
             ] = await Promise.all([
                 supabase.from('asignacion').select('*').eq('organizacion_id', orgId).order('created_at', { ascending: false }),

@@ -18,6 +18,7 @@ export function OrgProvider({ children, user }) {
         return; 
       }
 
+      console.log('[OrgContext] 🚀 Cargando datos de organización para el usuario:', user.email);
       setLoading(true);
       try {
         // 1. Obtener organización directamente del perfil del usuario (pasado por prop)
@@ -28,13 +29,13 @@ export function OrgProvider({ children, user }) {
           .maybeSingle();
 
         if (usrErr) {
-          console.error('OrgContext: Error fetching user record:', usrErr);
+          console.error('[OrgContext] ❌ Error consultando perfil:', usrErr);
           setError('Error al conectar con el perfil de usuario.');
         } else if (!usr) {
-          console.warn('OrgContext: No records found in "usuario" table for UID:', user.id);
+          console.warn('[OrgContext] ⚠️ No se encontró registro de usuario para UID:', user.id);
           setError('No se encontró un registro de usuario vinculado a esta cuenta.');
         } else {
-          console.log('OrgContext: User metadata found:', usr);
+          console.log('[OrgContext] ✅ Perfil encontrado:', usr);
           setError(null);
         }
 
@@ -52,15 +53,17 @@ export function OrgProvider({ children, user }) {
             .maybeSingle();
 
           if (susErr) {
-            console.error('OrgContext: Error fetching subscription:', susErr);
+            console.error('[OrgContext] ❌ Error cargando suscripción:', susErr);
           } else if (sus?.plan) {
+            console.log(`[OrgContext] 💳 Plan detectado: ${sus.plan.nombre}`);
             setPlan(sus.plan);
           }
         }
       } catch (err) {
-        console.error('OrgContext Error:', err);
+        console.error('[OrgContext] ❌ Fallo crítico:', err);
       } finally {
         setLoading(false);
+        console.log('[OrgContext] 🏁 Carga completada.');
       }
     }
     load();

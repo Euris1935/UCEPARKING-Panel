@@ -94,10 +94,10 @@ export default function Usuarios() {
           ...u,
           id_usuario: u.id_usuario || u.id, 
           id_persona: u.id_persona || u.persona_id,
-          id_rol:     u.id_rol || u.rol_id,
-          nombre_rol: u.nombre_rol || u.rol_nombre || 'Sin Rol',
-          nombre_estado: u.nombre_estado || u.estado_nombre || 'Activo'
-        })).filter(u => u.id_rol !== ROL.VISITANTE); // Filtrar visitantes de la gestión de usuarios
+          id_rol:     u.rol_id     || u.id_rol,
+          nombre_rol: u.nombre_rol || u.rol_nombre   || 'Sin Rol',
+          nombre_estado: u.id_estado === null ? '⚠️ Sin Estado (NULL)' : (u.nombre_estado || u.estado_nombre || 'Activo')
+        })).filter(u => u.id_rol !== ROL.VISITANTE);
 
         setUsuarios(listaNormalizada);
       }
@@ -111,7 +111,7 @@ export default function Usuarios() {
   const loadUsuariosFallback = async (rolesDisponibles) => {
     try {
       const [{ data: usrs }, { data: pers }] = await Promise.all([
-        supabase.from('usuario').select('id, id_persona, id_rol, id_estado, created_at, estado:id_estado(nombre)').eq('organizacion_id', orgId),
+        supabase.from('usuario').select('id, id_persona, rol_id, id_estado, created_at, estado:id_estado(nombre)').eq('organizacion_id', orgId),
         supabase.from('persona').select('id_persona, nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, direccion')
       ]);
       
@@ -119,11 +119,11 @@ export default function Usuarios() {
 
       const lista = usrs.map(u => {
         const persona = (pers || []).find(p => p.id_persona === u.id_persona);
-        const rol = rolesDisponibles.find(r => r.id_rol === u.id_rol);
+        const rol = rolesDisponibles.find(r => r.id_rol === u.rol_id);
         return {
           id_usuario: u.id,
           id_persona: u.id_persona,
-          id_rol:     u.id_rol,
+          id_rol:     u.rol_id,
           id_estado:  u.id_estado,
           nombre_estado: u.estado?.nombre || 'Activo',
           nombre:     persona?.nombre   || 'Sin Nombre',
@@ -196,7 +196,7 @@ export default function Usuarios() {
         // 2. Actualizar Usuario (Rol)
         if (parseInt(rol_id) !== editingUser.id_rol) {
           const { error: uErr } = await supabase.from('usuario')
-            .update({ id_rol: parseInt(rol_id) })
+            .update({ rol_id: parseInt(rol_id) })
             .eq('id', editingUser.id_usuario);
           if (uErr) throw uErr;
         }
@@ -250,7 +250,7 @@ export default function Usuarios() {
       const { error } = await supabase
         .from('usuario')
         .update({ id_estado: parseInt(newStatusChoice) })
-        .eq('id', user.id_usuario);
+        .eq('id', user.id_usuario); // Usamos 'id' que es la PK real en tu esquema
 
       if (error) throw error;
       
@@ -269,7 +269,7 @@ export default function Usuarios() {
       setLoading(true);
       const { error } = await supabase
         .from('usuario')
-        .update({ id_rol: parseInt(newRolId) })
+        .update({ rol_id: parseInt(newRolId) })
         .eq('id', user.id_usuario);
 
       if (error) throw error;

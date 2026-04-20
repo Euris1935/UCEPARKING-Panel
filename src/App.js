@@ -33,11 +33,13 @@ export default function App() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log('[App] 🔑 Sesión recuperada de Supabase:', session?.user?.email || 'Ninguna');
       setSession(session);
       setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log(`[App] 🔄 Evento de autenticación: ${event}`);
       setSession(session);
       setLoading(false);
 
