@@ -11,6 +11,7 @@ import {
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 
 export default function ZonasParqueo() {
   const { tienePermiso } = useRbac();
@@ -22,7 +23,7 @@ export default function ZonasParqueo() {
   const [zonas, setZonas] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingZone, setEditingZone] = useState(null);
-  const initialZoneState = { Nombre_Zona: '', Capacidad_Total: '', id_tipo: '', id_estado: '' };
+  const initialZoneState = { Nombre_Zona: '', Capacidad_Total: '', id_tipo: '', id_estado: '', descripcion: '' };
   const [zoneForm, setZoneForm] = useState(initialZoneState);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
   const [currentEmpleadoId, setCurrentEmpleadoId] = useState(null);
@@ -31,54 +32,35 @@ export default function ZonasParqueo() {
   // Catálogos
   const [tiposZona, setTiposZona] = useState([]);
   const [estadosZona, setEstadosZona] = useState([]);
+  const [tiposPlaza, setTiposPlaza] = useState([]);
 
   // --- ESTADOS DE PLAZAS ---
   const [plazas, setPlazas] = useState([]);
   const [showPlazaModal, setShowPlazaModal] = useState(false);
   const [editingPlaza, setEditingPlaza] = useState(null);
-  const initialPlazaState = { Numero_Plaza: '', Id_Zona: '', Amplitud: '2.50', Longitud: '5.00' };
+  const initialPlazaState = { Numero_Plaza: '', Id_Zona: '', id_tipo: '', Amplitud: '2.50', Longitud: '5.00' };
   const [plazaForm, setPlazaForm] = useState(initialPlazaState);
 
   useEffect(() => { 
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: uData } = await supabase.from('usuario')
-          .select('id_persona, organizacion_id')
-          .eq('id', user.id)
-          .single();
-        
-        if (uData) {
-          if (uData.id_persona) setCurrentPersonaId(uData.id_persona);
-          if (uData.organizacion_id) setLocalOrgId(uData.organizacion_id);
-          
-          // Obtener id_empleado para el creador
-          const { data: empData } = await supabase
-            .from('empleado')
-            .select('id_empleado, organizacion_id')
-            .eq('id_persona', uData.id_persona)
-            .maybeSingle();
-          
-          if (empData) {
-            setCurrentEmpleadoId(empData.id_empleado);
-            if (!uData.organizacion_id && empData.organizacion_id) {
-              setLocalOrgId(empData.organizacion_id);
-            }
-          }
-        }
-      }
-    };
-    init();
-    loadData(); 
-  }, []);
+    if (orgId) loadData(); 
+  }, [orgId]);
 
   const loadData = async () => {
+    if (!orgId) return;
     try {
       // 1. Catálogos ordenados alfabéticamente
-      const { data: tzData } = await supabase.from('tipo_zona').select('*').order('nombre');
-      const { data: ezData } = await supabase.from('estado_zona').select('*').order('nombre');
+      const [
+        { data: tzData },
+        { data: ezData },
+        { data: tpData }
+      ] = await Promise.all([
+        supabase.from('tipo_zona').select('*').order('nombre'),
+        supabase.from('estado_zona').select('*').order('nombre'),
+        supabase.from('tipo_plaza').select('*').order('nombre')
+      ]);
       setTiposZona(tzData || []);
       setEstadosZona(ezData || []);
+      setTiposPlaza(tpData || []);
 
       // 2. Zonas ordenadas alfabéticamente
       const { data: zData } = await supabase
@@ -89,31 +71,18 @@ export default function ZonasParqueo() {
           estado:estado_zona(nombre),
           creador:empleado(persona(nombre, apellido))
         `)
+        .eq('organizacion_id', orgId)
         .order('nombre');
       
       setZonas(zData || []);
 
       // 3. Plazas ordenadas por número
-      const { data: pData } = await supabase.from('plaza').select(`*, estado_plaza(nombre)`).order('numero_plaza');
+      const { data: pData } = await supabase.from('plaza').select(`*, estado_plaza(nombre)`).eq('organizacion_id', orgId).order('numero_plaza');
       setPlazas(pData || []);
     } catch (error) { console.error("Error cargando datos:", error); }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion) => {
-    if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Parqueos').maybeSingle();
-      await supabase.from('evento').insert([{ 
-        fecha_hora: new Date().toISOString(), 
-        descripcion: descripcion, 
-        id_persona: currentPersonaId, 
-        id_tipo: te?.id_tipo || null, 
-        id_origen_evento: oe?.id_origen || null,
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
-  };
+  // La función registrarLog local ha sido eliminada para usar la global importada.
 
   /* ── Helper: obtiene las iniciales de las palabras del nombre ──
      Ej: "Zona Especial" → "ZE", "Piso 1 Norte" → "P1N"
@@ -128,8 +97,27 @@ export default function ZonasParqueo() {
     return sustantivas.map(p => p[0].toUpperCase()).join('');
   };
 
+  /**
+   * Determina el id_tipo_plaza recomendado según el nombre del tipo de zona
+   */
+  const mapearTipoZonaATipoPlaza = (idTipoZona) => {
+    const tipoZ = tiposZona.find(t => t.id_tipo === parseInt(idTipoZona));
+    if (!tipoZ) return 10; // Normal por defecto
+
+    const nombreZ = tipoZ.nombre.toLowerCase();
+    
+    // Mapeo según requerimiento del usuario (IDs normalizados 1-5)
+    if (nombreZ.includes('vip'))            return 2; // VIP
+    if (nombreZ.includes('discapaci'))      return 3; // Discapacitado
+    if (nombreZ.includes('carga'))           return 4; // Carga
+    if (nombreZ.includes('administrativo')) return 2; // Administrativo -> VIP
+    if (nombreZ.includes('reservada'))      return 2; // Reservada -> VIP
+    
+    return 1; // Normal (incluye Motos, General, etc.)
+  };
+
   /* ── Generar plazas en lote para una zona ── */
-  const generarPlazasEnLote = async (idZona, nombreZona, capacidadTotal, idLibre) => {
+  const generarPlazasEnLote = async (idZona, nombreZona, capacidadTotal, idLibre, idTipoPlaza = 1) => {
     const prefijo = generarIniciales(nombreZona);
     // Obtener plazas existentes para no duplicar
     const { data: existentes } = await supabase.from('plaza').select('numero_plaza').eq('id_zona', idZona);
@@ -145,6 +133,7 @@ export default function ZonasParqueo() {
           numero_plaza: codigo,
           id_zona: idZona,
           id_estado: idLibre,
+          id_tipo: idTipoPlaza,
           amplitud: 2.50,
           longitud: 5.00,
           organizacion_id: orgId
@@ -183,6 +172,7 @@ export default function ZonasParqueo() {
       capacidad_total: parseInt(zoneForm.Capacidad_Total),
       id_tipo: zoneForm.id_tipo ? parseInt(zoneForm.id_tipo) : null,
       id_estado: finalIdEstado,
+      descripcion: zoneForm.descripcion ? zoneForm.descripcion.trim() : null,
       organizacion_id: activeOrgId
     };
 
@@ -220,9 +210,26 @@ export default function ZonasParqueo() {
         if (confirm.isConfirmed) {
           const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
           const idLibre = epLibre?.id_estado || 1;
-          const { total } = await generarPlazasEnLote(zonaCreada.id_zona, zonaCreada.nombre, cap, idLibre);
+          const idTipoPlazaInferido = mapearTipoZonaATipoPlaza(payload.id_tipo);
+          const { total } = await generarPlazasEnLote(zonaCreada.id_zona, zonaCreada.nombre, cap, idLibre, idTipoPlazaInferido);
+          
+          registrarLog({
+            tipo_nombre: EVENT_TYPES.ZONA_MODIFICADA,
+            descripcion: `Nueva zona "${payload.nombre}" creada con ${total} plazas automáticas (Capacidad: ${cap})`,
+            id_persona: currentPersonaId,
+            organizacion_id: activeOrgId,
+            origen: 'Panel Web - Parqueos'
+          });
+
           Swal.fire('Éxito', `Zona creada con ${total} plazas generadas automáticamente.`, 'success');
         } else {
+          registrarLog({
+            tipo_nombre: EVENT_TYPES.ZONA_MODIFICADA,
+            descripcion: `Nueva zona "${payload.nombre}" creada sin plazas iniciales (Capacidad: ${cap})`,
+            id_persona: currentPersonaId,
+            organizacion_id: activeOrgId,
+            origen: 'Panel Web - Parqueos'
+          });
           Swal.fire('Zona creada', 'Puedes agregar plazas manualmente cuando quieras.', 'success');
         }
 
@@ -274,6 +281,16 @@ export default function ZonasParqueo() {
                 }
             }
         }
+        
+        const descCambios = generarDescripcionCambio(editingZone, payload, `Cambios en zona ${editingZone.nombre}`);
+
+        registrarLog({
+            tipo_nombre: EVENT_TYPES.ZONA_MODIFICADA,
+            descripcion: descCambios,
+            id_persona: currentPersonaId,
+            organizacion_id: activeOrgId,
+            origen: 'Panel Web - Parqueos'
+        });
 
         // 3. Manejo inteligente de capacidad
         if (newCap > currentPlazasCount) {
@@ -289,7 +306,8 @@ export default function ZonasParqueo() {
             if (confirmGen.isConfirmed) {
                 const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
                 const idLibre = epLibre?.id_estado || 1;
-                await generarPlazasEnLote(editingZone.id_zona, zoneForm.Nombre_Zona, newCap, idLibre);
+                const idTipoPlazaInferido = mapearTipoZonaATipoPlaza(payload.id_tipo);
+                await generarPlazasEnLote(editingZone.id_zona, zoneForm.Nombre_Zona, newCap, idLibre, idTipoPlazaInferido);
                 Swal.fire('Éxito', `Zona actualizada y ${faltantes} plazas generadas.`, 'success');
             } else {
                 Swal.fire('Éxito', 'Zona actualizada correctamente.', 'success');
@@ -336,10 +354,18 @@ export default function ZonasParqueo() {
       Swal.fire({ title: 'Generando...', didOpen: () => Swal.showLoading() });
       const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
       const idLibre = epLibre?.id_estado || 1;
+      const idTipoPlazaInferido = mapearTipoZonaATipoPlaza(zona.id_tipo);
 
-      const { total } = await generarPlazasEnLote(zona.id_zona, zona.nombre, zona.capacidad_total, idLibre);
+      const { total } = await generarPlazasEnLote(zona.id_zona, zona.nombre, zona.capacidad_total, idLibre, idTipoPlazaInferido);
       Swal.fire('Listo', `Se generaron ${total} plazas nuevas.`, 'success');
-      registrarLog('Plazas Generadas', `Generación de ${total} plazas para zona: ${zona.nombre}`);
+      
+      registrarLog({
+        tipo_nombre: EVENT_TYPES.ZONA_MODIFICADA,
+        descripcion: `Generación masiva de ${total} plazas para la zona: ${zona.nombre}`,
+        id_persona: currentPersonaId,
+        organizacion_id: orgId || localOrgId,
+        origen: 'Panel Web - Parqueos'
+      });
       loadData();
     } catch (error) { Swal.fire('Error', error.message, 'error'); }
   };
@@ -350,9 +376,10 @@ export default function ZonasParqueo() {
     setEditingZone(zone);
     setZoneForm({ 
       Nombre_Zona: zone.nombre, 
-      Capacidad_Total: zone.capacidad_total,
-      id_tipo: zone.id_tipo || '',
-      id_estado: zone.id_estado || ''
+      Capacidad_Total: zone.capacidad_total?.toString() || '',
+      id_tipo: zone.id_tipo?.toString() || '',
+      id_estado: zone.id_estado?.toString() || '',
+      descripcion: zone.descripcion || ''
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -409,6 +436,14 @@ export default function ZonasParqueo() {
               
               await supabase.from('zona').update({ id_estado: stInac.id_estado }).eq('id_zona', zoneId);
               Swal.fire('Zona Desactivada', 'La zona ha sido marcada como Inactiva y sus plazas se han ocultado.', 'success');
+              
+              registrarLog({
+                tipo_nombre: EVENT_TYPES.ZONA_MODIFICADA,
+                descripcion: `Zona ID ${zoneId} desactivada administrativamente debido a restricciones de integridad (historial activo).`,
+                id_persona: currentPersonaId,
+                organizacion_id: orgId || localOrgId,
+                origen: 'Panel Web - Parqueos'
+              });
               loadData();
             } catch (errInac) {
               Swal.fire('Error', errInac.message, 'error');
@@ -427,6 +462,7 @@ export default function ZonasParqueo() {
       setPlazaForm({
         Numero_Plaza: plaza.numero_plaza,
         Id_Zona: plaza.id_zona,
+        id_tipo: plaza.id_tipo ? String(plaza.id_tipo) : '',
         Amplitud: plaza.amplitud || '2.50',
         Longitud: plaza.longitud || '5.00'
       });
@@ -469,8 +505,14 @@ export default function ZonasParqueo() {
     // Empezar en la siguiente secuencia
     const nextSeq = maxSeq + 1;
     const nextCodigo = `${prefijo}-${String(nextSeq).padStart(2, '0')}`;
+    const idTipoPlazaInferido = mapearTipoZonaATipoPlaza(zonaActual.id_tipo);
 
-    setPlazaForm({ ...plazaForm, Id_Zona: idZonaStr, Numero_Plaza: nextCodigo });
+    setPlazaForm({ 
+        ...plazaForm, 
+        Id_Zona: idZonaStr, 
+        Numero_Plaza: nextCodigo,
+        id_tipo: String(idTipoPlazaInferido)
+    });
   };
 
   const handleSubmitPlaza = async (e) => {
@@ -481,6 +523,7 @@ export default function ZonasParqueo() {
       const payload = {
         numero_plaza: plazaForm.Numero_Plaza,
         id_zona: parseInt(plazaForm.Id_Zona),
+        id_tipo: plazaForm.id_tipo ? parseInt(plazaForm.id_tipo) : 1,
         amplitud: parseFloat(plazaForm.Amplitud),
         longitud: parseFloat(plazaForm.Longitud),
         organizacion_id: orgId
@@ -598,6 +641,8 @@ export default function ZonasParqueo() {
                   />
                 </div>
 
+
+
                 <div className="grid grid-cols-1 gap-5">
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Tipo de Zona</label>
@@ -621,6 +666,17 @@ export default function ZonasParqueo() {
                       selectedItemClass="bg-emerald-100 text-emerald-800"
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Descripción de la Zona</label>
+                  <textarea 
+                    rows={2}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 outline-none transition-all text-gray-700 resize-none font-medium" 
+                    placeholder="— Notas adicionales sobre la zona (Ej: Ubicación, restricciones) —"
+                    value={zoneForm.descripcion} 
+                    onChange={(e) => setZoneForm({ ...zoneForm, descripcion: e.target.value })} 
+                  />
                 </div>
 
                 <div className="pt-4 flex flex-col gap-3">
@@ -800,6 +856,18 @@ export default function ZonasParqueo() {
                     selectedItemClass="bg-emerald-100 text-emerald-800"
                   />
                   {editingPlaza && <p className="text-[9px] text-emerald-500 font-bold mt-1 px-1 opacity-80 uppercase tracking-tighter">Zona bloqueada (con historial)</p>}
+               </div>
+
+               <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Tipo de Plaza *</label>
+                  <SearchableSelect 
+                    options={tiposPlaza.map(t => ({ value: t.id_tipo, label: t.nombre }))}
+                    value={plazaForm.id_tipo} 
+                    onChange={(val) => setPlazaForm({ ...plazaForm, id_tipo: val })}
+                    placeholder="— Seleccionar Tipo —"
+                    focusRingClass="focus:ring-emerald-500"
+                    selectedItemClass="bg-emerald-100 text-emerald-800"
+                  />
                </div>
 
                <div>

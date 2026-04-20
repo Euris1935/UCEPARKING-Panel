@@ -29,10 +29,6 @@ export default function Asignaciones() {
     const [empleadosConPlaza, setEmpleadosConPlaza] = useState(new Set());
     const [plazasList, setPlazasList] = useState([]);
 
-    // Map: persona_id → vehiculo
-    const [vehiculosMap, setVehiculosMap] = useState({});
-    const [vehiculoVinculado, setVehiculoVinculado] = useState(null);
-
     // Estados para cambio de estado "in-place"
     const [changingStatusFor, setChangingStatusFor] = useState(null);
     const [newStatusChoice, setNewStatusChoice] = useState(null);
@@ -47,7 +43,6 @@ export default function Asignaciones() {
     const initialForm = {
         Id_Empleado: '',
         Id_Plaza: '',
-        Id_Vehiculo: '',
         Fecha_Inicio: getNowLocalISO(),
         Fecha_Fin: '',
         Notas: ''
@@ -55,35 +50,26 @@ export default function Asignaciones() {
     const [formData, setFormData] = useState(initialForm);
 
     useEffect(() => {
-        const init = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-                if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
-            }
-        };
-        init();
-        loadData();
-        checkExpiredAssignments(); // Ejecutar monitor al inicio
+        if (orgId) {
+            loadData();
+            checkExpiredAssignments(); 
 
-        // Ejecutar limpieza cada 5 minutos
-        const timer = setInterval(checkExpiredAssignments, 300000);
+            const timer = setInterval(checkExpiredAssignments, 300000);
 
-        // Sincronización en tiempo real
-        const channel = supabase.channel('realtime_asignaciones')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, () => {
-                console.log("Cambio en asignación detectado");
-                loadData();
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadData())
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, () => loadData())
-            .subscribe();
+            const channel = supabase.channel('realtime_asignaciones')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, () => {
+                    loadData();
+                })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadData())
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, () => loadData())
+                .subscribe();
 
-        return () => { 
-            supabase.removeChannel(channel); 
-            clearInterval(timer);
-        };
-    }, []);
+            return () => { 
+                supabase.removeChannel(channel); 
+                clearInterval(timer);
+            };
+        }
+    }, [orgId]);
     
     /**
      * Monitor de Autocierre de Asignaciones
@@ -129,48 +115,42 @@ export default function Asignaciones() {
     };
 
     const loadData = async () => {
+        if (!orgId) return;
         setLoading(true);
         setIsRefreshing(true);
         try {
-            // 1. Cargar asignaciones (Más recientes primero por fecha de creación)
-            const { data: asigData, error: asigError } = await supabase
-                .from('asignacion')
-                .select('*')
-                .order('created_at', { ascending: false });
-            if (asigError) {
-                console.error("Error cargando asignaciones:", asigError);
-                setAsignaciones([]);
-                setLoading(false);
-                return;
-            }
+            // 1. Catálogos y Asignaciones en paralelo
+            const [
+                { data: asigData },
+                { data: todosEmpleados },
+                { data: todasPlazas },
+                { data: epLibre },
+                { data: catEst }
+            ] = await Promise.all([
+                supabase.from('asignacion').select('*').eq('organizacion_id', orgId).order('created_at', { ascending: false }),
+                supabase.from('empleado').select('id_empleado, persona(nombre, apellido)').eq('organizacion_id', orgId),
+                supabase.from('plaza').select('id_plaza, numero_plaza').eq('organizacion_id', orgId),
+                supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle(),
+                supabase.from('estado_asignacion').select('*').order('id_estado')
+            ]);
 
-            // 2. Cargar todos los empleados con persona
-            const { data: todosEmpleados } = await supabase
-                .from('empleado')
-                .select('id_empleado, persona(nombre, apellido)');
+            const idEstLibrePlaza = epLibre?.id_estado || 1;
             const todosEmpleadosOrdenados = (todosEmpleados || []).sort((a, b) => {
                 const na = `${a.persona?.nombre ?? ''} ${a.persona?.apellido ?? ''}`.toLowerCase();
                 const nb = `${b.persona?.nombre ?? ''} ${b.persona?.apellido ?? ''}`.toLowerCase();
                 return na.localeCompare(nb);
             });
 
-            // 3. Cargar todas las plazas
-            const { data: todasPlazas } = await supabase
-                .from('plaza')
-                .select('id_plaza, numero_plaza');
-
-            // 4. Unir datos manualmente y calcular estado derivado
+            // 2. Unir datos manualmente y calcular estado derivado
             const ahora = new Date();
-
-            const asignacionesConDatos = asigData.map(asig => {
+            const asignacionesConDatos = (asigData || []).map(asig => {
                 const emp = todosEmpleadosOrdenados?.find(e => e.id_empleado === asig.id_empleado);
                 const plz = todasPlazas?.find(p => p.id_plaza === asig.id_plaza);
                 
-                // Lógica de auto-vencimiento en el frontend
                 let estadoFinal = asig.id_estado;
                 if (asig.id_estado === 1 && asig.fecha_fin) {
                     const fFin = new Date(asig.fecha_fin);
-                    if (fFin < ahora) estadoFinal = 2; // Mostrar como finalizada si ya venció
+                    if (fFin < ahora) estadoFinal = 2; 
                 }
 
                 return { 
@@ -180,9 +160,9 @@ export default function Asignaciones() {
                     _estadoCalculado: estadoFinal 
                 };
             });
-            setAsignaciones(asignacionesConDatos || []);
+            setAsignaciones(asignacionesConDatos);
 
-            // 4.1. Conjunto de empleados con plaza activa
+            // 3. Conjunto de empleados con plaza activa
             const ocupados = new Set(
                 (asigData || [])
                 .filter(a => a.id_estado === 1 && (!a.fecha_fin || new Date(a.fecha_fin) >= new Date(new Date().setHours(0,0,0,0))))
@@ -190,58 +170,22 @@ export default function Asignaciones() {
             );
             setEmpleadosConPlaza(ocupados);
 
-            // 5. Empleados para el selector
-            const { data: empData } = await supabase
-                .from('empleado')
-                .select('id_empleado, id_persona, persona(nombre, apellido)');
-            const sortedEmpData = (empData || []).sort((a, b) => {
-                const na = `${a.persona?.nombre ?? ''} ${a.persona?.apellido ?? ''}`.toLowerCase();
-                const nb = `${b.persona?.nombre ?? ''} ${b.persona?.apellido ?? ''}`.toLowerCase();
-                return na.localeCompare(nb);
-            });
-
-            // Restablecer lista de empleados para el componente SearchableSelect
-            const empConEstado = sortedEmpData.map(emp => ({
-                ...emp,
-                _ocupadoPorOtro: false,
-                _razon: null
-            }));
-            setEmpleadosList(empConEstado);
-
-            // 6. Mapa de vehículos habilitados por persona_id
-            const { data: vehData } = await supabase
-                .from('vehiculo')
-                .select('id_vehiculo, id_persona, placa, modelo(nombre, marca(nombre)), color(nombre)')
-                .eq('id_estado', 1); // Solo Habilitados
-            const mapa = {};
-            (vehData || []).forEach(v => {
-                if (v.id_persona) {
-                    if (!mapa[v.id_persona]) mapa[v.id_persona] = [];
-                    mapa[v.id_persona].push(v);
-                }
-            });
-            setVehiculosMap(mapa);
-
-            // 7. Plazas libres para el selector
-            const { data: epLibre } = await supabase
-                .from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-            const idEstLibrePlaza = epLibre?.id_estado || 1;
+            // 4. Plazas libres (con filtro de zona activa)
             const { data: plazaData } = await supabase
                 .from('plaza')
                 .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
+                .eq('organizacion_id', orgId)
                 .eq('id_estado', idEstLibrePlaza)
                 .order('numero_plaza');
             
-            // Filtro dinámico según estado de la zona
             const plazasDisponibles = (plazaData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa');
+            
+            setEmpleadosList(todosEmpleadosOrdenados);
             setPlazasList(plazasDisponibles);
-
-            // 8. Cargar catálogo de estados de asignación
-            const { data: catEst } = await supabase.from('estado_asignacion').select('*').order('id_estado');
             setEstadosAsigList(catEst || []);
 
         } catch (error) {
-            console.error("Error general:", error.message);
+            console.error("Error loadData:", error.message);
         } finally {
             setLoading(false);
             setIsRefreshing(false);
@@ -265,24 +209,12 @@ export default function Asignaciones() {
     };
 
     const handleEmpleadoChange = (idEmpleado) => {
-        setFormData(prev => ({ ...prev, Id_Empleado: idEmpleado, Id_Vehiculo: '' }));
-        if (!idEmpleado) {
-            setVehiculoVinculado(null);
-            return;
-        }
-        const empleado = empleadosList.find(e => String(e.id_empleado) === String(idEmpleado));
-        const vehiculos = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || []) : [];
-        
-        if (vehiculos.length === 1) {
-            setFormData(prev => ({ ...prev, Id_Vehiculo: String(vehiculos[0].id_vehiculo) }));
-        }
-        setVehiculoVinculado(vehiculos);
+        setFormData(prev => ({ ...prev, Id_Empleado: idEmpleado }));
     };
 
     const handleOpenCreate = async () => {
         setEditingAsignacion(null);
         setFormData({ ...initialForm, Fecha_Inicio: getNowLocalISO() });
-        setVehiculoVinculado(null);
         setIsPermanent(false);
         const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
         const idEstLibrePlaza = epLibre?.id_estado || 1;
@@ -299,13 +231,9 @@ export default function Asignaciones() {
 
     const handleOpenEdit = async (asig) => {
         setEditingAsignacion(asig);
-        const empleado = empleadosList.find(e => e.id_empleado === asig.id_empleado);
-        const vehiculos = empleado?.id_persona ? (vehiculosMap[empleado.id_persona] || []) : [];
-        setVehiculoVinculado(vehiculos);
         setFormData({
             Id_Empleado: String(asig.id_empleado || ''),
             Id_Plaza: String(asig.id_plaza || ''),
-            Id_Vehiculo: String(asig.id_vehiculo || ''),
             Fecha_Inicio: asig.fecha_inicio ? new Date(new Date(asig.fecha_inicio).getTime() - new Date(asig.fecha_inicio).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '',
             Fecha_Fin: asig.fecha_fin ? new Date(new Date(asig.fecha_fin).getTime() - new Date(asig.fecha_fin).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '',
             Notas: asig.notas || ''
@@ -332,19 +260,10 @@ export default function Asignaciones() {
         setShowModal(false);
         setEditingAsignacion(null);
         setFormData(initialForm);
-        setVehiculoVinculado(null);
         setIsPermanent(false);
     };
 
     const handleCreate = async () => {
-        if (!formData.Id_Vehiculo) {
-            return Swal.fire({
-                title: 'Vehículo requerido',
-                text: 'Debe seleccionar un vehículo habilitado para completar la asignación.',
-                icon: 'warning',
-                confirmButtonText: 'Entendido'
-            });
-        }
         const { data: epAsignado } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Asignado').maybeSingle();
         const idAsignadaPlaza = epAsignado?.id_estado || 2;
         const { data: eaActiva } = await supabase.from('estado_asignacion').select('id_estado').ilike('nombre', 'Activa').maybeSingle();
@@ -352,7 +271,6 @@ export default function Asignaciones() {
         const { error: insertError } = await supabase.from('asignacion').insert([{
             id_empleado: parseInt(formData.Id_Empleado),
             id_plaza: parseInt(formData.Id_Plaza),
-            id_vehiculo: parseInt(formData.Id_Vehiculo),
             fecha_inicio: new Date(formData.Fecha_Inicio).toISOString(),
             fecha_fin: isPermanent || !formData.Fecha_Fin ? null : new Date(formData.Fecha_Fin).toISOString(),
             notas: formData.Notas,
@@ -377,7 +295,6 @@ export default function Asignaciones() {
             .update({
                 id_empleado: parseInt(formData.Id_Empleado),
                 id_plaza: plazaNueva,
-                id_vehiculo: parseInt(formData.Id_Vehiculo),
                 fecha_inicio: new Date(formData.Fecha_Inicio).toISOString(),
                 fecha_fin: isPermanent || !formData.Fecha_Fin ? null : new Date(formData.Fecha_Fin).toISOString(),
                 notas: formData.Notas,
@@ -778,39 +695,6 @@ export default function Asignaciones() {
                                         className="bg-gray-50/50"
                                     />
                                 </div>
-
-                                {formData.Id_Empleado && (
-                                    <div className={`rounded-lg p-3 border space-y-3 ${vehiculoVinculado && vehiculoVinculado.length > 0 ? 'bg-purple-50 border-purple-200' : 'bg-gray-50 border-gray-200'}`}>
-                                        <div className="flex items-start gap-3">
-                                            <div className={`mt-0.5 p-1.5 rounded-full ${vehiculoVinculado && vehiculoVinculado.length > 0 ? 'bg-purple-100 text-purple-600' : 'bg-gray-200 text-gray-400'}`}>
-                                                <FaCar size={13} />
-                                            </div>
-                                            {vehiculoVinculado && vehiculoVinculado.length > 0 ? (
-                                                <div className="flex-1">
-                                                    <p className="text-[10px] font-bold text-purple-700 uppercase tracking-wide mb-1">Seleccionar Vehículo Habilitado *</p>
-                                                    <SearchableSelect
-                                                        options={vehiculoVinculado.map(v => ({
-                                                            value: v.id_vehiculo,
-                                                            label: `${v.placa} - ${v.modelo?.marca?.nombre || ''} ${v.modelo?.nombre || ''}`,
-                                                            subtitle: v.color?.nombre || 'Sin color'
-                                                        }))}
-                                                        value={formData.Id_Vehiculo}
-                                                        onChange={(val) => setFormData(f => ({ ...f, Id_Vehiculo: val }))}
-                                                        placeholder="— Seleccionar Vehículo —"
-                                                        focusRingClass="focus:ring-purple-500"
-                                                        selectedItemClass="bg-purple-200 text-purple-900"
-                                                        className="bg-white"
-                                                    />
-                                                </div>
-                                            ) : (
-                                                <div>
-                                                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-0.5">Sin vehículos habilitados</p>
-                                                    <p className="text-xs text-red-400 font-medium">Este empleado no tiene vehículos activos en el sistema.</p>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
 
                                 <div>
                                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">

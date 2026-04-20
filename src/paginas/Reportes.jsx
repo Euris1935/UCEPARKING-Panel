@@ -6,8 +6,10 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2'; 
 import { FaSearch, FaDownload, FaFileAlt, FaPlus, FaTrash, FaUser, FaSync, FaTimesCircle } from 'react-icons/fa';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function Reportes() {
+    const { orgId } = useOrg();
   const [reportes, setReportes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -26,9 +28,11 @@ export default function Reportes() {
   const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => { 
-    loadReportes(); 
-    loadTiposReporte();
-  }, []);
+    if (orgId) {
+      loadReportes(); 
+      loadTiposReporte();
+    }
+  }, [orgId]);
 
   const loadTiposReporte = async () => {
     try {
@@ -50,6 +54,7 @@ export default function Reportes() {
             persona (nombre, apellido),
             tipo_reporte (nombre)
           `)
+          .eq('organizacion_id', orgId)
           .order('created_at', { ascending: false });
 
         if (error) throw error;

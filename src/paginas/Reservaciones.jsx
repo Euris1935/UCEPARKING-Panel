@@ -12,6 +12,7 @@ import {
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 
 export default function Reservaciones() {
   const { tienePermiso } = useRbac();
@@ -33,56 +34,45 @@ export default function Reservaciones() {
   const [currentEmpleadoId, setCurrentEmpleadoId] = useState(null);
   
   const [editingReservaId, setEditingReservaId] = useState(null);
+  const [editingOriginalData, setEditingOriginalData] = useState(null); // Para diff logs
   const [originalPlazaId, setOriginalPlazaId] = useState(null); 
 
   const [personasList, setPersonasList] = useState([]); 
   const [plazasList, setPlazasList] = useState([]);
-  const [vehiculosMap, setVehiculosMap] = useState({}); // id_persona -> [vehiculos]
   const [tiposReservaZona, setTiposReservaZona] = useState([]);
   const [zonasDisponibles, setZonasDisponibles] = useState([]);
   
   const initialForm = {
     id_persona: '',
     Id_Plaza: '',
-    id_vehiculo: '',
     id_zona: '',
     id_tipo_reserva: '',
     descripcion: '',
     Fecha_Hora_Inicio: '',
-    Fecha_Hora_Fin: ''
+    Fecha_Hora_Fin: '',
+    es_reserva_grupal: false,
+    ids_plazas_grupal: []
   };
   const [formData, setFormData] = useState(initialForm);
+  const [plazasDeZona, setPlazasDeZona] = useState([]); // Para selección grupal
   const isUpdating = !!editingReservaId;
 
   // --- 1. CARGA INICIAL ---
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-        if (uData?.id_persona) {
-          setCurrentPersonaId(uData.id_persona);
-          const { data: eData } = await supabase.from('empleado').select('id_empleado').eq('id_persona', uData.id_persona).maybeSingle();
-          if (eData) setCurrentEmpleadoId(eData.id_empleado);
-        }
-      }
-    };
-    init();
-    loadReservas();
-    loadReservasZona();
-    loadAuxData();
-    loadAuxDataZona();
+    if (orgId) {
+      loadAllData();
 
-    // Sincronización en tiempo real
-    const r_channel = supabase.channel('realtime_reservaciones_all')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reserva' }, () => { loadReservas(); loadAuxData(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reserva_zona' }, loadReservasZona)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadAuxData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, () => { loadAuxData(); loadAuxDataZona(); })
-      .subscribe();
-      
-    return () => { supabase.removeChannel(r_channel); };
-  }, []);
+      // Sincronización en tiempo real
+      const r_channel = supabase.channel('realtime_reservaciones_all')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reserva' }, loadAllData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reserva_zona' }, loadAllData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadAllData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadAllData)
+        .subscribe();
+        
+      return () => { supabase.removeChannel(r_channel); };
+    }
+  }, [orgId]);
 
   useEffect(() => {
     const syncTime = async () => {
@@ -105,8 +95,7 @@ export default function Reservaciones() {
   }, []);
 
   useEffect(() => {
-    loadReservas();
-    loadReservasZona();
+    loadAllData();
   }, [activeTab]);
 
   // --- 2. VERIFICADOR DE TIEMPO REAL ---
@@ -117,146 +106,88 @@ export default function Reservaciones() {
     return () => clearInterval(timer);
   }, [reservas]); 
 
-  const loadReservas = async () => {
+  const loadAllData = async () => {
+    if (!orgId) return;
     setIsRefreshing(true);
     try {
-        const { data, error } = await supabase
-          .from('reserva')
-          .select(`
-            *,
-            persona (id_persona, nombre, apellido),
-            plaza (id_plaza, numero_plaza),
-            estado:estado_reserva ( nombre ) 
-          `)
-          .order('fecha_hora_inicio', { ascending: false });
+        const ahoraISO = new Date().toISOString();
+        const [
+            { data: resData },
+            { data: resZonaData },
+            { data: epLibre },
+            { data: uData },
+            { data: erActivo },
+            { data: asigsActivas },
+            { data: zonas },
+            { data: tiposRZ }
+        ] = await Promise.all([
+            supabase.from('reserva').select('*, persona(id_persona, nombre, apellido), plaza(id_plaza, numero_plaza), estado:estado_reserva(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
+            supabase.from('reserva_zona').select('*, zona(id_zona, nombre), tipo:tipo_reserva_zona(nombre), persona(id_persona, nombre, apellido), estado:estado_reserva(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
+            supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle(),
+            supabase.rpc('get_usuarios_org').eq('organizacion_id', orgId),
+            supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle(),
+            supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1),
+            supabase.from('zona').select('id_zona, nombre, estado_zona(nombre)').eq('organizacion_id', orgId).order('nombre'),
+            supabase.from('tipo_reserva_zona').select('*').order('nombre')
+        ]);
 
-        if (error) throw error;
-        setReservas(data || []);
-    } catch (error) { console.error("Error cargando reservas:", error.message); }
-    finally { setIsRefreshing(false); }
+        setReservas(resData || []);
+        setReservasZona(resZonaData || []);
+        
+        const idLibre = epLibre?.id_estado || 1;
+        const idResActiva = erActivo?.id_estado || 1;
+
+        // 1. Procesar Personas y Bloqueos
+        const soloUsuarios = (uData || []).map(u => ({ id_persona: u.id_persona || u.persona_id, nombre: u.nombre, apellido: u.apellido }));
+        
+        // Calcular bloqueos por reservas activas
+        const resActivasIds = new Set((resData || []).filter(r => r.id_estado === idResActiva && (!r.fecha_hora_fin || r.fecha_hora_fin > ahoraISO)).map(r => r.id_persona));
+        
+        setPersonasList(soloUsuarios.map(p => ({
+            ...p,
+            _ocupada: resActivasIds.has(p.id_persona),
+            _razon: resActivasIds.has(p.id_persona) ? 'Reserva activa' : null
+        })));
+
+        // 2. Procesar Zonas y Plazas
+        const zonasActivas = (zonas || []).filter(z => (z.estado_zona?.nombre || 'Activa') === 'Activa');
+        setZonasDisponibles(zonasActivas);
+        setTiposReservaZona(tiposRZ || []);
+
+        const idsZonasActivas = zonasActivas.map(z => z.id_zona);
+        if (idsZonasActivas.length > 0) {
+            const { data: plazas } = await supabase.from('plaza').select('id_plaza, numero_plaza, id_zona').in('id_zona', idsZonasActivas).eq('id_estado', idLibre).order('numero_plaza');
+            const asigIds = new Set((asigsActivas || []).map(a => a.id_plaza));
+            setPlazasList((plazas || []).filter(p => !asigIds.has(p.id_plaza)));
+        } else {
+            setPlazasList([]);
+        }
+
+    } catch (error) { 
+        console.error("Error loadAllData Reservaciones:", error.message); 
+    } finally { 
+        setIsRefreshing(false); 
+    }
   };
 
-  const loadReservasZona = async () => {
-    setIsRefreshing(true);
-    try {
-        const { data, error } = await supabase
-          .from('reserva_zona')
-          .select(`
-            *,
-            zona (id_zona, nombre),
-            tipo:tipo_reserva_zona ( nombre ),
-            persona (id_persona, nombre, apellido),
-            estado:estado_reserva ( nombre ) 
-          `)
-          .order('fecha_hora_inicio', { ascending: false });
-
-        if (error) throw error;
-        setReservasZona(data || []);
-    } catch (error) { console.error("Error cargando reservas de zona:", error.message); }
-    finally { setIsRefreshing(false); }
-  };
-
-  const loadAuxData = async () => {
-    try {
-        // Obtener estado 'Libre' para plaza
+  // Cargar plazas de una zona específica
+  useEffect(() => {
+    if (formData.id_zona && activeTab === 'zonas') {
+      const fetchPlazas = async () => {
         const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
         const idEstLibrePlaza = epLibre?.id_estado || 1;
-
-        // Traer todos los usuarios de la organización (no visitantes)
-        const { data: uData } = await supabase.rpc('get_usuarios_org');
-        const soloUsuarios = (uData || []).map(u => ({
-          id_persona: u.id_persona || u.persona_id,
-          nombre: u.nombre,
-          apellido: u.apellido
-        }));
-
-        // Calcular personas bloqueadas (reserva activa o asignacion activa — el acceso activo NO bloquea aqui)
-        const ahoraISO = new Date().toISOString();
-        const personasOcupadas = new Map(); // id_persona → razón
-
-        // Reservas activas no vencidas
-        const { data: erActivo } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle();
-        const { data: reservasActivas } = await supabase
-          .from('reserva').select('id_persona')
-          .eq('id_estado', erActivo?.id_estado || 1)
-          .or(`fecha_hora_fin.is.null,fecha_hora_fin.gt.${ahoraISO}`);
-        (reservasActivas || []).forEach(r => {
-          if (r.id_persona) personasOcupadas.set(r.id_persona, 'Reserva activa');
-        });
-
-
-        const personasConEstado = soloUsuarios.map(p => ({
-          ...p,
-          _ocupada: personasOcupadas.has(p.id_persona),
-          _razon: personasOcupadas.get(p.id_persona) || null
-        }));
-        
-        const { data: plazas } = await supabase
-          .from('plaza')
-          .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
-          .eq('id_estado', idEstLibrePlaza)
-          .order('numero_plaza');
-
-        // Blindaje: Solo considerar disponibles las que id_estado=Libre Y NO tienen contrato activo
-        const { data: asigsActivas } = await supabase.from('asignacion').select('id_plaza').eq('id_estado', 1);
-        const plazasAsignadasIds = new Set(asigsActivas?.map(a => a.id_plaza) || []);
-
-        // Filtrar plazas de zonas bloqueadas administrativamente y excluir las ya asignadas a empleados
-        const plazasDisponibles = (plazas || []).filter(p => {
-          const est = p.zona?.estado_zona?.nombre || 'Activa';
-          return est === 'Activa' && !plazasAsignadasIds.has(p.id_plaza);
-        });
-
-        // Traer vehículos habilitados
-        const { data: vehData } = await supabase
-          .from('vehiculo')
-          .select('id_vehiculo, id_persona, placa, modelo(nombre, marca(nombre)), color(nombre)')
-          .eq('id_estado', 1);
-        const vMap = {};
-        (vehData || []).forEach(v => {
-          if (v.id_persona) {
-            if (!vMap[v.id_persona]) vMap[v.id_persona] = [];
-            vMap[v.id_persona].push(v);
-          }
-        });
-        setVehiculosMap(vMap);
-
-        setPersonasList(personasConEstado);
-        setPlazasList(plazasDisponibles);
-    } catch (error) { console.error("Error aux:", error); }
-  };
-
-  const loadAuxDataZona = async () => {
-    try {
-      const [{ data: tipos }, { data: zonas }] = await Promise.all([
-        supabase.from('tipo_reserva_zona').select('*').order('nombre'),
-        supabase.from('zona').select('id_zona, nombre, estado_zona(nombre)').order('nombre')
-      ]);
-
-      // Filtrar solo zonas que estén estrictamente "Activas"
-      const zonasActivas = (zonas || []).filter(z => (z.estado_zona?.nombre || 'Activa') === 'Activa');
-
-      setTiposReservaZona(tipos || []);
-      setZonasDisponibles(zonasActivas);
-    } catch (error) { console.error("Error aux zona:", error); }
-  };
+        const { data } = await supabase.from('plaza').select('id_plaza, numero_plaza').eq('id_zona', formData.id_zona).eq('id_estado', idEstLibrePlaza).order('numero_plaza');
+        setPlazasDeZona(data || []);
+      };
+      fetchPlazas();
+    } else {
+      setPlazasDeZona([]);
+    }
+  }, [formData.id_zona, activeTab]);
 
 
 
-  const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
-    if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-      await supabase.from('evento').insert([{ 
-        fecha_hora: new Date().toISOString(), 
-        descripcion: descripcion, 
-        id_plaza: idPlaza, 
-        id_persona: currentPersonaId, 
-        id_tipo: te?.id_tipo || null, 
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
-  };
+  // La función registrarLog local ha sido eliminada para usar la global.
 
   // --- 3. LÓGICA DE PRECISIÓN PARA AUTO-COMPLETADO ---
   const checkExpiredReservations = async () => {
@@ -359,10 +290,17 @@ export default function Reservaciones() {
         if (!isAuto) {
             Swal.fire('Éxito', 'Reserva completada.', 'success');
             const p = plazasList.find(p => p.id_plaza === finalPlazaId);
-            registrarLog('Ticket Cerrado', `Reserva completada para plaza ${p?.numero_plaza || finalPlazaId}`, finalPlazaId);
+            
+            registrarLog({
+              tipo_nombre: EVENT_TYPES.TICKET_CERRADO,
+              descripcion: `Reserva finalizada (Completada) para plaza ${p?.numero_plaza || finalPlazaId}`,
+              id_persona: currentPersonaId,
+              organizacion_id: orgId,
+              id_plaza: finalPlazaId,
+              origen: 'Panel Web - Reservas'
+            });
         }
-        loadReservas();
-        loadAuxData(); 
+        loadAllData(); 
     } catch (e) { console.error("Error al completar reserva:", e); }
   };
 
@@ -377,9 +315,16 @@ export default function Reservaciones() {
         await supabase.from('reserva').update({ id_estado: idEstCanceladaRes }).eq('id_reserva', idReserva);
         if (idPlaza) await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', idPlaza);
         const p = plazasList.find(p => p.id_plaza === idPlaza);
-        registrarLog('Reserva Cancelada', `Reserva cancelada para plaza ${p?.numero_plaza || idPlaza}`, idPlaza);
-        loadReservas();
-        loadAuxData();
+        
+        registrarLog({
+          tipo_nombre: EVENT_TYPES.RESERVA_CANCELADA,
+          descripcion: `Reserva cancelada por el administrador para plaza ${p?.numero_plaza || idPlaza}`,
+          id_persona: currentPersonaId,
+          organizacion_id: orgId,
+          id_plaza: idPlaza,
+          origen: 'Panel Web - Reservas'
+        });
+        loadAllData();
     }
   };
 
@@ -408,9 +353,16 @@ export default function Reservaciones() {
 
         if (!isAuto) {
           Swal.fire('Éxito', 'Reserva de zona completada.', 'success');
-          registrarLog('Cambio de Estado', `Reserva de zona completada (ID: ${id})`);
+          
+          registrarLog({
+            tipo_nombre: EVENT_TYPES.TICKET_CERRADO,
+            descripcion: `Reserva de zona/grupal finalizada (ID: ${id})`,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            origen: 'Panel Web - Reservas'
+          });
         }
-        loadReservasZona();
+        loadAllData();
     } catch (e) { console.error("Error al completar zona:", e); }
   };
 
@@ -430,7 +382,7 @@ export default function Reservaciones() {
         }
 
         registrarLog('Reserva Cancelada', `Reserva de zona cancelada (ID: ${id})`);
-        loadReservasZona();
+        loadAllData();
     }
   };
 
@@ -476,8 +428,11 @@ export default function Reservaciones() {
       id_tipo_reserva: res.id_tipo,
       descripcion: res.descripcion || '',
       Fecha_Hora_Inicio: toInputFormat(res.fecha_hora_inicio),
-      Fecha_Hora_Fin: toInputFormat(res.fecha_hora_fin)
+      Fecha_Hora_Fin: toInputFormat(res.fecha_hora_fin),
+      es_reserva_grupal: res.es_reserva_grupal || false,
+      ids_plazas_grupal: res.ids_plazas_grupal || []
     });
+    setEditingOriginalData(res);
     setShowModal(true);
   };
 
@@ -519,7 +474,6 @@ export default function Reservaciones() {
             const payload = {
                 id_persona: formData.id_persona,
                 id_plaza: parseInt(formData.Id_Plaza),
-                id_vehiculo: formData.id_vehiculo ? parseInt(formData.id_vehiculo) : null,
                 fecha_hora_inicio: new Date(formData.Fecha_Hora_Inicio).toISOString(),
                 fecha_hora_fin: new Date(formData.Fecha_Hora_Fin).toISOString(),
                 id_estado: idEstActivaRes,
@@ -541,52 +495,102 @@ export default function Reservaciones() {
 
             const plazaSelect = plazasList.find(p => p.id_plaza === parseInt(formData.Id_Plaza));
             const personaSelect = personasList.find(p => p.id_persona === formData.id_persona);
-            registrarLog(
-                isUpdating ? 'Cambio de Estado' : 'Reserva Creada',
-                `${isUpdating ? 'Edición' : 'Creación'} de reserva: ${personaSelect?.nombre} ${personaSelect?.apellido} en Plaza ${plazaSelect?.numero_plaza || formData.Id_Plaza}`, 
-                parseInt(formData.Id_Plaza)
-            );
-            loadReservas();
-            loadAuxData();
+            
+            let descLog = '';
+            if (isUpdating) {
+              descLog = generarDescripcionCambio(editingOriginalData, payload, `Edición de reserva para ${personaSelect?.nombre}`);
+            } else {
+              descLog = `Nueva reserva creada para ${personaSelect?.nombre} ${personaSelect?.apellido} en Plaza ${plazaSelect?.numero_plaza}`;
+            }
+
+            registrarLog({
+              tipo_nombre: isUpdating ? EVENT_TYPES.CAMBIO_ESTADO : EVENT_TYPES.RESERVA_CREADA,
+              descripcion: descLog,
+              id_persona: currentPersonaId,
+              organizacion_id: orgId,
+              id_plaza: parseInt(formData.Id_Plaza),
+              origen: 'Panel Web - Reservas'
+            });
+            loadAllData();
         } else {
-            // --- Lógica de Reserva por Zona (Nueva) ---
+            // --- Lógica de Reserva por Zona / Grupo ---
             if (!formData.id_zona || !formData.id_tipo_reserva || !formData.descripcion || !formData.id_persona) {
               setLoading(false);
               return Swal.fire('Campos requeridos', 'Zona, Motivo y Descripción son obligatorios.', 'warning');
             }
 
-              const selectedTipo = tiposReservaZona.find(t => t.id_tipo === parseInt(formData.id_tipo_reserva));
+            // A. VALIDACIÓN DE FECHA (Mismo día bloqueado según requerimiento)
+            const inicio = new Date(formData.Fecha_Hora_Inicio);
+            const hoy = new Date();
+            hoy.setHours(23, 59, 59, 999);
+            if (inicio <= hoy) {
+                setLoading(false);
+                return Swal.fire('Regla del Parqueo', 'Las reservaciones de zona o grupales deben realizarse con al menos 24h de antelación (a partir de mañana).', 'info');
+            }
 
-              const payloadZona = {
-                id_zona: parseInt(formData.id_zona),
-                id_tipo: parseInt(formData.id_tipo_reserva),
-                id_persona: formData.id_persona,
-                id_estado: idEstActivaRes,
-                fecha_hora_inicio: new Date(formData.Fecha_Hora_Inicio).toISOString(),
-                fecha_hora_fin: new Date(formData.Fecha_Hora_Fin).toISOString(),
-                descripcion: formData.descripcion,
-                id_empleado_aprobador: currentEmpleadoId,
-                organizacion_id: orgId
-              };
+            // B. VALIDACIÓN DE GRUPO (Límite dinámico)
+            const cfg = JSON.parse(localStorage.getItem('appSettings') || '{}');
+            const maxPlazas = cfg.maxPlazasPorGrupo || 3;
 
-              if (isUpdating) {
-                const { error } = await supabase.from('reserva_zona').update(payloadZona).eq('id_reserva_zona', editingReservaId);
-                if (error) throw error;
-                registrarLog('Cambio de Estado', `Edición de reserva de zona (ID: ${editingReservaId})`);
+            if (formData.es_reserva_grupal) {
+               if (formData.ids_plazas_grupal.length < 2) {
+                   setLoading(false);
+                   return Swal.fire('Reserva Grupal', 'Para una reserva grupal debes seleccionar al menos 2 plazas.', 'warning');
+               }
+               if (formData.ids_plazas_grupal.length > maxPlazas) {
+                   setLoading(false);
+                   return Swal.fire('Límite Excedido', `El número máximo de plazas por grupo es ${maxPlazas}.`, 'warning');
+               }
+            }
+
+            const selectedTipo = tiposReservaZona.find(t => t.id_tipo === parseInt(formData.id_tipo_reserva));
+
+            const payloadZona = {
+              id_zona: parseInt(formData.id_zona),
+              id_tipo: parseInt(formData.id_tipo_reserva),
+              id_persona: formData.id_persona,
+              id_estado: idEstActivaRes,
+              fecha_hora_inicio: new Date(formData.Fecha_Hora_Inicio).toISOString(),
+              fecha_hora_fin: new Date(formData.Fecha_Hora_Fin).toISOString(),
+              descripcion: formData.descripcion,
+              id_empleado_aprobador: currentEmpleadoId,
+              organizacion_id: orgId,
+              es_reserva_grupal: formData.es_reserva_grupal,
+              ids_plazas_grupal: formData.es_reserva_grupal ? formData.ids_plazas_grupal : []
+            };
+
+            if (isUpdating) {
+              const { error } = await supabase.from('reserva_zona').update(payloadZona).eq('id_reserva_zona', editingReservaId);
+              if (error) throw error;
+              registrarLog('Cambio de Estado', `Edición de reserva ${formData.es_reserva_grupal ? 'grupal' : 'de zona'} (ID: ${editingReservaId})`);
+            } else {
+              const { error } = await supabase.from('reserva_zona').insert([payloadZona]);
+              if (error) throw error;
+
+              // Marcar plazas como reservadas
+              let idsAMarcar = [];
+              if (formData.es_reserva_grupal) {
+                idsAMarcar = formData.ids_plazas_grupal;
               } else {
-                const { error } = await supabase.from('reserva_zona').insert([payloadZona]);
-                if (error) throw error;
-
-                // Marcar todas las plazas de la zona como reservadas
                 const { data: plazasZona } = await supabase.from('plaza').select('id_plaza').eq('id_zona', parseInt(formData.id_zona));
-                if (plazasZona && plazasZona.length > 0) {
-                    const idsPlazas = plazasZona.map(p => p.id_plaza);
-                    await supabase.from('plaza').update({ id_estado: idEstReservPlaza }).in('id_plaza', idsPlazas);
-                }
-
-                registrarLog('Reserva Creada', `Nueva reserva de zona: ${selectedTipo?.nombre || 'General'}`);
+                idsAMarcar = plazasZona?.map(p => p.id_plaza) || [];
               }
-            loadReservasZona();
+
+              if (idsAMarcar.length > 0) {
+                  await supabase.from('plaza').update({ id_estado: idEstReservPlaza }).in('id_plaza', idsAMarcar);
+              }
+
+              registrarLog({
+                tipo_nombre: isUpdating ? EVENT_TYPES.CAMBIO_ESTADO : EVENT_TYPES.RESERVA_CREADA,
+                descripcion: isUpdating 
+                  ? generarDescripcionCambio(editingOriginalData, payloadZona, 'Edición de reserva de zona')
+                  : `Reserva ${formData.es_reserva_grupal ? 'grupal' : 'de zona completa'} creada para ${selectedTipo?.nombre}. Plazas involucradas: ${idsAMarcar.length}`,
+                id_persona: currentPersonaId,
+                organizacion_id: orgId,
+                origen: 'Panel Web - Reservas'
+              });
+            }
+            loadAllData();
         }
         
         resetForm();
@@ -607,10 +611,10 @@ export default function Reservaciones() {
     setFormData({
       id_persona: res.id_persona,
       Id_Plaza: res.id_plaza,
-      id_vehiculo: res.id_vehiculo ? String(res.id_vehiculo) : '',
       Fecha_Hora_Inicio: toInputFormat(res.fecha_hora_inicio),
       Fecha_Hora_Fin: toInputFormat(res.fecha_hora_fin)
     });
+    setEditingOriginalData(res);
     setShowModal(true);
   };
 
@@ -631,7 +635,7 @@ export default function Reservaciones() {
       setPlazasList(plazaData || []);
     } else {
       // Cargar tipos y zonas
-      loadAuxDataZona();
+      loadAllData();
     }
 
     setShowModal(true);
@@ -705,7 +709,7 @@ export default function Reservaciones() {
                 <FaSearch className="absolute left-3 top-2.5 text-gray-400 text-xs" />
               </div>
               <button
-                onClick={() => { loadReservas(); loadReservasZona(); loadAuxData(); loadAuxDataZona(); }}
+                onClick={loadAllData}
                 disabled={isRefreshing}
                 className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition disabled:opacity-50"
                 title="Refrescar lista"
@@ -786,15 +790,30 @@ export default function Reservaciones() {
                           <td className="px-6 py-4">
                             <div className="flex flex-col">
                               <span className="font-bold text-gray-700">{rz.zona?.nombre}</span>
-                              <span className="text-[10px] font-bold text-blue-500 uppercase">{rz.tipo?.nombre}</span>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${rz.es_reserva_grupal ? 'bg-purple-100 text-purple-700 border border-purple-200' : 'bg-blue-100 text-blue-700 border border-blue-200'} uppercase tracking-tight`}>
+                                  {rz.es_reserva_grupal ? 'Grupo' : 'Zona'}
+                                </span>
+                                <span className="text-[10px] font-bold text-gray-500 uppercase">{rz.tipo?.nombre}</span>
+                              </div>
                             </div>
                           </td>
                           <td className="px-6 py-4 text-gray-600 font-medium">{rz.persona?.nombre} {rz.persona?.apellido}</td>
                           <td className="px-6 py-4">
-                            <div className="flex flex-col max-w-xs">
-                              <p className="text-gray-900 font-semibold truncate" title={rz.tipo?.nombre}>{rz.tipo?.nombre}</p>
-                              {rz.descripcion && <p className="text-[10px] text-gray-400 truncate" title={rz.descripcion}>{rz.descripcion}</p>}
-                            </div>
+                             <div className="flex flex-col max-w-xs">
+                               {rz.es_reserva_grupal && rz.ids_plazas_grupal ? (
+                                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 mb-1">
+                                    <p className="text-[10px] font-black text-amber-700 uppercase mb-1 flex items-center gap-1">Plazas Reservadas ({rz.ids_plazas_grupal.length})</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {/* Usaremos un pequeño truco para mostrar los nombres de las plazas si no están en el objeto rz. (Podríamos mejorar el select en loadReservasZona) */}
+                                      <p className="text-xs font-bold text-gray-800 tracking-tighter">IDs: {rz.ids_plazas_grupal.join(', ')}</p>
+                                    </div>
+                                 </div>
+                               ) : (
+                                 <p className="text-gray-900 font-semibold truncate" title={rz.tipo?.nombre}>{rz.tipo?.nombre}</p>
+                               )}
+                               {rz.descripcion && <p className="text-[10px] text-gray-400 truncate" title={rz.descripcion}>{rz.descripcion}</p>}
+                             </div>
                           </td>
                           <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(rz.fecha_hora_inicio)}</td>
                           <td className="px-6 py-4 text-gray-500 font-medium">{formatDisplayDate(rz.fecha_hora_fin)}</td>
@@ -872,30 +891,7 @@ export default function Reservaciones() {
                       />
                     </div>
                     
-                    {formData.id_persona && (
-                      <div className="animate-fadeIn">
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Vehículo Habilitado *</label>
-                        {vehiculosMap[formData.id_persona]?.length > 0 ? (
-                          <SearchableSelect
-                            options={vehiculosMap[formData.id_persona].map(v => ({
-                              value: v.id_vehiculo,
-                              label: `${v.placa} - ${v.modelo?.marca?.nombre || ''} ${v.modelo?.nombre || ''}`,
-                              subtitle: v.color?.nombre || 'Sin color'
-                            }))}
-                            value={formData.id_vehiculo}
-                            onChange={(val) => setFormData({...formData, id_vehiculo: val})}
-                            placeholder="— Seleccionar Vehículo —"
-                            focusRingClass="focus:ring-blue-500"
-                            selectedItemClass="bg-blue-100 text-blue-800"
-                            className="bg-gray-50/50 text-sm"
-                          />
-                        ) : (
-                          <div className="p-2 bg-red-50 border border-red-100 rounded-lg">
-                            <p className="text-[10px] text-red-500 font-bold italic">Esta persona no tiene vehículos habilitados para reservar.</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    {/* El selector de vehículo ha sido eliminado para desacoplar el derecho de reserva del vehículo real */}
                     </>
                  )}
 
@@ -933,18 +929,64 @@ export default function Reservaciones() {
                     </div>
 
                     <div className="md:col-span-2">
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Descripción *</label>
-                        <textarea
-                          placeholder="Detalle de la reserva (Ej: reparación de luces, evento...)"
-                          className="w-full border rounded-lg p-2.5 text-sm focus:ring-blue-500 bg-gray-50 outline-none h-24 resize-none"
-                          value={formData.descripcion}
-                          onChange={(e) => setFormData({...formData, descripcion: e.target.value})}
-                          required
-                        />
+                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Descripción *</label>
+                         <textarea
+                           placeholder="Detalle de la reserva (Ej: reparación de luces, evento...)"
+                           className="w-full border rounded-lg p-2.5 text-sm focus:ring-blue-500 bg-gray-50 outline-none h-24 resize-none"
+                           value={formData.descripcion}
+                           onChange={(e) => setFormData({...formData, descripcion: e.target.value})}
+                           required
+                         />
+                    </div>
+
+                    {/* Selector de Modo: Zona vs Grupo */}
+                    <div className="md:col-span-2 bg-gray-50 p-3 rounded-xl border border-dashed border-gray-200">
+                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-2">Alcance de la Reserva</label>
+                       <div className="grid grid-cols-2 gap-2">
+                          <button 
+                            type="button"
+                            className={`py-2 text-[10px] font-black rounded-lg transition-all ${!formData.es_reserva_grupal ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-400 border'}`}
+                            onClick={() => setFormData({...formData, es_reserva_grupal: false})}
+                          >TODA LA ZONA</button>
+                          <button 
+                            type="button"
+                            className={`py-2 text-[10px] font-black rounded-lg transition-all ${formData.es_reserva_grupal ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-400 border'}`}
+                            onClick={() => setFormData({...formData, es_reserva_grupal: true})}
+                          >SELECCIONAR GRUPO</button>
+                       </div>
+
+                       {formData.es_reserva_grupal && (
+                         <div className="mt-3 animate-in fade-in slide-in-from-top-2">
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5 flex justify-between">
+                               <span>Selecciona Plazas </span>
+                               <span className="text-purple-600">({formData.ids_plazas_grupal.length} Marcadas)</span>
+                            </label>
+                            <div className="max-h-32 overflow-y-auto grid grid-cols-3 gap-1.5 p-1 bg-white rounded-lg border shadow-inner">
+                               {plazasDeZona.map(p => (
+                                 <button
+                                   key={p.id_plaza}
+                                   type="button"
+                                   onClick={() => {
+                                      const ids = [...formData.ids_plazas_grupal];
+                                      if (ids.includes(p.id_plaza)) {
+                                        setFormData({...formData, ids_plazas_grupal: ids.filter(id => id !== p.id_plaza)});
+                                      } else {
+                                        setFormData({...formData, ids_plazas_grupal: [...ids, p.id_plaza]});
+                                      }
+                                   }}
+                                   className={`py-1.5 rounded text-[10px] font-bold transition-all border ${formData.ids_plazas_grupal.includes(p.id_plaza) ? 'bg-purple-100 border-purple-300 text-purple-700 shadow-sm' : 'bg-gray-50 border-gray-100 text-gray-400 hover:border-gray-300'}`}
+                                 >
+                                   {p.numero_plaza}
+                                 </button>
+                               ))}
+                               {plazasDeZona.length === 0 && <p className="col-span-3 text-center py-4 text-[10px] text-gray-400 italic">No hay plazas libres en esta zona.</p>}
+                            </div>
+                         </div>
+                       )}
                     </div>
                   </div>
-                   </>
-                 )}
+                    </>
+                  )}
 
                  <div className="grid grid-cols-2 gap-3">
                    <div>

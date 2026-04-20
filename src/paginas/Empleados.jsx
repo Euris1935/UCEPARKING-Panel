@@ -9,6 +9,7 @@ import {
   FaSitemap, FaUsers
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
 
 export default function Empleados() {
   const { tienePermiso } = useRbac();
@@ -38,70 +39,52 @@ export default function Empleados() {
 
   const isUpdating = !!editingEmp;
 
-  // ────────────────────────────────────────────────────────────────────────────
-  useEffect(() => { init(); }, []);
+  const { orgId } = useOrg();
 
-  const init = async () => {
+  // ────────────────────────────────────────────────────────────────────────────
+  useEffect(() => { 
+    if (orgId) loadData(); 
+  }, [orgId]);
+
+  const loadData = async () => {
+    if (!orgId) return;
     setLoading(true);
     try {
-      // 1. Obtener org del admin activo
-      const { data: { user } } = await supabase.auth.getUser();
-      let orgId   = null;
-      let orgNom  = '';
-
-      if (user) {
-        const { data: uRow } = await supabase
-          .from('usuario').select('id_persona').eq('id', user.id).single();
-
-        if (uRow?.id_persona) {
-          setCurrentPersonaId(uRow.id_persona);
-          const { data: empRow } = await supabase
-            .from('empleado')
-            .select('organizacion_id, organizacion(nombre)')
-            .eq('id_persona', uRow.id_persona)
-            .maybeSingle();
-
-          orgId  = empRow?.organizacion_id   || null;
-          orgNom = empRow?.organizacion?.nombre || '';
-        }
-      }
-
-      setAdminOrgId(orgId);
-      setAdminOrgNombre(orgNom);
-
-      // 2. Catálogos
-      const { data: deptData } = await supabase.from('departamento').select('*');
+      // 1. Catálogos
+      const { data: deptData } = await supabase.from('departamento').select('*').eq('organizacion_id', orgId);
       setDepartamentos(deptData || []);
 
       const { data: estData } = await supabase.from('estado_usuario').select('*').order('id_estado');
       setCatEstados(estData || []);
+      
       await cargarEmpleados(deptData || []);
 
     } catch (err) {
-      console.error('init error:', err);
+      console.error('loadData error:', err);
     } finally {
       setLoading(false);
     }
   };
 
   const registrarLog = async (tipo_nombre, descripcion) => {
-    if (!currentPersonaId) return;
+    // El registro de log ahora debería usar los utils globales si es posible,
+    // pero mantenemos la compatibilidad mínima aquí.
     try {
       const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
       const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Personal').maybeSingle();
       await supabase.from('evento').insert([{ 
         fecha_hora: new Date().toISOString(), 
         descripcion: descripcion, 
-        id_persona: currentPersonaId, 
+        id_persona: null, // Se obtendrá por RLS o contexto en el trigger
         id_tipo: te?.id_tipo || null, 
         id_origen_evento: oe?.id_origen || null,
-        organizacion_id: adminOrgId
+        organizacion_id: orgId
       }]);
     } catch (e) { console.warn('Log error:', e.message); }
   };
 
   const cargarEmpleados = async (deptList) => {
-    const { data: emps } = await supabase.from('empleado').select('*, estado:id_estado(nombre)').order('id_empleado');
+    const { data: emps } = await supabase.from('empleado').select('*, estado:id_estado(nombre)').eq('organizacion_id', orgId).order('id_empleado');
 
     const { data: orgUsers, error: rpcErr } = await supabase.rpc('get_usuarios_org');
     if (rpcErr) console.warn('get_usuarios_org error:', rpcErr.message);

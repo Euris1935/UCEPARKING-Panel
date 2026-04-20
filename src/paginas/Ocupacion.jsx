@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaSearch, FaClock, FaExclamationTriangle, FaMapMarkerAlt, FaSync } from 'react-icons/fa';
+import { FaSearch, FaClock, FaExclamationTriangle, FaMapMarkerAlt, FaSync, FaWheelchair } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 
 export default function Ocupacion() {
@@ -18,206 +18,153 @@ export default function Ocupacion() {
   const [ocupacionInfo, setOcupacionInfo] = useState({});
 
   useEffect(() => {
-    // Obtener persona_id del usuario activo para los logs
-    const getCurrentPersona = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data } = await supabase
-          .from('usuario')
-          .select('id_persona')
-          .eq('id', user.id)
-          .single();
-        if (data) setCurrentPersonaId(data.id_persona);
-      }
-    };
-    getCurrentPersona();
-    loadData();
-
-    // Suscripción tiempo real a cambios de plaza, asignación y ZONA
-    const channel = supabase.channel('realtime_ocupacion')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, () => loadData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, () => loadData())
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, []);
+    if (orgId) {
+      loadData();
+      // Suscripción tiempo real a cambios de plaza, asignación y ZONA
+      const channel = supabase.channel('realtime_occupancy')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, loadData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
+        .subscribe();
+      return () => supabase.removeChannel(channel);
+    }
+  }, [orgId]);
 
   const loadData = async () => {
+    if (!orgId) return;
     setIsRefreshing(true);
     try {
-      const { data: estData } = await supabase.from('estado_plaza').select('id_estado, nombre');
-      setEstadosCatalogo(estData?.map(e => ({ id: e.id_estado, nombre: e.nombre })) || []);
+      // 1. Carga de catálogos y zonas (Paralelo)
+      const [
+        { data: estData },
+        { data: zonasData },
+        { data: tStats }
+      ] = await Promise.all([
+        supabase.from('estado_plaza').select('id_estado, nombre'),
+        supabase.from('zona').select('*, estado_zona(nombre)').eq('organizacion_id', orgId).order('nombre'),
+        supabase.from('ticket').select('id_estado').eq('organizacion_id', orgId) // Solo para cachear estados luego
+      ]);
 
-      const { data: zonasData } = await supabase
-        .from('zona')
-        .select('*, estado_zona(nombre)')
-        .order('nombre');
+      setEstadosCatalogo(estData?.map(e => ({ id: e.id_estado, nombre: e.nombre })) || []);
       
-      // Filtrar zonas Inactivas pero PERMITIR Cerrada Temporalmente y En Mantenimiento
-      const zonasVivas = (zonasData || []).filter(z => {
-        const est = z.estado_zona?.nombre || '';
-        return est !== 'Inactiva';
-      });
+      const zonasVivas = (zonasData || []).filter(z => z.estado_zona?.nombre !== 'Inactiva');
       setZonas(zonasVivas);
 
       const idsZonasVivas = zonasVivas.map(z => z.id_zona);
-      const { data: plazasData } = await supabase
-        .from('plaza')
-        .select('*')
-        .in('id_zona', idsZonasVivas)
-        .order('numero_plaza');
+      if (idsZonasVivas.length === 0) {
+        setPlazas([]);
+        setOcupacionInfo({});
+        return;
+      }
 
-      let plazasCompletas = (plazasData || []).map(p => {
-        const estadoObj = (estData || []).find(e => e.id_estado === p.id_estado);
-        return {
-          ...p,
-          Nombre_Estado_Rel: estadoObj ? estadoObj.nombre.toUpperCase() : 'LIBRE'
-        };
-      });
+      // 2. Carga de Plazas, Accesos, Reservas y Asignaciones (Paralelo)
+      const [
+        { data: plazasData },
+        { data: accesosActivos },
+        { data: reservasActivas },
+        { data: reservasZonas },
+        { data: ticketsActivos },
+        { data: asigData }
+      ] = await Promise.all([
+        supabase.from('plaza').select('*, id_tipo').in('id_zona', idsZonasVivas).order('numero_plaza'),
+        supabase.from('acceso').select('id_plaza, vehiculo(placa, persona(nombre, apellido))').eq('organizacion_id', orgId).is('salida_at', null),
+        supabase.from('reserva').select('id_plaza, persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('reserva_zona').select('*, tipo:tipo_reserva_zona(nombre), persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('ticket').select('id_plaza_asignada, placa_capturada, persona:id_persona(nombre, apellido), visitante:id_visitante(persona(nombre, apellido))').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('asignacion').select('id_plaza, empleado(persona(nombre, apellido))').eq('organizacion_id', orgId).eq('id_estado', 1).or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`)
+      ]);
 
-      // Info de quién ocupa/reserva/tiene asignada cada plaza
       const mapaOcupacion = {};
 
-      // 1. OCUPACIÓN (Accesos activos)
-      const { data: accesosActivos } = await supabase
-        .from('acceso')
-        .select(`
-          id_plaza,
-          vehiculo (
-            placa,
-            persona ( nombre, apellido )
-          )
-        `)
-        .is('salida_at', null);
-      
+      // Mapeo de Accesos
       (accesosActivos || []).forEach(acc => {
-        if (acc.id_plaza && acc.vehiculo) {
+        if (acc.id_plaza) {
           mapaOcupacion[acc.id_plaza] = {
             type: 'acceso',
-            placa: acc.vehiculo.placa,
-            nombre: `${acc.vehiculo.persona?.nombre || 'Visitante'} ${acc.vehiculo.persona?.apellido || ''}`.trim()
+            placa: acc.vehiculo?.placa,
+            nombre: `${acc.vehiculo?.persona?.nombre || 'Visitante'} ${acc.vehiculo?.persona?.apellido || ''}`.trim()
           };
         }
       });
 
-      // 2. RESERVAS (Activas y Autocaducidad Global)
-      const { data: erData } = await supabase.from('estado_reserva').select('id_estado, nombre');
-      const idResActiva = erData?.find(e => e.nombre === 'Activa')?.id_estado || 1;
-      const idEstCompletadoRes = erData?.find(e => e.nombre === 'Completada')?.id_estado || 3;
+      // Mapeo de Reservas Directas
+      (reservasActivas || []).forEach(res => {
+        if (res.id_plaza) {
+          mapaOcupacion[res.id_plaza] = {
+            type: 'reserva',
+            nombre: `${res.persona?.nombre || ''} ${res.persona?.apellido || ''}`.trim()
+          };
+        }
+      });
 
-      const { data: todasActivas } = await supabase
-        .from('reserva')
-        .select(`
-          id_reserva, id_plaza, fecha_hora_inicio, fecha_hora_fin, id_persona, id_vehiculo,
-          vehiculo ( placa )
-        `)
-        .eq('id_estado', idResActiva);
-      
-      const resData = (todasActivas || []);
-
-      if (resData.length > 0) {
-          const pIdsRes = resData.map(r => r.id_persona).filter(Boolean);
-          const { data: resPersonas } = await supabase.from('persona').select('id_persona, nombre, apellido').in('id_persona', pIdsRes);
-          
-          resData.forEach(res => {
-             const p = resPersonas?.find(x => String(x.id_persona) === String(res.id_persona));
-             if (p && res.id_plaza) {
-                mapaOcupacion[res.id_plaza] = {
-                   ...mapaOcupacion[res.id_plaza],
-                   type: 'reserva',
-                   nombre: `${p.nombre} ${p.apellido}`.trim(),
-                   placa: res.vehiculo?.placa || null
-                };
-             }
+      // Mapeo de Reservas de Zona/Grupal
+      (reservasZonas || []).forEach(rz => {
+        if (rz.es_reserva_grupal && rz.ids_plazas_grupal?.length > 0) {
+          rz.ids_plazas_grupal.forEach(pid => {
+            if (!mapaOcupacion[pid]) {
+              mapaOcupacion[pid] = { type: 'reserva_zona', nombre: `GRUPO: ${rz.persona ? `${rz.persona.nombre} ${rz.persona.apellido}` : 'Sistema'}`, subType: 'grupal' };
+            }
           });
-      }
-
-      // 2.5 RESERVAS POR ZONA
-      const { data: reservasZonasActivas } = await supabase
-        .from('reserva_zona')
-        .select(`
-          id_reserva_zona, 
-          id_zona, 
-          tipo:tipo_reserva_zona ( nombre ),
-          persona (nombre, apellido)
-        `)
-        .eq('id_estado', idResActiva);
-
-      if (reservasZonasActivas && reservasZonasActivas.length > 0) {
-        reservasZonasActivas.forEach(rz => {
-           // Encontrar todas las plazas que pertenecen a esta zona
-           plazasCompletas.filter(p => p.id_zona === rz.id_zona).forEach(p => {
-              // Solo sobreescribimos si no hay una reserva individual (que es más específica)
-              if (!mapaOcupacion[p.id_plaza]) {
-                mapaOcupacion[p.id_plaza] = {
-                  type: 'reserva_zona',
-                  nombre: `ZONA RESERVADA: ${rz.tipo?.nombre || 'General'}`,
-                  persona: rz.persona ? `${rz.persona.nombre} ${rz.persona.apellido}` : 'Sistema',
-                  placa: 'RESERVA GRUPAL'
-                };
-              }
-           });
-        });
-      }
-
-      // 3. ASIGNACIONES (Fijas y Activas)
-      const { data: asigData } = await supabase.from('asignacion')
-         .select('id_plaza, id_empleado, id_vehiculo, vehiculo(placa)')
-         .eq('id_estado', 1)
-         .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
-         
-      if (asigData && asigData.length > 0) {
-          const empIds = asigData.map(a => a.id_empleado);
-          const { data: empPersonas } = await supabase
-            .from('empleado')
-            .select('id_empleado, id_persona, persona(nombre, apellido)')
-            .in('id_empleado', empIds);
-          
-          asigData.forEach(asig => {
-             const emp = empPersonas?.find(x => x.id_empleado === asig.id_empleado);
-             if (emp?.persona && asig.id_plaza) {
-                mapaOcupacion[asig.id_plaza] = {
-                   ...mapaOcupacion[asig.id_plaza],
-                   type: 'asignacion',
-                   nombre: `${emp.persona.nombre} ${emp.persona.apellido}`.trim(),
-                   placa: asig.vehiculo?.placa || null
-                };
-             }
+        } else {
+          (plazasData || []).filter(p => p.id_zona === rz.id_zona).forEach(p => {
+            if (!mapaOcupacion[p.id_plaza]) {
+              mapaOcupacion[p.id_plaza] = { type: 'reserva_zona', nombre: `ZONA RESERVADA: ${rz.tipo?.nombre || 'General'}`, persona: rz.persona ? `${rz.persona.nombre} ${rz.persona.apellido}` : 'Sistema' };
+            }
           });
-      }
+        }
+      });
 
-      // 4. SOBRESCRITURA VISUAL SEGÚN MAPA Y ESTADO DE ZONA
-      plazasCompletas = plazasCompletas.map(p => {
-         const z = (zonasData || []).find(zona => zona.id_zona === p.id_zona);
-         const estZona = z?.estado_zona?.nombre || '';
-         
-         // Prioridad 1: Zona Cerrada o en Mantenimiento (Override total)
-         if (estZona === 'Cerrada Temporalmente') {
-           return { ...p, Nombre_Estado_Rel: 'CERRADA', _zonaBloqueada: true };
-         }
-         if (estZona === 'En Mantenimiento') {
-           return { ...p, Nombre_Estado_Rel: 'MANTENIMIENTO', _zonaBloqueada: true };
-         }
+      // Mapeo de Tickets
+      (ticketsActivos || []).forEach(tk => {
+        if (tk.id_plaza_asignada) {
+          const p = tk.persona || tk.visitante?.persona;
+          mapaOcupacion[tk.id_plaza_asignada] = {
+            type: 'ticket',
+            nombre: p ? `${p.nombre} ${p.apellido}`.trim() : 'Visitante',
+            placa: tk.placa_capturada
+          };
+        }
+      });
 
-         // Si la zona es Activa, nos aseguramos de no mostrar estados de bloqueo administrativo "huérfanos"
-         if (estZona === 'Activa' && (p.Nombre_Estado_Rel === 'MANTENIMIENTO' || p.Nombre_Estado_Rel === 'CERRADA')) {
-           return { ...p, Nombre_Estado_Rel: 'LIBRE' };
-         }
+      // Mapeo de Asignaciones
+      (asigData || []).forEach(asig => {
+        if (asig.id_plaza) {
+          mapaOcupacion[asig.id_plaza] = {
+            type: 'asignacion',
+            nombre: `${asig.empleado?.persona?.nombre || ''} ${asig.empleado?.persona?.apellido || ''}`.trim()
+          };
+        }
+      });
 
-         // Prioridad 2: Mapa de ocupación (Accesos, Reservas, Asignaciones)
-         const info = mapaOcupacion[p.id_plaza];
-         if (!info || p.Nombre_Estado_Rel !== 'LIBRE') return p;
-         
-         if (info.type === 'acceso')     return { ...p, Nombre_Estado_Rel: 'OCUPADA' };
-         if (info.type === 'reserva')    return { ...p, Nombre_Estado_Rel: 'RESERVADA' };
-         if (info.type === 'asignacion') return { ...p, Nombre_Estado_Rel: 'ASIGNADO' };
-         
-         return p;
+      // Enriquecimiento de Plazas con estados derivados y visuales
+      const plazasCompletas = (plazasData || []).map(p => {
+        const z = (zonasData || []).find(zona => zona.id_zona === p.id_zona);
+        const estZona = z?.estado_zona?.nombre || '';
+        const estadoBase = (estData || []).find(e => e.id_estado === p.id_estado)?.nombre.toUpperCase() || 'LIBRE';
+        
+        // Bloqueos de Zona
+        if (estZona === 'Cerrada Temporalmente') return { ...p, Nombre_Estado_Rel: 'CERRADA', _zonaBloqueada: true };
+        if (estZona === 'En Mantenimiento') return { ...p, Nombre_Estado_Rel: 'MANTENIMIENTO', _zonaBloqueada: true };
+
+        // Lógica de ocupación derivada
+        const info = mapaOcupacion[p.id_plaza];
+        if (info && estadoBase === 'LIBRE') {
+          if (info.type === 'acceso')     return { ...p, Nombre_Estado_Rel: 'OCUPADA' };
+          if (info.type === 'reserva' || info.type === 'reserva_zona') return { ...p, Nombre_Estado_Rel: 'RESERVADA' };
+          if (info.type === 'asignacion') return { ...p, Nombre_Estado_Rel: 'ASIGNADO' };
+        }
+
+        return { ...p, Nombre_Estado_Rel: estadoBase };
       });
 
       setPlazas(plazasCompletas);
       setOcupacionInfo(mapaOcupacion);
-    } catch (error) { console.error("Error cargando datos:", error); } finally { setLoading(false); setIsRefreshing(false); }
+    } catch (error) { 
+      console.error("Error loadData Ocupacion:", error); 
+    } finally { 
+      setLoading(false); 
+      setIsRefreshing(false); 
+    }
   };
 
   const getEstadoId = (nombre) => {
@@ -279,7 +226,7 @@ export default function Ocupacion() {
       const numPlaza = plazaActual?.numero_plaza || `ID-${idPlaza}`;
       await registrarLog(
         'Alerta',
-        `Plaza ${numPlaza} cambió de ${estadoAnterior} a ${nombreNuevoEstado.toUpperCase()} manualmente.`,
+        `Cambio de estado manual: de ${estadoAnterior} a ${nombreNuevoEstado.toUpperCase()}.`,
         idPlaza
       );
       loadData();
@@ -381,9 +328,17 @@ export default function Ocupacion() {
     });
   };
 
-  const getCardColor = (estado, idPlaza, forcingStatus = null) => {
+  const getCardColor = (estado, idPlaza, forcingStatus = null, idTipo = null) => {
     const statusToUse = (forcingStatus || estado)?.toUpperCase();
     const info = ocupacionInfo[idPlaza];
+
+    // Estilo especial para Discapacitados (ID 3)
+    if (idTipo === 3) {
+      if (statusToUse === 'OCUPADA') return 'bg-blue-600 border-blue-700 shadow-md text-white';
+      if (statusToUse === 'RESERVADA' || statusToUse === 'RESERVADO') return 'bg-blue-100 border-blue-300 shadow-sm';
+      return 'bg-blue-50 border-blue-200 hover:border-blue-400 shadow-sm'; // Libre o default
+    }
+
     if (!forcingStatus && info?.type === 'asignacion') return 'bg-purple-50 border-purple-300 shadow-sm cursor-not-allowed';
 
     switch (statusToUse) {
@@ -400,8 +355,15 @@ export default function Ocupacion() {
     }
   };
 
-  const getBadgeColor = (estado, idPlaza, forcingStatus = null) => {
+  const getBadgeColor = (estado, idPlaza, forcingStatus = null, idTipo = null) => {
     const statusToUse = (forcingStatus || estado)?.toUpperCase();
+
+    // Estilo especial para Discapacitados (ID 3)
+    if (idTipo === 3) {
+      if (statusToUse === 'OCUPADA') return 'text-blue-100 bg-blue-800/50';
+      return 'text-blue-700 bg-blue-100';
+    }
+
     const info = ocupacionInfo[idPlaza];
     if (!forcingStatus && info?.type === 'asignacion') return 'text-purple-800 bg-purple-200';
 
@@ -480,31 +442,37 @@ export default function Ocupacion() {
 
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4">
                   {plazasDeZona.map(plaza => (
-                    <div
-                      key={plaza.id_plaza}
-                      className={`relative group p-4 rounded-lg border-2 cursor-pointer transition-all h-32 flex flex-col items-center justify-center text-center ${getCardColor(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus)}`}
-                      onClick={() => {
-                        if (isForcedState) {
-                          return Swal.fire({
-                            title: 'Zona Bloqueada',
-                            text: `Esta plaza pertenece a una zona en estado "${estZona}". No puede ser manipulada manualmente hasta que la zona se active.`,
-                            icon: 'info'
-                          });
-                        }
-                        toggleOccupancy(plaza);
-                      }}
-                    >
-                      <h4 className="font-bold text-xl text-gray-800">{plaza.numero_plaza}</h4>
-                      <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus)}`}>
-                        {forcingStatus || (ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' ? 'ASIGNADA' : plaza.Nombre_Estado_Rel)}
-                      </span>
-                      {!isForcedState && (['OCUPADA', 'RESERVADA', 'RESERVADO', 'ASIGNADA', 'ASIGNADO'].includes(plaza.Nombre_Estado_Rel) || ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' || ocupacionInfo[plaza.id_plaza]?.type === 'reserva') && ocupacionInfo[plaza.id_plaza] && (
-                        <div className={`mt-1 text-[9px] leading-tight ${
-                          (ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' || plaza.Nombre_Estado_Rel.startsWith('ASIGNAD')) ? 'text-purple-800' :
-                          plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-red-700' : 
-                          (plaza.Nombre_Estado_Rel === 'RESERVADA' || plaza.Nombre_Estado_Rel === 'RESERVADO') ? 'text-yellow-800' : 'text-purple-800'
-                        }`}>
-                          {ocupacionInfo[plaza.id_plaza].placa && (
+                      <div
+                        key={plaza.id_plaza}
+                        className={`relative group p-4 rounded-lg border-2 cursor-pointer transition-all h-32 flex flex-col items-center justify-center text-center ${getCardColor(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus, plaza.id_tipo)}`}
+                        onClick={() => {
+                          if (isForcedState) {
+                            return Swal.fire({
+                              title: 'Zona Bloqueada',
+                              text: `Esta plaza pertenece a una zona en estado "${estZona}". No puede ser manipulada manualmente hasta que la zona se active.`,
+                              icon: 'info'
+                            });
+                          }
+                          toggleOccupancy(plaza);
+                        }}
+                      >
+                        {/* Icono de Discapacitados */}
+                        {plaza.id_tipo === 3 && (
+                          <FaWheelchair className={`absolute top-2 right-2 text-lg ${plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-blue-100' : 'text-blue-500'}`} />
+                        )}
+
+                        <h4 className={`font-bold text-xl ${plaza.id_tipo === 3 && plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-white' : 'text-gray-800'}`}>{plaza.numero_plaza}</h4>
+                        <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus, plaza.id_tipo)}`}>
+                          {forcingStatus || (ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' ? 'ASIGNADA' : plaza.Nombre_Estado_Rel)}
+                        </span>
+                        {!isForcedState && (['OCUPADA', 'RESERVADA', 'RESERVADO', 'ASIGNADA', 'ASIGNADO'].includes(plaza.Nombre_Estado_Rel) || ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' || ocupacionInfo[plaza.id_plaza]?.type === 'reserva') && ocupacionInfo[plaza.id_plaza] && (
+                          <div className={`mt-1 text-[9px] leading-tight ${
+                            (ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' || plaza.Nombre_Estado_Rel.startsWith('ASIGNAD')) ? 'text-purple-800' :
+                            (plaza.id_tipo === 3 && plaza.Nombre_Estado_Rel === 'OCUPADA') ? 'text-blue-50' :
+                            plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-red-700' : 
+                            (plaza.Nombre_Estado_Rel === 'RESERVADA' || plaza.Nombre_Estado_Rel === 'RESERVADO') ? 'text-yellow-800' : 'text-purple-800'
+                          }`}>
+                          {plaza.Nombre_Estado_Rel === 'OCUPADA' && ocupacionInfo[plaza.id_plaza].placa && (
                             <div className="font-mono font-bold">{ocupacionInfo[plaza.id_plaza].placa}</div>
                           )}
                           <div className="text-[8px] opacity-80 truncate max-w-[90px]">

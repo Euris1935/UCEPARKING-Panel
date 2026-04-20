@@ -1,5 +1,4 @@
 
-
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
@@ -48,136 +47,83 @@ export default function Mantenimiento() {
     const [changingStatusFor,   setChangingStatusFor]   = useState(null);
     const [newStatusChoice,     setNewStatusChoice]     = useState('');
     useEffect(() => {
-        const getPersona = async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                const { data } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-                if (data) setCurrentPersonaId(data.id_persona);
-            }
-        };
-        getPersona();
-        loadData();
-    }, []);
+        if (orgId) {
+            loadData();
+            // Suscripción en tiempo real
+            const channel = supabase.channel('realtime_mantenimiento')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'mantenimiento' }, loadData)
+                .subscribe();
+            return () => supabase.removeChannel(channel);
+        }
+    }, [orgId]);
 
     const loadData = async () => {
+        if (!orgId) return;
         setLoading(true);
         setIsRefreshing(true);
         try {
+            // 1. Carga paralela de todo lo necesario
+            const [
+                { data: mantData, error: mantErr },
+                { data: dispData },
+                { data: rpcUsers, error: rpcErr },
+                { data: allEmps },
+                { data: fullZonas },
+                { data: fullPlazas },
+                { data: tipoData },
+                { data: estData }
+            ] = await Promise.all([
+                supabase.from('mantenimiento').select(`
+                    id_mantenimiento, fecha_inicio, fecha_fin, descripcion, id_dispositivo, id_zona, id_plaza, id_empleado, id_tipo, id_estado,
+                    estado:estado_mantenimiento ( nombre ),
+                    tipo:tipo_mantenimiento ( nombre ),
+                    dispositivo ( id_dispositivo, id_plaza, tipo:tipo_dispositivo ( nombre ) ),
+                    empleado ( id_empleado, persona ( nombre, apellido ) )
+                `).eq('organizacion_id', orgId).order('fecha_inicio', { ascending: false }),
+                supabase.from('dispositivo').select('id_dispositivo, id_plaza, id_estado, tipo:tipo_dispositivo(nombre), modelo(nombre, marca(nombre)), plaza:id_plaza(numero_plaza)').eq('organizacion_id', orgId),
+                supabase.rpc('get_usuarios_org'),
+                supabase.from('empleado').select('id_empleado, id_persona').eq('organizacion_id', orgId),
+                supabase.from('zona').select('id_zona, nombre, id_estado, estado:estado_zona(nombre)').eq('organizacion_id', orgId),
+                supabase.from('plaza').select('id_plaza, numero_plaza, id_zona, id_estado, estado:estado_plaza(nombre)').eq('organizacion_id', orgId),
+                supabase.from('tipo_mantenimiento').select('*').order('nombre'),
+                supabase.from('estado_mantenimiento').select('*').order('nombre')
+            ]);
 
-            const { data: mantData, error } = await supabase
-                .from('mantenimiento')
-                .select(`
-                id_mantenimiento,
-                fecha_inicio,
-                fecha_fin,
-                descripcion,
-                id_dispositivo,
-                id_zona,
-                id_plaza,
-                id_empleado,
-                id_tipo,
-                id_estado,
-                estado:estado_mantenimiento ( nombre ),
-                tipo:tipo_mantenimiento ( nombre ),
-                dispositivo ( 
-                    id_dispositivo,
-                    id_plaza,
-                    ubicacion, 
-                    tipo:tipo_dispositivo ( nombre ) 
-                ),
-                empleado ( 
-                    id_empleado,
-                    persona ( nombre, apellido ) 
-                )
-            `)
-                .eq('organizacion_id', orgId)
-                .order('fecha_inicio', { ascending: false })
-                .order('id_mantenimiento', { ascending: false });
-
-            if (error) throw error;
+            if (mantErr) throw mantErr;
             setMantenimientos(mantData || []);
+            setDispositivosOcupados(new Set((mantData || []).filter(m => !m.fecha_fin).map(m => m.id_dispositivo)));
 
-            const ocupados = new Set(
-                (mantData || [])
-                    .filter(m => !m.fecha_fin)
-                    .map(m => m.id_dispositivo)
-            );
-            setDispositivosOcupados(ocupados);
-
-            const { data: dispData, error: dispError } = await supabase
-                .from('dispositivo')
-                .select('id_dispositivo, id_plaza, ubicacion, id_estado, tipo:tipo_dispositivo(nombre), modelo(nombre, marca(nombre))')
-                .eq('organizacion_id', orgId)
-                .order('ubicacion', { ascending: true });
-
-            if (dispError) console.warn('Error cargando dispositivos:', dispError.message);
-            
-            // #RF11: Cargado final de Técnicos (Filtrado por Rol y Perfil)
-            let orgUsersList = [];
-            const { data: rpcUsers } = await supabase.rpc('get_usuarios_org');
-            
-            if (rpcUsers && rpcUsers.length > 0) {
-                orgUsersList = rpcUsers;
+            // Procesar Técnicos
+            let users = [];
+            if (!rpcErr && rpcUsers) {
+                users = rpcUsers;
             } else {
-                const { data: directUsers } = await supabase
-                    .from('usuario')
-                    .select('id_persona, id_rol, rol:id_rol(nombre), persona:id_persona(nombre, apellido)');
-                orgUsersList = (directUsers || []).map(u => ({
-                    id_persona: u.id_persona,
-                    nombre: u.persona?.nombre,
-                    apellido: u.persona?.apellido,
-                    nombre_rol: u.rol?.nombre
-                }));
+                const { data: directUsers } = await supabase.from('usuario').select('id_persona, id_rol, rol:id_rol(nombre), persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId);
+                users = (directUsers || []).map(u => ({ id_persona: u.id_persona, nombre: u.persona?.nombre, apellido: u.persona?.apellido, nombre_rol: u.rol?.nombre }));
             }
 
-            const { data: allEmps } = await supabase
-                .from('empleado')
-                .select('id_empleado, id_persona')
-                .eq('organizacion_id', orgId);
-
-            const tecnicosFiltrados = orgUsersList.filter(u => {
-                const rName = (u.nombre_rol || '').toLowerCase();
-                const personaId = u.id_persona || u.persona_id || u.id_per;
-                const emp = (allEmps || []).find(e => String(e.id_persona) === String(personaId));
-                return rName.includes('tec') && emp;
+            const tecnicosFiltrados = users.filter(u => {
+                const rName = (u.nombre_rol || u.rol_nombre || '').toLowerCase();
+                const personaId = u.id_persona || u.persona_id;
+                return rName.includes('tec') && (allEmps || []).some(e => String(e.id_persona) === String(personaId));
             }).map(u => {
-                const personaId = u.id_persona || u.persona_id || u.id_per;
+                const personaId = u.id_persona || u.persona_id;
                 const emp = (allEmps || []).find(e => String(e.id_persona) === String(personaId));
-                return {
-                    id_empleado: emp.id_empleado,
-                    nombre_label: `${u.nombre || ''} ${u.apellido || ''}`.trim(),
-                    disabled: false
-                };
+                return { id_empleado: emp.id_empleado, nombre_label: `${u.nombre || ''} ${u.apellido || ''}`.trim(), disabled: false };
             });
 
-            // Catálogos Globales (para visualización en tabla)
-            const { data: fullZonas } = await supabase.from('zona').select('id_zona, nombre, id_estado, estado:estado_zona(nombre)').eq('organizacion_id', orgId);
-            const { data: fullPlazas } = await supabase.from('plaza').select('id_plaza, numero_plaza, id_zona, id_estado, estado:estado_plaza(nombre)').eq('organizacion_id', orgId);
-
-            // Filtros para Formulario (Solo zonas activas para nuevas solicitudes)
-            const zonasActivas = (fullZonas || []).filter(z => z.estado?.nombre === 'Activa');
-            const plazasLibres = (fullPlazas || []).filter(p => 
-                p.estado?.nombre === 'Libre' && zonasActivas.some(z => z.id_zona === p.id_zona)
-            );
-
-            const { data: tipoData } = await supabase.from('tipo_mantenimiento').select('*').order('nombre');
-            const { data: estData } = await supabase.from('estado_mantenimiento').select('*').order('nombre');
-
+            setTecnicos(tecnicosFiltrados.sort((a,b) => a.nombre_label.localeCompare(b.nombre_label)));
             setAllDispositivos(dispData || []);
-            setDispositivos((dispData || []).filter(d => d.id_estado === 1)); // Solo activos para nuevas solicitudes
-            
+            setDispositivos((dispData || []).filter(d => d.id_estado === 1));
             setAllPlazas(fullPlazas || []);
-            setPlazasList(plazasLibres);
-            
+            setPlazasList((fullPlazas || []).filter(p => p.estado?.nombre === 'Libre' && (fullZonas || []).some(z => z.id_zona === p.id_zona && z.estado?.nombre === 'Activa')));
             setAllZonas(fullZonas || []);
-            setZonas(zonasActivas);
-            
-            setTecnicos((tecnicosFiltrados || []).sort((a, b) => a.nombre_label.localeCompare(b.nombre_label)));
+            setZonas((fullZonas || []).filter(z => z.estado?.nombre === 'Activa'));
             setTiposMantenimiento(tipoData || []);
             setEstadosMantenimiento(estData || []);
 
         } catch (error) {
-            console.error("Error cargando mantenimientos:", error.message);
+            console.error("Error loadData Mantenimiento:", error.message);
         } finally {
             setLoading(false);
             setIsRefreshing(false);
@@ -297,7 +243,7 @@ export default function Mantenimiento() {
         };
 
         const isFinalState = estadosMantenimiento.find(e => e.id_estado === parseInt(payload.id_estado))?.nombre.toLowerCase().includes('completado') || 
-                            estadosMantenimiento.find(e => e.id_estado === parseInt(payload.id_estado))?.nombre.toLowerCase().includes('cancelado');
+                             estadosMantenimiento.find(e => e.id_estado === parseInt(payload.id_estado))?.nombre.toLowerCase().includes('cancelado');
             const nombreEstadoActual = estadosMantenimiento.find(e => e.id_estado === parseInt(payload.id_estado))?.nombre || 'Actualizado';
 
             // Mapear nombre del estado al tipo de evento correspondiente
@@ -334,7 +280,7 @@ export default function Mantenimiento() {
             const idPlazaLog = payload.id_plaza || disp?.id_plaza || null;
             await registrarLog(
                 nombreEventoLog,
-                `${editingId ? 'Actualización' : 'Nueva solicitud'} de mantenimiento (Estado: ${nombreEstadoActual}): "${formData.descripcion}" en ${targetType} ${targetId}.`,
+                `${editingId ? 'Actualización' : 'Nueva solicitud'} de mantenimiento (Estado: ${nombreEstadoActual}): "${formData.descripcion}"`,
                 payload.id_dispositivo,
                 idPlazaLog
             );
@@ -509,12 +455,18 @@ export default function Mantenimiento() {
                                                         <div className="text-xs font-bold text-gray-900 uppercase">
                                                             {item.id_zona ? `ZONA: ${allZonas.find(z => z.id_zona === item.id_zona)?.nombre || 'N/A'}` :
                                                              item.id_plaza ? `PLAZA: ${allPlazas.find(p => p.id_plaza === item.id_plaza)?.numero_plaza || 'N/A'}` :
-                                                             allDispositivos.find(d => d.id_dispositivo === item.id_dispositivo)?.tipo?.nombre || 'Dispositivo'}
+                                                             (() => {
+                                                                 const dispRef = allDispositivos.find(d => d.id_dispositivo === item.id_dispositivo);
+                                                                 return dispRef ? (dispRef.plaza?.numero_plaza ? `Plaza: ${dispRef.plaza.numero_plaza}` : 'Sin plaza asig.') : 'Dispositivo';
+                                                             })()}
                                                         </div>
                                                         <div className="text-[10px] text-gray-500 italic mt-0.5">
                                                             {item.id_zona ? 'Mantenimiento de área completa' :
-                                                             item.id_plaza ? `Zona: ${allPlazas.find(p => p.id_plaza === item.id_plaza)?.id_zona ? allZonas.find(z => z.id_zona === allPlazas.find(p => p.id_plaza === item.id_plaza).id_zona)?.nombre : 'General'}` :
-                                                             allDispositivos.find(d => d.id_dispositivo === item.id_dispositivo)?.ubicacion || 'Sin ubicación'}
+                                                             item.id_plaza ? `Zona: ${allPlazas.find(p => p.id_plaza === item.id_plaza)?.id_zona ? (allZonas.find(z => z.id_zona === allPlazas.find(xp => xp.id_plaza === item.id_plaza)?.id_zona)?.nombre || 'General') : 'General'}` :
+                                                             (() => {
+                                                                 const dispRef = allDispositivos.find(d => d.id_dispositivo === item.id_dispositivo);
+                                                                 return dispRef?.tipo?.nombre ? `Equipo: ${dispRef.tipo.nombre}` : 'Sin datos técnicos';
+                                                             })()}
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4 text-xs font-medium text-gray-600 max-w-xs truncate" title={item.descripcion}>
@@ -652,9 +604,10 @@ export default function Mantenimiento() {
                                         options={(editingId ? allDispositivos : dispositivos).map(d => {
                                             const esMismoDispositivo = editingId && parseInt(formData.id_dispositivo) === d.id_dispositivo;
                                             const ocupado = dispositivosOcupados.has(d.id_dispositivo) && !esMismoDispositivo;
+                                            const numPlaza = d.plaza?.numero_plaza || 'N/A';
                                             return {
                                                 value: d.id_dispositivo,
-                                                label: `${d.tipo?.nombre || 'Disp.'} — ${d.ubicacion || 'Sin ubicación'} ${d.modelo ? `(${d.modelo.marca?.nombre} ${d.modelo.nombre})` : ''} ${ocupado ? '[OCUPADO]' : ''}`,
+                                                label: `${d.tipo?.nombre || 'Disp.'} — Plaza ${numPlaza} ${d.modelo ? `(${d.modelo.marca?.nombre} ${d.modelo.nombre})` : ''} ${ocupado ? '[OCUPADO]' : ''}`,
                                                 disabled: ocupado
                                             };
                                         })}

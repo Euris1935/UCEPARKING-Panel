@@ -7,14 +7,16 @@ import {
     FaEnvelope, FaIdBadge, FaKey, FaCheckCircle, FaCog,
     FaEye, FaEyeSlash, FaVolumeUp
 } from 'react-icons/fa';
+import { useOrg } from '../contexts/OrgContext';
 import { playBeep } from '../utils/audio';
+import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 
 export default function Configuracion() {
+    const { orgId } = useOrg();
     const [activeTab, setActiveTab] = useState('sistema');
     
     // --- Estado General ---
     const [currentPersonaId, setCurrentPersonaId] = useState(null);
-    const [orgId, setOrgId] = useState(null);
     const [esAdmin, setEsAdmin] = useState(false);
 
     // --- Tab: Sistema ---
@@ -22,6 +24,7 @@ export default function Configuracion() {
         notificacionesSonoras: true,
         alertaCapacidad: 90,
         tiempoMaximoReserva: 4,
+        maxPlazasPorGrupo: 3,
     });
 
     useEffect(() => {
@@ -31,9 +34,6 @@ export default function Configuracion() {
                 const { data: uData } = await supabase.from('usuario').select('id_persona, rol_id, rol:rol_id(nombre)').eq('id', user.id).single();
                 if (uData?.id_persona) {
                     setCurrentPersonaId(uData.id_persona);
-                    const { data: empData } = await supabase.from('empleado').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
-                    if (empData?.organizacion_id) setOrgId(empData.organizacion_id);
-                    
                     const rolName = uData.rol?.nombre?.toLowerCase() || '';
                     setEsAdmin(rolName === 'admin' || rolName === 'administrador');
                 }
@@ -41,30 +41,42 @@ export default function Configuracion() {
         };
         init();
         const saved = localStorage.getItem('appSettings');
-        if (saved) setSettings(JSON.parse(saved));
+        if (saved) {
+            try {
+                const parsed = JSON.parse(saved);
+                setSettings(prev => ({
+                    ...prev,
+                    notificacionesSonoras: parsed.notificacionesSonoras ?? true,
+                    alertaCapacidad: parsed.alertaCapacidad ?? 90,
+                    tiempoMaximoReserva: parsed.tiempoMaximoReserva ?? 4,
+                    maxPlazasPorGrupo: parsed.maxPlazasPorGrupo ?? 3
+                }));
+            } catch (e) {
+                console.error("Error parsing settings:", e);
+            }
+        }
     }, []);
 
     const handleSaveSettings = () => {
+        const saved = localStorage.getItem('appSettings');
+        const oldSettings = saved ? JSON.parse(saved) : {};
+        
         localStorage.setItem('appSettings', JSON.stringify(settings));
-        registrarLog('Configuración Cambiada', `Actualización de parámetros del sistema: Notificaciones=${settings.notificacionesSonoras}, Alerta Capacidad=${settings.alertaCapacidad}%, Max Reserva=${settings.tiempoMaximoReserva}h`);
+
+        const descCambios = generarDescripcionCambio(oldSettings, settings, 'Actualización de parámetros del sistema');
+        
+        registrarLog({
+            tipo_nombre: EVENT_TYPES.CONFIGURACION_CAMBIADA,
+            descripcion: descCambios,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            origen: 'Panel Web - Configuración'
+        });
+
         Swal.fire({ title: 'Guardado', text: 'Configuración actualizada.', icon: 'success', timer: 1500, showConfirmButton: false });
     };
 
-    const registrarLog = async (tipo_nombre, descripcion) => {
-        if (!currentPersonaId) return;
-        try {
-          const { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
-          const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Configuración').maybeSingle();
-          await supabase.from('evento').insert([{ 
-            fecha_hora: new Date().toISOString(), 
-            descripcion: descripcion, 
-            id_persona: currentPersonaId, 
-            id_tipo: te?.id || null, 
-            id_origen_evento: oe?.id_origen || null,
-            organizacion_id: orgId
-          }]);
-        } catch (e) { console.warn('Log error:', e.message); }
-      };
+    // La función registrarLog local ha sido eliminada para usar la global.
 
     // --- Tab: Cuenta ---
     const [profile, setProfile] = useState(null);
@@ -165,7 +177,14 @@ export default function Configuracion() {
             if (updateError) throw updateError;
 
             Swal.fire('Proceso completado', 'Tu contraseña ha sido actualizada correctamente.', 'success');
-            registrarLog('Cambio de Estado', `Actualización de contraseña de seguridad para usuario ${profile?.email}`);
+            
+            registrarLog({
+                tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+                descripcion: `El usuario ${profile?.nombre} ${profile?.apellido} actualizó su contraseña de acceso.`,
+                id_persona: currentPersonaId,
+                organizacion_id: orgId,
+                origen: 'Panel Web - Configuración'
+            });
             setPassData({ currentPassword: '', newPassword: '', confirmPassword: '' });
         } catch (error) {
             Swal.fire('Error', error.message, 'error');
@@ -246,7 +265,14 @@ export default function Configuracion() {
             if (error) throw error;
 
             Swal.fire('¡Éxito!', 'Horarios actualizados correctamente.', 'success');
-            registrarLog('Configuración Cambiada', 'Actualización de horarios laborales de la organización.');
+            
+            registrarLog({
+                tipo_nombre: EVENT_TYPES.CONFIGURACION_CAMBIADA,
+                descripcion: `Modificación de los horarios laborales de la organización por el administrador.`,
+                id_persona: currentPersonaId,
+                organizacion_id: orgId,
+                origen: 'Panel Web - Configuración'
+            });
         } catch (e) {
             Swal.fire('Error', e.message, 'error');
         } finally {
@@ -340,18 +366,33 @@ export default function Configuracion() {
                         </div>
 
                         {/* Tiempo máximo reserva */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Tiempo Máximo de Reserva
-                                <span className="ml-2 text-blue-600 font-bold">{settings.tiempoMaximoReserva} horas</span>
-                            </label>
-                            <p className="text-xs text-gray-400 mb-2">Duración máxima permitida al crear una reserva.</p>
-                            <input
-                                type="number" min="1" max="24"
-                                value={settings.tiempoMaximoReserva}
-                                onChange={e => setSettings({ ...settings, tiempoMaximoReserva: parseInt(e.target.value) || 1 })}
-                                className="w-full border p-2 rounded-lg bg-gray-50 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                            />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Tiempo Máximo de Reserva
+                                    <span className="ml-2 text-blue-600 font-bold">{settings.tiempoMaximoReserva} horas</span>
+                                </label>
+                                <p className="text-xs text-gray-400 mb-2">Duración máxima permitida al crear una reserva.</p>
+                                <input
+                                    type="number" min="1" max="24"
+                                    value={settings.tiempoMaximoReserva}
+                                    onChange={e => setSettings({ ...settings, tiempoMaximoReserva: parseInt(e.target.value) || 1 })}
+                                    className="w-full border p-2 rounded-lg bg-gray-50 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Límite de Plazas (Grupo)
+                                    <span className="ml-2 text-purple-600 font-bold">{settings.maxPlazasPorGrupo} plazas</span>
+                                </label>
+                                <p className="text-xs text-gray-400 mb-2">Número máximo de plazas por reserva grupal.</p>
+                                <input
+                                    type="number" min="2" max="20"
+                                    value={settings.maxPlazasPorGrupo}
+                                    onChange={e => setSettings({ ...settings, maxPlazasPorGrupo: parseInt(e.target.value) || 2 })}
+                                    className="w-full border p-2 rounded-lg bg-gray-50 focus:ring-purple-500 focus:border-purple-500 outline-none"
+                                />
+                            </div>
                         </div>
 
                         {/* Alerta de capacidad */}

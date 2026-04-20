@@ -4,6 +4,7 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaCar, FaSave, FaTrash, FaEdit, FaSyncAlt, FaSearch, FaSync, FaCheck, FaTimes } from 'react-icons/fa';
+import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
@@ -37,78 +38,58 @@ export default function Vehiculos() {
   const [newStatusChoice, setNewStatusChoice] = useState('');
 
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-        if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
-      }
-    };
-    init();
-    loadData();
-    const ch = supabase.channel('rt_vehiculos')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculo' }, loadData)
-      .subscribe();
-    return () => supabase.removeChannel(ch);
-  }, []);
+    if (orgId) {
+      loadData();
+      const ch = supabase.channel('rt_vehiculos')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculo' }, loadData)
+        .subscribe();
+      return () => supabase.removeChannel(ch);
+    }
+  }, [orgId]);
 
   const loadData = async () => {
+    if (!orgId) return;
     setIsRefreshing(true);
     try {
       const { data: vhs } = await supabase
         .from('vehiculo')
         .select('*, modelo(nombre, marca(nombre)), color(nombre), persona(nombre, apellido)')
+        .eq('organizacion_id', orgId)
         .not('id_persona', 'is', null)
         .order('created_at', { ascending: false });
 
-      const { data: catMarcas } = await supabase.from('marca').select('id_marca, nombre').order('nombre');
-      const { data: catModelos } = await supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre');
-      const { data: catColores } = await supabase.from('color').select('id_color, nombre').order('nombre');
+      const [
+        { data: catMarcas },
+        { data: catModelos },
+        { data: catColores },
+        { data: catEst }
+      ] = await Promise.all([
+        supabase.from('marca').select('id_marca, nombre').order('nombre'),
+        supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre'),
+        supabase.from('color').select('id_color, nombre').order('nombre'),
+        supabase.from('estado_vehiculo').select('id_estado, nombre').order('id_estado')
+      ]);
 
-      // Personal del sistema
-      const { data: usuariosRaw } = await supabase.from('usuario').select('id_persona');
-      const personaIds = (usuariosRaw || []).filter(u => u.id_persona).map(u => u.id_persona);
-      let personasDeUsuarios = [];
-      if (personaIds.length > 0) {
-        const { data: pData } = await supabase.from('persona').select('id_persona, nombre, apellido').in('id_persona', personaIds);
-        personasDeUsuarios = (pData || []).map(p => ({ ...p, rol: 'Usuario' }));
-      }
-      const { data: empleadosData } = await supabase.from('empleado').select('id_persona', 'persona(id_persona, nombre, apellido)');
-      const personalEmpleados = (empleadosData || []).filter(e => e.persona).map(e => ({ ...e.persona, rol: 'Empleado' }));
-      const mapa = new Map();
-      personasDeUsuarios.forEach(p => { if (p.id_persona) mapa.set(p.id_persona, p); });
-      personalEmpleados.forEach(p => { if (p.id_persona) mapa.set(p.id_persona, p); });
+      // Personal del sistema (RPC optimizado)
+      const { data: orgUsers } = await supabase.rpc('get_usuarios_org');
+      const personal = (orgUsers || []).map(u => ({
+        id_persona: u.id_persona,
+        nombre: u.nombre,
+        apellido: u.apellido,
+        rol: u.tipo || 'Usuario'
+      }));
 
       setVehiculos(vhs || []);
       setListaMarcas(catMarcas || []);
       setListaModelos(catModelos || []);
       setListaColores(catColores || []);
-      
-      // Catálogo de estados de vehículo
-      const { data: catEst } = await supabase.from('estado_vehiculo').select('id_estado, nombre').order('id_estado');
       setEstadosVehiculosList(catEst || []);
+      setPersonasSistema(personal.sort((a,b) => `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`)));
 
-      setPersonasSistema(Array.from(mapa.values()).sort((a, b) =>
-        `${a.nombre} ${a.apellido}`.toLowerCase().localeCompare(`${b.nombre} ${b.apellido}`.toLowerCase())
-      ));
     } catch (err) { console.error('Error cargando datos:', err); } finally { setIsRefreshing(false); }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion) => {
-    if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Vehículos').maybeSingle();
-      await supabase.from('evento').insert([{ 
-        fecha_hora: new Date().toISOString(), 
-        descripcion: descripcion, 
-        id_persona: currentPersonaId, 
-        id_tipo: te?.id_tipo || null, 
-        id_origen_evento: oe?.id_origen || null,
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
-  };
+  // La función registrarLog local ha sido eliminada para usar la global importada.
 
   const handleVehiculoPersonalSubmit = async (e) => {
     e.preventDefault();
@@ -125,12 +106,20 @@ export default function Vehiculos() {
         placa: vehiculoPersonalForm.placa.toUpperCase(),
         id_modelo: vehiculoPersonalForm.id_modelo ? parseInt(vehiculoPersonalForm.id_modelo) : null,
         id_color: vehiculoPersonalForm.id_color ? parseInt(vehiculoPersonalForm.id_color) : null,
+        id_estado: 1, // Por defecto Habilitado
         organizacion_id: orgId
       }]);
       if (error) throw error;
       Swal.fire('Registrado', 'Vehículo vinculado correctamente.', 'success');
       const p = personasSistema.find(p => p.id_persona === vehiculoPersonalForm.persona_id);
-      registrarLog('Vehículo Registrado', `Vehículo ${vehiculoPersonalForm.placa.toUpperCase()} registrado a nombre de ${p?.nombre} ${p?.apellido}`);
+      
+      registrarLog({
+        tipo_nombre: EVENT_TYPES.VEHICULO_REGISTRADO,
+        descripcion: `Vehículo ${vehiculoPersonalForm.placa.toUpperCase()} vinculado a: ${p?.nombre} ${p?.apellido}`,
+        id_persona: currentPersonaId,
+        organizacion_id: orgId,
+        origen: 'Panel Web - Vehículos'
+      });
       setVehiculoPersonalForm({ persona_id: '', placa: '', id_marca: '', id_modelo: '', id_color: '' });
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
@@ -148,7 +137,16 @@ export default function Vehiculos() {
       ).eq('id_vehiculo', editandoVehiculo.id_vehiculo);
       if (error) throw error;
       Swal.fire('Actualizado', 'Datos actualizados correctamente.', 'success');
-      registrarLog('Cambio de Estado', `Edición de datos para vehículo con placa ${editVehiculoForm.placa}`);
+      
+      const descCambios = generarDescripcionCambio(editandoVehiculo, editVehiculoForm, `Edición de datos vehículo placa ${editandoVehiculo.placa}`);
+      
+      registrarLog({
+        tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+        descripcion: descCambios,
+        id_persona: currentPersonaId,
+        organizacion_id: orgId,
+        origen: 'Panel Web - Vehículos'
+      });
       setEditandoVehiculo(null);
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
@@ -181,7 +179,16 @@ export default function Vehiculos() {
             showConfirmButton: false
         });
 
-        registrarLog('Cambio de Estado', `Vehículo ${vehiculo.placa} cambiado de estado ${oldStatus} a ${nextStatus}`);
+        const estViejo = estadosVehiculosList.find(e => e.id_estado === oldStatus)?.nombre || oldStatus;
+        const estNuevo = estadosVehiculosList.find(e => e.id_estado === nextStatus)?.nombre || nextStatus;
+
+        registrarLog({
+            tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+            descripcion: `Estatus vehicular de ${vehiculo.placa} modificado: de "${estViejo}" a "${estNuevo}"`,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            origen: 'Panel Web - Vehículos'
+        });
         setChangingStatusFor(null);
         loadData();
     } catch (error) {
@@ -285,7 +292,7 @@ export default function Vehiculos() {
               <FaCar className="text-purple-600" /> Flota Registrada
               <div className="flex items-center gap-1.5 ml-2">
                 <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter">
-                  {vehiculos.filter(v => v.id_estado === 1).length} Habilitados
+                  {vehiculos.filter(v => (v.id_estado || 1) === 1).length} Habilitados
                 </span>
                 <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter">
                   {vehiculos.length} Total

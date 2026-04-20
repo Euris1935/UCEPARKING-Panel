@@ -35,27 +35,20 @@ export default function AccesoManual() {
   const [busquedaActivos, setBusquedaActivos] = useState(''); // #25: búsqueda en accesos activos
 
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-        if (data) setCurrentPersonaId(data.id_persona);
-      }
-    };
-    init();
-    loadData();
-
-    // Suscripción tiempo real a acceso, plaza y zona
-    const ch = supabase.channel('rt_am')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'acceso' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
-      .subscribe();
-
-    return () => { supabase.removeChannel(ch); };
-  }, []);
+    if (orgId) {
+      loadData();
+      // Suscripción tiempo real a acceso, plaza y zona
+      const ch = supabase.channel('rt_am')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'acceso' }, loadData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
+        .subscribe();
+      return () => { supabase.removeChannel(ch); };
+    }
+  }, [orgId]);
 
   const loadData = async () => {
+    if (!orgId) return;
     try {
       setIsRefreshing(true);
       // 1. Estados y Plazas
@@ -66,6 +59,7 @@ export default function AccesoManual() {
       const { data: rawPlazas } = await supabase
         .from('plaza')
         .select('*, zona:id_zona(estado_zona(nombre))')
+        .eq('organizacion_id', orgId)
         .order('numero_plaza');
       
       const plazasVivas = (rawPlazas || []).filter(p => {
@@ -77,7 +71,7 @@ export default function AccesoManual() {
         setTodasPlazas(plazasVivas);
         
         // Blindaje: Solo considerar libres las que id_estado=Libre Y NO tienen contrato activo
-        const { data: asigsActivas } = await supabase.from('asignacion').select('id_plaza').eq('id_estado', 1);
+        const { data: asigsActivas } = await supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1);
         const plazasAsignadasIds = new Set(asigsActivas?.map(a => a.id_plaza) || []);
         
         setPlazasLibres(plazasVivas.filter(p => 
@@ -85,66 +79,42 @@ export default function AccesoManual() {
         ));
       }
 
-      // 2. TODAS LAS PERSONAS (Solución Jarol)
-      const { data: allP } = await supabase.from('persona').select('*').order('nombre');
-      const pMap = {}; (allP || []).forEach(p => { pMap[p.id_persona] = p; });
-      setPersonas(allP || []);
+      // 2. TODAS LAS PERSONAS DE LA ORG (RPC optimizado)
+      const { data: orgUsers } = await supabase.rpc('get_usuarios_org');
+      const allP = (orgUsers || []).map(u => ({
+        id_persona: u.id_persona,
+        nombre: u.nombre,
+        apellido: u.apellido,
+        email: u.email,
+        telefono: u.telefono
+      }));
+      const pMap = {}; allP.forEach(p => { pMap[p.id_persona] = p; });
+      setPersonas(allP);
 
-      // 3. Vehículos y Visitantes (Solo habilitados)
+      // 3. Vehículos (Solo habilitados de la ORG)
       const { data: vhs } = await supabase
         .from('vehiculo')
         .select('*, modelo(nombre, marca(nombre)), color(nombre)')
+        .eq('organizacion_id', orgId)
         .eq('id_estado', 1);
       const vhsEnriquecidos = (vhs || []).map(v => ({ ...v, persona: pMap[v.id_persona] || null }));
       setVehiculos(vhsEnriquecidos);
 
       // 4. Obtener vehiculos con acceso activo (no pueden volver a registrarse)
       const { data: accActivosIds } = await supabase
-        .from('acceso').select('id_vehiculo').is('salida_at', null);
+        .from('acceso').select('id_vehiculo').eq('organizacion_id', orgId).is('salida_at', null);
       const vehiculosConAccesoActivo = new Set((accActivosIds || []).map(a => a.id_vehiculo));
 
-      // Calcular Search Options (Para el buscador manual)
-      const vhsOptions = vhsEnriquecidos.map(v => {
-        const tieneAcceso = vehiculosConAccesoActivo.has(v.id_vehiculo);
-        return {
-          id: v.id_vehiculo,
-          type: 'v',
-          placa: v.placa,
-          nombre: `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`.trim() || 'Sin Propietario',
-          marca: v.modelo?.marca?.nombre,
-          modelo: v.modelo?.nombre,
-          disabled: tieneAcceso,
-          razon: tieneAcceso ? 'Ya tiene acceso activo' : null
-        };
-      });
-
-      // Personas sin vehiculo vinculado
-      const idsPersonasConVehiculo = new Set(vhsEnriquecidos.map(v => v.id_persona).filter(Boolean));
-      const personasSinVehiculo = (allP || [])
-        .filter(p => !idsPersonasConVehiculo.has(p.id_persona))
-        .map(p => ({
-          id: p.id_persona,
-          type: 'p',
-          placa: 'No tiene placa asignada',
-          nombre: `${p.nombre || ''} ${p.apellido || ''}`.trim() || 'Sin nombre',
-          marca: null,
-          modelo: null,
-          disabled: false,
-          razon: null
-        }));
-
-      const options = [...vhsOptions, ...personasSinVehiculo].sort((a, b) => {
-        const cmp = (a.nombre || '').localeCompare(b.nombre || '');
-        return cmp !== 0 ? cmp : (a.placa || '').localeCompare(b.placa || '');
-      });
+      // Calcular Search Options
+      const options = generateSearchOptions(vhsEnriquecidos, allP, vehiculosConAccesoActivo);
       setSearchOptions(options);
 
       // 5. Accesos activos
       const { data: activos } = await supabase
         .from('acceso')
         .select('*, vehiculo(*, modelo(nombre, marca(nombre)), color(nombre))')
+        .eq('organizacion_id', orgId)
         .is('salida_at', null)
-        .is('ticket_id', null)
         .order('entrada_at', { ascending: false });
 
       const enrichedActivos = (activos || []).map(acc => {
@@ -163,8 +133,8 @@ export default function AccesoManual() {
       const { data: historial } = await supabase
         .from('acceso')
         .select('*, vehiculo(*, modelo(nombre, marca(nombre)), color(nombre))')
+        .eq('organizacion_id', orgId)
         .not('salida_at', 'is', null)
-        .is('ticket_id', null)
         .order('salida_at', { ascending: false })
         .limit(100);
 
@@ -181,6 +151,41 @@ export default function AccesoManual() {
       setAccesosHistorial(enrichedHistorial);
 
     } catch (err) { console.error('Error loadData:', err); } finally { setIsRefreshing(false); }
+  };
+
+  const generateSearchOptions = (vhsEnriquecidos, allP, vehiculosConAccesoActivo) => {
+    const vhsOptions = vhsEnriquecidos.map(v => {
+      const tieneAcceso = vehiculosConAccesoActivo.has(v.id_vehiculo);
+      return {
+        id: v.id_vehiculo,
+        type: 'v',
+        placa: v.placa,
+        nombre: `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`.trim() || 'Sin Propietario',
+        marca: v.modelo?.marca?.nombre,
+        modelo: v.modelo?.nombre,
+        disabled: tieneAcceso,
+        razon: tieneAcceso ? 'Ya tiene acceso activo' : null
+      };
+    });
+
+    const idsPersonasConVehiculo = new Set(vhsEnriquecidos.map(v => v.id_persona).filter(Boolean));
+    const personasSinVehiculo = allP
+      .filter(p => !idsPersonasConVehiculo.has(p.id_persona))
+      .map(p => ({
+        id: p.id_persona,
+        type: 'p',
+        placa: 'No tiene placa asignada',
+        nombre: `${p.nombre || ''} ${p.apellido || ''}`.trim() || 'Sin nombre',
+        marca: null,
+        modelo: null,
+        disabled: false,
+        razon: null
+      }));
+
+    return [...vhsOptions, ...personasSinVehiculo].sort((a, b) => {
+      const cmp = (a.nombre || '').localeCompare(b.nombre || '');
+      return cmp !== 0 ? cmp : (a.placa || '').localeCompare(b.placa || '');
+    });
   };
 
   const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
@@ -227,7 +232,6 @@ export default function AccesoManual() {
         .insert({
           entrada_at: new Date().toISOString(),
           id_vehiculo: vehiculoSelect.id_vehiculo,
-          ticket_id: null,
           id_plaza: plazaSelect.id_plaza,
           id_dispositivo_entrada: null,
           organizacion_id: orgId
@@ -245,7 +249,7 @@ export default function AccesoManual() {
       // 3. Log
       await registrarLog(
         'Entrada',
-        `Entrada manual: ${vehiculoSelect.placa} —  ${vehiculoSelect.persona?.nombre} ${vehiculoSelect.persona?.apellido} —  Plaza ${plazaSelect.numero_plaza}.`,
+        `Entrada manual: ${vehiculoSelect.placa} —  ${vehiculoSelect.persona?.nombre || 'Desconocido'} ${vehiculoSelect.persona?.apellido || ''}`.trim() + '.',
         plazaSelect.id_plaza
       );
 
@@ -260,7 +264,9 @@ export default function AccesoManual() {
         }
       } catch (_) { }
 
-      const nombrePuerta = entradaForm.puertaDestino === 'vip' ? 'VIP' : 'Principal';
+      const nombrePuertaMap = { 'vip': 'VIP', 'main': 'Principal', 'exit': 'Salida' };
+      const nombrePuerta = nombrePuertaMap[entradaForm.puertaDestino] || 'Desconocida';
+      
       Swal.fire('Registro Exitoso', `Entrada registrada para ${vehiculoSelect.placa}. Barrera ${nombrePuerta} abriéndose.`, 'success');
       setEntradaForm({ vehiculo_id: '', id_plaza: '', puertaDestino: 'main' });
       setBusquedaVehiculo('');
@@ -276,23 +282,46 @@ export default function AccesoManual() {
     const plazaEncontrada = todasPlazas.find(p => p.id_plaza === acc.id_plaza);
     const result = await Swal.fire({
       title: '¿Registrar Salida Manual?',
-      html: `Vehículo: <b>${acc.vehiculo?.placa}</b><br/>Plaza: <b>${plazaEncontrada?.numero_plaza || 'No asig.'}</b><br/><br/><span class="text-sm text-gray-500">Seleccione la barrera a abrir:</span>`,
+      html: `
+        <div class="text-left space-y-2 mb-4">
+          <p>Vehículo: <b class="text-indigo-600">${acc.vehiculo?.placa}</b></p>
+          <p>Plaza: <b class="text-gray-700">${plazaEncontrada?.numero_plaza || 'No asig.'}</b></p>
+        </div>
+        <p class="text-sm font-bold text-gray-400 uppercase mb-3">Seleccione la barrera a abrir:</p>
+      `,
       icon: 'question',
       showCancelButton: true,
-      showDenyButton: true,
-      confirmButtonColor: '#16a34a',
-      denyButtonColor: '#9333ea',
-      confirmButtonText: 'Abrir Principal',
-      denyButtonText: 'Abrir VIP',
-      cancelButtonText: 'Cancelar'
+      cancelButtonText: 'Cancelar',
+      showConfirmButton: false, // Usaremos botones personalizados en el footer o html
+      footer: `
+        <div class="flex flex-wrap justify-center gap-2">
+          <button id="btn-open-main" class="bg-amber-500 text-white px-4 py-2 rounded font-bold text-xs uppercase shadow-sm">Abrir Principal</button>
+          <button id="btn-open-vip" class="bg-purple-600 text-white px-4 py-2 rounded font-bold text-xs uppercase shadow-sm">Abrir VIP</button>
+          <button id="btn-open-exit" class="bg-red-600 text-white px-4 py-2 rounded font-bold text-xs uppercase shadow-sm">Abrir Salida</button>
+        </div>
+      `,
+      didOpen: () => {
+        const btnMain = document.getElementById('btn-open-main');
+        const btnVip = document.getElementById('btn-open-vip');
+        const btnExit = document.getElementById('btn-open-exit');
+        
+        btnMain.onclick = () => Swal.clickConfirm();
+        btnVip.onclick = () => Swal.clickDeny();
+        btnExit.onclick = () => {
+            // Usamos un valor personalizado interceptando el cierre o disparando un custom event
+            window.swalValue = 'exit';
+            Swal.clickConfirm();
+        };
+      }
     });
-    if (!result.isConfirmed && !result.isDenied) return;
 
-    if (!orgId) {
-      return Swal.fire('Error', 'No se ha detectado el contexto de la organización.', 'error');
+    if (result.isDismissed) return;
+    
+    let barreraSalida = result.isConfirmed ? 'main' : 'vip';
+    if (window.swalValue === 'exit') {
+        barreraSalida = 'exit';
+        delete window.swalValue;
     }
-
-    const barreraSalida = result.isConfirmed ? 'main' : 'vip';
 
     try {
       const ahora = new Date().toISOString();
@@ -320,7 +349,7 @@ export default function AccesoManual() {
       const nombreSalida = `${acc.vehiculo?.persona?.nombre || ''} ${acc.vehiculo?.persona?.apellido || ''}`.trim() || 'Desconocido';
       await registrarLog(
         'Salida',
-        `Salida manual: ${nombreSalida} —  ${acc.vehiculo?.placa} —  Plaza ${plazaEncontrada?.numero_plaza || 'N/A'}.`,
+        `Salida manual: ${nombreSalida} —  ${acc.vehiculo?.placa}.`,
         acc.id_plaza
       );
 
@@ -335,7 +364,8 @@ export default function AccesoManual() {
         }
       } catch (_) { }
 
-      const nombrePuertaSalida = barreraSalida === 'vip' ? 'VIP' : 'Principal';
+      const nombrePuertaMapSalida = { 'vip': 'VIP', 'main': 'Principal', 'exit': 'Salida' };
+      const nombrePuertaSalida = nombrePuertaMapSalida[barreraSalida] || 'Desconocida';
       Swal.fire('Salida Registrada', `La plaza quedó libre y la barrera ${nombrePuertaSalida} se está abriendo.`, 'success');
       loadData();
     } catch (err) {
@@ -412,6 +442,12 @@ export default function AccesoManual() {
             className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
           >
             PUERTA VIP
+          </button>
+          <button
+            onClick={() => apiControlBarrera('open-exit', '¿Abrir Barrera de Salida?')}
+            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+          >
+            PUERTA SALIDA
           </button>
         </div>
       </header>
@@ -539,7 +575,8 @@ export default function AccesoManual() {
                 <SearchableSelect
                   options={[
                     { value: 'main', label: 'Barrera Principal' },
-                    { value: 'vip', label: 'Barrera VIP' }
+                    { value: 'vip', label: 'Barrera VIP' },
+                    { value: 'exit', label: 'Barrera de Salida' }
                   ]}
                   value={entradaForm.puertaDestino}
                   onChange={(val) => setEntradaForm({ ...entradaForm, puertaDestino: val })}

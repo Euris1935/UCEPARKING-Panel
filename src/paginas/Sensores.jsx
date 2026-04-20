@@ -27,7 +27,6 @@ export default function Sensores() {
     id_tipo: '',
     id_marca: '',
     id_modelo: '',
-    tipo_descripcion: '',
     id_plaza: '',
     id_estado: '',       // Estado Operativo (contexto equipo)
     fecha_instalacion: new Date().toISOString().split('T')[0],
@@ -39,29 +38,17 @@ export default function Sensores() {
   const [localOrgId, setLocalOrgId] = useState(null);
 
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        // Obtener persona y organización de forma redundante (como en Tickets.jsx)
-        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-        if (uData?.id_persona) {
-          setCurrentPersonaId(uData.id_persona);
-          const { data: empData } = await supabase.from('empleado').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
-          if (empData?.organizacion_id) setLocalOrgId(empData.organizacion_id);
-        }
-      }
-    };
-    init();
-    loadData();
-
-    // Sincronización en tiempo real
-    const channel = supabase.channel('realtime_sensores')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'dispositivo' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, []);
+    if (orgId) {
+      loadData();
+      // Sincronización en tiempo real
+      const channel = supabase.channel('realtime_sensores')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'dispositivo' }, loadData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
+        .subscribe();
+      return () => { supabase.removeChannel(channel); };
+    }
+  }, [orgId]);
 
   const loadData = async () => {
     setIsRefreshing(true);
@@ -75,13 +62,13 @@ export default function Sensores() {
           plaza:plaza!id_plaza(id_plaza, numero_plaza),
           estado:estado_dispositivo!dispositivo_estado_fk(id_estado, nombre)
         `)
+        .eq('organizacion_id', orgId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setDispositivos(dispData || []);
-      console.log("Lista de Dispositivos recuperada:", dispData);
 
-      // 2. Carga paralela de catálogos para mayor velocidad y blindaje
+      // 2. Carga paralela de catálogos
       const [
         { data: tTipos }, 
         { data: tMarcas }, 
@@ -92,7 +79,7 @@ export default function Sensores() {
         supabase.from('tipo_dispositivo').select('id_tipo, nombre').order('nombre'),
         supabase.from('marca').select('id_marca, nombre').order('nombre'),
         supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre'),
-        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, estado_zona(nombre))').order('numero_plaza'),
+        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, estado_zona(nombre))').eq('organizacion_id', orgId).order('numero_plaza'),
         supabase.from('estado_dispositivo').select('id_estado, nombre').order('nombre')
       ]);
 
@@ -156,7 +143,6 @@ export default function Sensores() {
       id_tipo: disp.id_tipo || '',
       id_marca: disp.modelo?.id_marca || '',
       id_modelo: disp.id_modelo || '',
-      tipo_descripcion: disp.ubicacion || '',
       id_plaza: disp.id_plaza ? String(disp.id_plaza) : '',
       id_estado: disp.id_estado ? String(disp.id_estado) : '',
       fecha_instalacion: disp.fecha_instalacion ? disp.fecha_instalacion.split('T')[0] : '',
@@ -181,7 +167,6 @@ export default function Sensores() {
         id_estado: parseInt(formData.id_estado) || null,
         fecha_instalacion: formData.fecha_instalacion,
         ultimo_mantenimiento: formData.ultimo_mantenimiento || null,
-        ubicacion: formData.tipo_descripcion,
         // Enviar organizacion_id solo si existe (evita violar RLS por null)
         ...(effectiveOrgId ? { organizacion_id: effectiveOrgId } : {})
       };
@@ -361,7 +346,6 @@ export default function Sensores() {
                     <tr key={disp.id_dispositivo} className="hover:bg-gray-50/50 transition duration-150 group">
                       <td className="px-6 py-4">
                         <div className="font-bold text-gray-900 uppercase text-xs">{disp.tipo?.nombre}</div>
-                        <div className="text-[10px] text-gray-400 italic font-medium">{disp.ubicacion || '-'}</div>
                       </td>
                       <td className="px-6 py-4 font-medium text-gray-600 text-xs">
                         {disp.modelo?.marca?.nombre} - {disp.modelo?.nombre}
@@ -433,16 +417,7 @@ export default function Sensores() {
                 />
               </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Descripción Breve</label>
-                <input 
-                  type="text" 
-                  className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" 
-                  placeholder="Ej: Cámara carril entrada" 
-                  value={formData.tipo_descripcion} 
-                  onChange={e => setFormData({ ...formData, tipo_descripcion: e.target.value })} 
-                />
-              </div>
+              {/* Campo ubicación eliminado por normalización */}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

@@ -10,6 +10,7 @@ import {
   FaSearch, FaEdit, FaSync, FaUserTie, FaUsers,
   FaShieldAlt, FaKey, FaCheck, FaTimes, FaUserCircle
 } from 'react-icons/fa';
+import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 
 // ── Badge de rol con color dinámico ──────────────────────────────────────────
 function RoleBadge({ roleName }) {
@@ -58,19 +59,12 @@ export default function Usuarios() {
   const isUpdating = !!editingUser;
 
   useEffect(() => { 
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-        if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
-      }
-    };
-    init();
-    loadData(); 
-  }, []);
+    if (orgId) loadData(); 
+  }, [orgId]);
 
   // ── Carga de datos ────────────────────────────────────────────────────────
   const loadData = async () => {
+    if (!orgId) return;
     setLoading(true);
     try {
       const [
@@ -80,7 +74,7 @@ export default function Usuarios() {
       ] = await Promise.all([
         supabase.from('rol').select('*').order('nombre'),
         supabase.from('estado_usuario').select('*').order('id_estado'),
-        supabase.rpc('get_usuarios_org')
+        supabase.rpc('get_usuarios_org') // El RPC ya debería filtrar por auth.uid() u orgId internamente
       ]);
 
       if (orgErr) {
@@ -94,11 +88,10 @@ export default function Usuarios() {
         }));
 
         // Obtener `created_at` de respaldo si falta
-        const userIds = listaNormalizada.map(u => u.id_usuario).filter(Boolean);
         const personaIds = listaNormalizada.map(u => u.id_persona).filter(Boolean);
         
         const [ { data: fUsr }, { data: fPer } ] = await Promise.all([
-            personaIds.length > 0 ? supabase.from('usuario').select('id, id_persona, created_at, id_estado, estado:id_estado(nombre)').in('id_persona', personaIds) : { data: [] },
+            personaIds.length > 0 ? supabase.from('usuario').select('id, id_persona, created_at, id_estado, estado:id_estado(nombre)').in('id_persona', personaIds).eq('organizacion_id', orgId) : { data: [] },
             personaIds.length > 0 ? supabase.from('persona').select('id_persona, created_at, email, telefono, cedula, sexo, fecha_nacimiento, direccion').in('id_persona', personaIds) : { data: [] }
         ]);
 
@@ -106,12 +99,11 @@ export default function Usuarios() {
             const fu = fUsr?.find(x => String(x.id_persona) === String(u.id_persona));
             const fp = fPer?.find(x => String(x.id_persona) === String(u.id_persona));
             
-            u.id_usuario = fu?.id || u.id_usuario; // Asegurar el UUID real de la tabla usuario
+            u.id_usuario = fu?.id || u.id_usuario;
             u.created_at = u.created_at || fu?.created_at || fp?.created_at;
             u.id_estado = fu?.id_estado || 1;
             u.nombre_estado = fu?.estado?.nombre || 'Activo';
             
-            // Enriquecer con datos de persona
             u.email = u.email || fp?.email || '';
             u.telefono = u.telefono || fp?.telefono || '';
             u.cedula = u.cedula || fp?.cedula || '';
@@ -166,21 +158,7 @@ export default function Usuarios() {
     } catch (err) { console.error('Fallback error:', err); }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion) => {
-    if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Usuarios').maybeSingle();
-      await supabase.from('evento').insert([{ 
-        fecha_hora: new Date().toISOString(), 
-        descripcion: descripcion, 
-        id_persona: currentPersonaId, 
-        id_tipo: te?.id_tipo || null, 
-        id_origen_evento: oe?.id_origen || null,
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
-  };
+  // La función registrarLog local ha sido eliminada para usar la global importada.
 
   // ── Formulario ────────────────────────────────────────────────────────────
   const handleChange = (e) => {
@@ -255,7 +233,16 @@ export default function Usuarios() {
             if (rolErr) throw new Error('Error cambiando rol: ' + rolErr.message);
           }
 
-          registrarLog('Cambio de Estado', `Edición de usuario: ${nombre} ${apellido} (${email})`);
+          const descCambios = generarDescripcionCambio(editingUser, formData, `Edición del usuario ${nombre} ${apellido}`);
+          
+          registrarLog({
+            tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+            descripcion: descCambios,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            origen: 'Panel Web - Usuarios'
+          });
+
           Swal.fire('Éxito', 'Usuario actualizado correctamente.', 'success');
           handleCancel();
         } else {
@@ -297,7 +284,14 @@ export default function Usuarios() {
              await supabase.from('persona').update({ cedula }).eq('id_persona', resultado.id_persona);
           }
 
-          registrarLog('Usuario Creado', `Creación de usuario: ${nombre} ${apellido} (${email})`);
+          registrarLog({
+            tipo_nombre: EVENT_TYPES.USUARIO_CREADO,
+            descripcion: `Creación de nuevo acceso administrativo: ${nombre} ${apellido} (${email}) - Rol ID: ${rol_id}`,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            origen: 'Panel Web - Usuarios'
+          });
+
           Swal.fire('¡Creado!', `Usuario <b>${email}</b> registrado exitosamente. Ya puede iniciar sesión.`, 'success');
           handleCancel();
         }
@@ -342,7 +336,14 @@ export default function Usuarios() {
       Swal.fire({ title: 'Estado Actualizado', icon: 'success', timer: 1500, showConfirmButton: false });
       
       const stName = catEstados.find(s => s.id_estado === parseInt(newStatusChoice))?.nombre || 'Desconocido';
-      registrarLog('Cambio de Acceso', `Estado de cuenta para ${user.nombre} ${user.apellido} cambiado a ${stName}`);
+      
+      registrarLog({
+        tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+        descripcion: `Acceso de ${user.nombre} ${user.apellido} cambiado a estado: ${stName}`,
+        id_persona: currentPersonaId,
+        organizacion_id: orgId,
+        origen: 'Panel Web - Usuarios'
+      });
       
       setChangingStatusFor(null);
       await loadData();
@@ -385,7 +386,13 @@ export default function Usuarios() {
         }
         Swal.fire('Error', error.message, 'error');
       } else {
-        registrarLog('Usuario Eliminado', `Eliminación física de acceso para: ${user.nombre} (${user.email})`);
+        registrarLog({
+          tipo_nombre: EVENT_TYPES.USUARIO_ELIMINADO,
+          descripcion: `Eliminación física del usuario: ${user.nombre} ${user.apellido} (${user.email})`,
+          id_persona: currentPersonaId,
+          organizacion_id: orgId,
+          origen: 'Panel Web - Usuarios'
+        });
         Swal.fire('Eliminado', 'Cuenta borrada permanentemente.', 'success');
         loadData();
       }
@@ -417,8 +424,16 @@ export default function Usuarios() {
 
       Swal.fire('Éxito', 'Rol actualizado.', 'success');
       const u = usuarios.find(u => u.id_usuario === changingRolFor);
-      const r = rolesList.find(r => r.id_rol === parseInt(newRolId));
-      registrarLog('Asignación Modificada', `Cambio de rol para ${u?.nombre} ${u?.apellido}: ahora es ${r?.nombre}`);
+      const r_old = rolesList.find(r => r.id_rol === u?.id_rol);
+      const r_new = rolesList.find(r => r.id_rol === parseInt(newRolId));
+      
+      registrarLog({
+        tipo_nombre: EVENT_TYPES.ASIGNACION_MODIFICADA,
+        descripcion: `Cambio de Rol: ${u?.nombre} ${u?.apellido} pasa de "${r_old?.nombre}" a "${r_new?.nombre}"`,
+        id_persona: currentPersonaId,
+        organizacion_id: orgId,
+        origen: 'Panel Web - Usuarios'
+      });
       setChangingRolFor(null);
       setNewRolId('');
       loadData();
