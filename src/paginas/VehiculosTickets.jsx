@@ -9,6 +9,8 @@ import {
 import SearchableSelect from '../componentes/SearchableSelect';
 import { useOrg } from '../contexts/OrgContext';
 import { useRbac } from '../contexts/RbacContext';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
+import { ESTADO_PLAZA, ESTADO_TICKET } from '../lib/constants';
 
 // ═══════════════════════════════════════════════════════════
 // BD REAL:
@@ -143,7 +145,7 @@ export default function VehiculosTickets() {
         supabase.from('color').select('*').order('nombre')
       ]);
 
-      const idLibre = epLibre?.id_estado ?? 1;
+      const idLibre = ESTADO_PLAZA.LIBRE;
       setPlazasLibres((plazasRaw || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa'));
 
       const stMap = {}; (stCat || []).forEach(s => { stMap[s.id_estado] = s.nombre; });
@@ -166,44 +168,37 @@ export default function VehiculosTickets() {
     } catch (err) { console.error('Error loadData VehiculosTickets:', err); } finally { setIsRefreshing(false); }
   };
 
-  const registrarLog = async (tipo, descripcion, idPlaza = null) => {
+  const handleRegistrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
     if (!orgId) return;
     try {
-      const { data: tipoData } = await supabase
-        .from('tipo_evento').select('id_tipo').ilike('nombre', tipo).maybeSingle();
-      
       const { data: { user } } = await supabase.auth.getUser();
       const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user?.id).maybeSingle();
 
-      await supabase.from('evento').insert([{
-        fecha_hora:      new Date().toISOString(),
-        id_tipo:         tipoData?.id_tipo || null,
-        descripcion:     descripcion,
-        id_plaza:        idPlaza,
-        id_persona:      uData?.id_persona || null,
-        id_origen_evento: 1, // Panel Web
-        organizacion_id: orgId
-      }]);
+      await registrarLog({
+        tipo_nombre,
+        descripcion,
+        id_persona: uData?.id_persona || null,
+        organizacion_id: orgId,
+        id_plaza: idPlaza,
+        origen: 'Panel Web - Vehiculos y Tickets'
+      });
     } catch (e) { console.warn('Log error:', e.message); }
   };
 
   const checkExpiredTickets = async () => {
     try {
-      const { data: epLibre } = await supabase
-        .from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-      const idLibre = epLibre?.id_estado ?? 1;
-
-      const { data: stActivo } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
-      const { data: stVencido } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Vencido').maybeSingle();
+      const idLibre = ESTADO_PLAZA.LIBRE;
+      const stActivo = ESTADO_TICKET.ACTIVO;
+      const stVencido = ESTADO_TICKET.VENCIDO;
 
       const { data: vencidos } = await supabase
         .from('ticket').select('id_ticket, id_plaza_asignada')
-        .eq('id_estado', stActivo?.id_estado || 1)
+        .eq('id_estado', stActivo)
         .not('fecha_hora_vencimiento', 'is', null)
         .lt('fecha_hora_vencimiento', new Date().toISOString());
       if (!vencidos || vencidos.length === 0) return;
       for (const t of vencidos) {
-        await supabase.from('ticket').update({ id_estado: stVencido?.id_estado || 3 }).eq('id_ticket', t.id_ticket);
+        await supabase.from('ticket').update({ id_estado: stVencido }).eq('id_ticket', t.id_ticket);
         await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', t.id_plaza_asignada);
       }
       if (vencidos.length > 0) loadData();
@@ -253,13 +248,10 @@ export default function VehiculosTickets() {
       const minutos   = parseInt(visitanteForm.duracion) || 0;
       const vencimiento = minutos > 0 ? new Date(Date.now() + minutos*60000).toISOString() : null;
 
-      const { data: epOcupada } = await supabase
-        .from('estado_plaza').select('id_estado').ilike('nombre', 'Ocupada').maybeSingle();
-      const idOcupada = epOcupada?.id_estado;
+      const vencimiento = minutos > 0 ? new Date(Date.now() + minutos*60000).toISOString() : null;
 
-      const { data: stActivo } = await supabase
-        .from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
-      const idEstadoActivo = stActivo?.id_estado;
+      const idOcupada = ESTADO_PLAZA.RESERVADA; // Usually Occupied/Reserved
+      const idEstadoActivo = ESTADO_TICKET.ACTIVO;
 
       const { data: nuevoTicket, error: tErr } = await supabase
         .from('ticket')
@@ -285,7 +277,7 @@ export default function VehiculosTickets() {
         .update({ id_estado: idOcupada })
         .eq('id_plaza', visitanteForm.id_plaza);
 
-      await registrarLog('TICKET_EMITIDO',
+      await handleRegistrarLog(EVENT_TYPES.TICKET_EMITIDO,
         `Ticket emitido: ${visitanteForm.placa.toUpperCase()} — Plaza ${nuevoTicket?.plaza?.numero_plaza}.`,
         parseInt(visitanteForm.id_plaza));
 
@@ -315,13 +307,8 @@ export default function VehiculosTickets() {
     if (!result.isConfirmed) return;
     try {
       const ahora = new Date().toISOString();
-      const { data: epLibre } = await supabase
-        .from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-      const idLibre = epLibre?.id_estado;
-
-      const { data: stUsado } = await supabase
-        .from('estado_ticket').select('id_estado').ilike('nombre', 'Cerrado').maybeSingle();
-      const idUsado = stUsado?.id_estado;
+      const idLibre = ESTADO_PLAZA.LIBRE;
+      const idUsado = ESTADO_TICKET.CERRADO;
 
       const { error, count } = await supabase
         .from('ticket').update({ id_estado: idUsado })
@@ -332,7 +319,7 @@ export default function VehiculosTickets() {
       const idPlaza = ticket.id_plaza_asignada;
       await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', idPlaza);
       
-      await registrarLog('SALIDA_VEHICULO',
+      await handleRegistrarLog(EVENT_TYPES.TICKET_CERRADO,
         `Salida: ${ticket.placa_capturada} — Plaza ${ticket.plaza?.numero_plaza}. Tiempo: ${calcTiempo(ticket.fecha_hora_emision, ahora)}.`,
         idPlaza);
 
@@ -350,13 +337,8 @@ export default function VehiculosTickets() {
     });
     if (!result.isConfirmed) return;
     try {
-      const { data: epLibre } = await supabase
-        .from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-      const idLibre = epLibre?.id_estado;
-
-      const { data: stAnulado } = await supabase
-        .from('estado_ticket').select('id_estado').ilike('nombre', 'Anulado').maybeSingle();
-      const idAnulado = stAnulado?.id_estado;
+      const idLibre = ESTADO_PLAZA.LIBRE;
+      const idAnulado = ESTADO_TICKET.ANULADO;
 
       const { error, count } = await supabase
         .from('ticket').update({ id_estado: idAnulado })
@@ -366,7 +348,7 @@ export default function VehiculosTickets() {
 
       const idPlaza = ticket.id_plaza_asignada;
       await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', idPlaza);
-      await registrarLog('TICKET_ANULADO',
+      await handleRegistrarLog(EVENT_TYPES.TICKET_CERRADO || 'Ticket Anulado',
         `Ticket anulado: ${ticket.placa_capturada} — Plaza ${ticket.plaza?.numero_plaza}.`,
         idPlaza);
 
@@ -376,10 +358,10 @@ export default function VehiculosTickets() {
   };
 
   const handleEliminarVehiculo = async (vehiculo) => {
-    const { data: tkEst } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
+    const tkEstActivo = ESTADO_TICKET.ACTIVO;
     const { data: tActivos } = await supabase
       .from('ticket').select('id_ticket')
-      .eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', tkEst?.id_estado || 1);
+      .eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', tkEstActivo);
     if (tActivos && tActivos.length > 0)
       return Swal.fire('No se puede eliminar',`Tiene ${tActivos.length} ticket(s) activo(s). Registre la salida primero.`,'warning');
 
@@ -391,7 +373,7 @@ export default function VehiculosTickets() {
     if (!r.isConfirmed) return;
     try {
       await supabase.from('acceso').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
-      await supabase.from('ticket').delete().eq('id_vehiculo', vehiculo.id_vehiculo).neq('id_estado', tkEst?.id_estado || 1);
+      await supabase.from('ticket').delete().eq('id_vehiculo', vehiculo.id_vehiculo).neq('id_estado', tkEstActivo);
       const { error, count } = await supabase
         .from('vehiculo').delete({ count: 'exact' }).eq('id_vehiculo', vehiculo.id_vehiculo);
       if (error) throw error;

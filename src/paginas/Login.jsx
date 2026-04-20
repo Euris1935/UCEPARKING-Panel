@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Swal from 'sweetalert2';
 import { FaParking, FaEnvelope, FaLock } from 'react-icons/fa';
+import { ESTADO_USUARIO } from '../lib/constants';
 
 export default function Login() {
   const [loading, setLoading] = useState(false);
@@ -28,7 +29,7 @@ export default function Login() {
       
       const userStatus = statusData?.[0];
       // Nota: Si es ID 1 es Activo. Si es != 1 o nulo, bloqueamos si encontramos el registro.
-      if (userStatus && userStatus.v_id_estado !== 1) {
+      if (userStatus && userStatus.v_id_estado !== ESTADO_USUARIO.ACTIVO) {
         throw new Error('STATUS_INACTIVE');
       }
 

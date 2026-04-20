@@ -5,6 +5,7 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaBell, FaUserTie, FaUsers } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
+import { ESTADO_PLAZA, ESTADO_RESERVA, TIPO_NOTIF } from '../lib/constants';
 
 export default function Dashboard() {
   const { orgId } = useOrg();
@@ -53,10 +54,10 @@ export default function Dashboard() {
         supabase.from('zona').select('id_zona, estado_zona(nombre)').eq('organizacion_id', orgId)
       ]);
 
-      // Filtrar plazas de zonas inactivas
-      const plazasFiltradas = (rawPlazas || []).filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
+      // Filtrar plazas de zonas inactivas (asumiendo que estado_zona inactiva es un valor que ya no usaremos o manejaremos por ID)
+      const plazasFiltradas = (rawPlazas || []).filter(p => p.zona?.estado_zona?.nombre !== 'Inactiva');
 
-      // 2. Obtener información de ocupación (Mapa de Ocupacion idéntico a Ocupacion.jsx)
+      // 2. Obtener información de ocupación
       const mapaOcupacion = {};
 
       // 2.1 ACCESOS (Ocupación real)
@@ -70,14 +71,12 @@ export default function Dashboard() {
         if (acc.id_plaza) mapaOcupacion[acc.id_plaza] = { type: 'acceso' };
       });
 
-      // 2.2 RESERVAS (Individurales y por Zona)
-      const idResActiva = estadosReserva?.find(e => e.nombre === 'Activa')?.id_estado || 1;
-      
+      // 2.2 RESERVAS (Individuales y por Zona)
       const { data: reservasActivas } = await supabase
         .from('reserva')
         .select('id_plaza')
         .eq('organizacion_id', orgId)
-        .eq('id_estado', idResActiva);
+        .eq('id_estado', ESTADO_RESERVA.ACTIVA);
       
       (reservasActivas || []).forEach(res => {
         if (res.id_plaza) {
@@ -89,7 +88,7 @@ export default function Dashboard() {
         .from('reserva_zona')
         .select('id_zona')
         .eq('organizacion_id', orgId)
-        .eq('id_estado', idResActiva);
+        .eq('id_estado', ESTADO_RESERVA.ACTIVA);
       
       if (reservasZonasActivas?.length > 0) {
         reservasZonasActivas.forEach(rz => {
@@ -128,15 +127,15 @@ export default function Dashboard() {
         }
       });
 
-      // 3. Procesar estados de plazas (Normalizar nombres y aplicar prioridad visual)
+      // 3. Procesar estados de plazas
       const plazasProcesadas = plazasFiltradas.map(p => {
         const estadoObj = (estadosPlaza || []).find(e => e.id_estado === p.id_estado);
-        const rawNombre = estadoObj ? estadoObj.nombre.toUpperCase() : 'LIBRE';
+        const rawId = p.id_estado;
         
-        // Aplicar la misma lógica de "fuerza visual" que en Ocupacion.jsx
-        let finalNombre = rawNombre;
+        let finalNombre = estadoObj ? estadoObj.nombre.toUpperCase() : 'LIBRE';
         const info = mapaOcupacion[p.id_plaza];
-        if (info && rawNombre === 'LIBRE') {
+        
+        if (info && rawId === ESTADO_PLAZA.LIBRE) {
           if (info.type === 'acceso' || info.type === 'ticket') finalNombre = 'OCUPADA';
           else if (info.type === 'reserva' || info.type === 'reserva_zona') finalNombre = 'RESERVADA';
           else if (info.type === 'asignacion') finalNombre = 'ASIGNADA';

@@ -5,6 +5,7 @@ import Swal from 'sweetalert2';
 import { FaBell, FaCheckDouble, FaTrash, FaPlus, FaEnvelopeOpen, FaSearch, FaSync, FaTimesCircle } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
 
 /* Colores de badge según nombre del tipo */
 const getBadgeColor = (tipo) => {
@@ -100,18 +101,15 @@ export default function Notificaciones() {
     }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion) => {
+  const handleRegistrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-      await supabase.from('evento').insert([{ 
-        fecha_hora: new Date().toISOString(), 
-        descripcion: descripcion, 
-        id_persona: currentPersonaId, 
-        id_tipo: te?.id_tipo || null, 
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
+    await registrarLog({
+      tipo_nombre,
+      descripcion,
+      id_persona: currentPersonaId,
+      organizacion_id: orgId,
+      origen: 'Panel Web - Notificaciones'
+    });
   };
 
   /* ── Cuando cambia id_tipo, sincroniza el campo Tipo (texto) ── */
@@ -144,7 +142,7 @@ export default function Notificaciones() {
       Swal.fire('Enviada', 'Notificación creada correctamente.', 'success');
       const p = personasList.find(p => p.id_persona === form.id_persona);
       const t = tiposNotif.find(t => t.id === parseInt(form.id_tipo));
-      registrarLog('Alerta', `Envío de notificación (${t?.nombre}): ${form.Contenido.substring(0, 30)}... ${p ? 'a ' + p.nombre : 'a todos'}`);
+      await handleRegistrarLog(EVENT_TYPES.ALERTA, `Envío de notificación (${t?.nombre}): ${form.Contenido.substring(0, 30)}... ${p ? 'a ' + p.nombre : 'a todos'}`);
       
       setShowModal(false);
       setForm({ Tipo: '', Contenido: '', id_persona: '', id_tipo: '' });
@@ -202,7 +200,7 @@ export default function Notificaciones() {
         Swal.fire('Error', 'No se pudo eliminar: ' + error.message, 'error');
     } else {
         const n = notifs.find(n => n.id_notificacion === id);
-        registrarLog('Alerta', `Notificación eliminada: ${n?.contenido?.substring(0, 30)}...`);
+        await handleRegistrarLog(EVENT_TYPES.ALERTA, `Notificación eliminada: ${n?.contenido?.substring(0, 30)}...`);
         loadAll();
     }
   };

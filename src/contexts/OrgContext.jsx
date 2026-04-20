@@ -44,12 +44,11 @@ export function OrgProvider({ children, user }) {
           setOrgId(effectiveOrgId);
           
           // 2. Cargar detalles de suscripción y plan activo
-          // Nota: Filtramos por el nombre del estado a través de la relación
           const { data: sus, error: susErr } = await supabase
             .from('suscripcion')
-            .select('*, plan(*), estado_suscripcion!suscripcion_estado_fk(nombre)')
+            .select('*, plan(*), estado_suscripcion!inner(nombre)')
             .eq('organizacion_id', effectiveOrgId)
-            .or('estado_suscripcion.nombre.eq.Activa,estado_suscripcion.nombre.eq.Trial')
+            .in('estado_suscripcion.nombre', ['Activa', 'Trial'])
             .maybeSingle();
 
           if (susErr) {
@@ -65,7 +64,7 @@ export function OrgProvider({ children, user }) {
       }
     }
     load();
-  }, [user]);
+  }, [user?.id]);
 
   return (
     <OrgContext.Provider value={{ orgId, plan, loadingOrg: loading, orgError: error }}>

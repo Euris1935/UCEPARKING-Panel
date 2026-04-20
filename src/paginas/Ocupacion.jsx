@@ -4,6 +4,8 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { FaSearch, FaClock, FaExclamationTriangle, FaMapMarkerAlt, FaSync, FaWheelchair } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
+import { ESTADO_PLAZA, ESTADO_RESERVA, ESTADO_TICKET } from '../lib/constants';
 
 export default function Ocupacion() {
   const { orgId } = useOrg();
@@ -68,9 +70,9 @@ export default function Ocupacion() {
       ] = await Promise.all([
         supabase.from('plaza').select('*, id_tipo').in('id_zona', idsZonasVivas).order('numero_plaza'),
         supabase.from('acceso').select('id_plaza, vehiculo(placa, persona(nombre, apellido))').eq('organizacion_id', orgId).is('salida_at', null),
-        supabase.from('reserva').select('id_plaza, persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', 1),
-        supabase.from('reserva_zona').select('*, tipo:tipo_reserva_zona(nombre), persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', 1),
-        supabase.from('ticket').select('id_plaza_asignada, placa_capturada, persona:id_persona(nombre, apellido), visitante:id_visitante(persona(nombre, apellido))').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('reserva').select('id_plaza, persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
+        supabase.from('reserva_zona').select('*, tipo:tipo_reserva_zona(nombre), persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
+        supabase.from('ticket').select('id_plaza_asignada, placa_capturada, persona:id_persona(nombre, apellido), visitante:id_visitante(persona(nombre, apellido))').eq('organizacion_id', orgId).eq('id_estado', ESTADO_TICKET.ACTIVO),
         supabase.from('asignacion').select('id_plaza, empleado(persona(nombre, apellido))').eq('organizacion_id', orgId).eq('id_estado', 1).or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`)
       ]);
 
@@ -172,23 +174,16 @@ export default function Ocupacion() {
   };
 
   // Registra un evento en la tabla `evento`
-  const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
+  const handleRegistrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
     if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Control de Ocupación').maybeSingle();
-      await supabase.from('evento').insert([{
-        fecha_hora: new Date().toISOString(),
-        descripcion: descripcion,
-        id_plaza: idPlaza,
-        id_persona: currentPersonaId,
-        id_tipo: te?.id_tipo || null,
-        id_origen_evento: oe?.id_origen || null,
-        organizacion_id: orgId
-      }]);
-    } catch (err) {
-      console.warn('Error registrando log:', err.message);
-    }
+    await registrarLog({
+      tipo_nombre,
+      descripcion,
+      id_persona: currentPersonaId,
+      organizacion_id: orgId,
+      id_plaza: idPlaza,
+      origen: 'Panel Web - Control de Ocupación'
+    });
   };
 
 
@@ -224,8 +219,8 @@ export default function Ocupacion() {
       }
 
       const numPlaza = plazaActual?.numero_plaza || `ID-${idPlaza}`;
-      await registrarLog(
-        'Alerta',
+      await handleRegistrarLog(
+        EVENT_TYPES.CAMBIO_ESTADO || 'Alerta',
         `Cambio de estado manual: de ${estadoAnterior} a ${nombreNuevoEstado.toUpperCase()}.`,
         idPlaza
       );

@@ -5,6 +5,7 @@ import Swal from 'sweetalert2';
 import { FaSearch, FaPlus, FaMicrochip, FaTrash, FaEdit, FaSync, FaTimesCircle } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
 
 export default function Sensores() {
   const { orgId } = useOrg();
@@ -119,21 +120,17 @@ export default function Sensores() {
     }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion, idPlaza = null, idDisp = null) => {
+  const handleRegistrarLog = async (tipo_nombre, descripcion, idPlaza = null, idDisp = null) => {
     if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-      
-      await supabase.from('evento').insert([{
-        fecha_hora: new Date().toISOString(),
-        descripcion: descripcion,
-        id_plaza: idPlaza,
-        id_persona: currentPersonaId,
-        id_tipo: te?.id_tipo || null,
-        id_dispositivo: idDisp,
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
+    await registrarLog({
+      tipo_nombre,
+      descripcion,
+      id_persona: currentPersonaId,
+      organizacion_id: orgId,
+      id_plaza: idPlaza,
+      id_dispositivo: idDisp,
+      origen: 'Panel Web - Hardware y Sensores'
+    });
   };
 
   const handleEdit = (disp) => {
@@ -186,12 +183,12 @@ export default function Sensores() {
         // Log de actualización inteligente
         const nombreEstadoOp = estadosEquipo.find(e => String(e.id_estado) === String(formData.id_estado))?.nombre || 'N/A';
         
-        const tipoLog = nombreEstadoOp.toLowerCase().includes('operativo') ? 'Dispositivo Online' : 
-                       nombreEstadoOp.toLowerCase().includes('mantenimiento') ? 'Mantenimiento En Progreso' : 'Dispositivo Offline';
+        const tipoLog = nombreEstadoOp.toLowerCase().includes('operativo') ? EVENT_TYPES.DISPOSITIVO_ONLINE : 
+                       nombreEstadoOp.toLowerCase().includes('mantenimiento') ? EVENT_TYPES.MANTENIMIENTO_INICIADO : EVENT_TYPES.DISPOSITIVO_OFFLINE;
         
         let descLog = `Actualización de ${tipoObj?.nombre || 'Dispositivo'}: Estado Operativo a ${nombreEstadoOp}.`;
 
-        await registrarLog(
+        await handleRegistrarLog(
           tipoLog,
           descLog,
           formData.id_plaza || null,
@@ -203,8 +200,8 @@ export default function Sensores() {
         const { data: nDisp, error } = await supabase.from('dispositivo').insert([dispData]).select('id_dispositivo').single();
         if (error) throw error;
         
-        await registrarLog(
-          'Dispositivo Online',
+        await handleRegistrarLog(
+          EVENT_TYPES.DISPOSITIVO_ONLINE,
           `Nuevo dispositivo registrado: ${tipoObj?.nombre || 'Equipo'}.`,
           formData.id_plaza || null,
           nDisp.id_dispositivo
@@ -265,8 +262,8 @@ export default function Sensores() {
         
         if (error) throw error;
 
-        await registrarLog(
-          'Dispositivo Offline',
+        await handleRegistrarLog(
+          EVENT_TYPES.DISPOSITIVO_OFFLINE,
           `Dispositivo eliminado permanentemente: ${disp.tipo?.nombre || 'Equipo'}.`,
           disp.id_plaza || null,
           null // Ya no existe el ID del dispositivo

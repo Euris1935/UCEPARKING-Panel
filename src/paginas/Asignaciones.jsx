@@ -10,6 +10,8 @@ import {
 } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
+import { ESTADO_PLAZA, ESTADO_ASIGNACION } from '../lib/constants';
 
 export default function Asignaciones() {
     const { orgId } = useOrg();
@@ -93,10 +95,8 @@ export default function Asignaciones() {
             if (!vencidas || vencidas.length === 0) return;
 
             console.log(`[AutoClose] Encontradas ${vencidas.length} asignaciones para cerrar.`);
-            const { data: eaFinalizada } = await supabase.from('estado_asignacion').select('id_estado').ilike('nombre', 'Finalizada').maybeSingle();
-            const idFinalizada = eaFinalizada?.id_estado || 2;
-            const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-            const idLibre = epLibre?.id_estado || 1;
+            const idFinalizada = ESTADO_ASIGNACION.FINALIZADA;
+            const idLibre = ESTADO_PLAZA.LIBRE;
 
             for (const asig of vencidas) {
                 // Cerrar asignación
@@ -130,11 +130,10 @@ export default function Asignaciones() {
                 supabase.from('asignacion').select('*').eq('organizacion_id', orgId).order('created_at', { ascending: false }),
                 supabase.from('empleado').select('id_empleado, persona(nombre, apellido)').eq('organizacion_id', orgId),
                 supabase.from('plaza').select('id_plaza, numero_plaza').eq('organizacion_id', orgId),
-                supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle(),
                 supabase.from('estado_asignacion').select('*').order('id_estado')
             ]);
 
-            const idEstLibrePlaza = epLibre?.id_estado || 1;
+            const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
             const todosEmpleadosOrdenados = (todosEmpleados || []).sort((a, b) => {
                 const na = `${a.persona?.nombre ?? ''} ${a.persona?.apellido ?? ''}`.toLowerCase();
                 const nb = `${b.persona?.nombre ?? ''} ${b.persona?.apellido ?? ''}`.toLowerCase();
@@ -192,20 +191,15 @@ export default function Asignaciones() {
         }
     };
 
-    const registrarLog = async (tipo_nombre, descripcion) => {
+    const handleRegistrarLog = async (tipo_nombre, descripcion) => {
         if (!currentPersonaId) return;
-        try {
-            const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-            const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Asignaciones').maybeSingle();
-            await supabase.from('evento').insert([{
-                fecha_hora: new Date().toISOString(),
-                descripcion: descripcion,
-                id_persona: currentPersonaId,
-                id_tipo: te?.id_tipo || null,
-                id_origen_evento: oe?.id_origen || null,
-                organizacion_id: orgId
-            }]);
-        } catch (e) { console.warn('Log error:', e.message); }
+        await registrarLog({
+            tipo_nombre,
+            descripcion,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            origen: 'Panel Web - Asignaciones'
+        });
     };
 
     const handleEmpleadoChange = (idEmpleado) => {
@@ -216,8 +210,7 @@ export default function Asignaciones() {
         setEditingAsignacion(null);
         setFormData({ ...initialForm, Fecha_Inicio: getNowLocalISO() });
         setIsPermanent(false);
-        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-        const idEstLibrePlaza = epLibre?.id_estado || 1;
+        const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
         const { data: plazaData } = await supabase
             .from('plaza')
             .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
@@ -239,8 +232,7 @@ export default function Asignaciones() {
             Notas: asig.notas || ''
         });
         setIsPermanent(!asig.fecha_fin);
-        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-        const idEstLibrePlaza = epLibre?.id_estado || 1;
+        const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
         const { data: plazaData } = await supabase
             .from('plaza')
             .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
@@ -264,10 +256,8 @@ export default function Asignaciones() {
     };
 
     const handleCreate = async () => {
-        const { data: epAsignado } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Asignado').maybeSingle();
-        const idAsignadaPlaza = epAsignado?.id_estado || 2;
-        const { data: eaActiva } = await supabase.from('estado_asignacion').select('id_estado').ilike('nombre', 'Activa').maybeSingle();
-        const idEstadoAsig = eaActiva?.id_estado || 1;
+        const idAsignadaPlaza = ESTADO_PLAZA.ASIGNADA;
+        const idEstadoAsig = ESTADO_ASIGNACION.ACTIVA;
         const { error: insertError } = await supabase.from('asignacion').insert([{
             id_empleado: parseInt(formData.Id_Empleado),
             id_plaza: parseInt(formData.Id_Plaza),
@@ -286,10 +276,8 @@ export default function Asignaciones() {
         const plazaAnterior = editingAsignacion.id_plaza;
         const plazaNueva = parseInt(formData.Id_Plaza);
         const plazaCambia = plazaAnterior !== plazaNueva;
-        const { data: epAsignado } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Asignado').maybeSingle();
-        const idAsignadaPlaza = epAsignado?.id_estado || 2;
-        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-        const idLibrePlaza = epLibre?.id_estado || 1;
+        const idAsignadaPlaza = ESTADO_PLAZA.ASIGNADA;
+        const idLibrePlaza = ESTADO_PLAZA.LIBRE;
         const { error: updateError } = await supabase
             .from('asignacion')
             .update({
@@ -325,8 +313,8 @@ export default function Asignaciones() {
             }
             const emp = empleadosList.find(e => e.id_empleado === parseInt(formData.Id_Empleado));
             const plz = plazasList.find(p => p.id_plaza === parseInt(formData.Id_Plaza));
-            registrarLog(
-                editingAsignacion ? 'Asignacion Modificada' : 'Cambio de Estado',
+            handleRegistrarLog(
+                editingAsignacion ? EVENT_TYPES.CAMBIO_ESTADO : EVENT_TYPES.CAMBIO_ESTADO,
                 `${editingAsignacion ? 'Edicion' : 'Creacion'} de asignacion: Empleado ${emp?.persona?.nombre} ${emp?.persona?.apellido} en Plaza ${plz?.numero_plaza}`
             );
             handleCloseModal();
@@ -381,8 +369,7 @@ export default function Asignaciones() {
 
             // 3. SOLO SI EL CONTRATO SE CERRÓ: Liberar la plaza
             if (nextStatus === 2 || nextStatus === 3) {
-                const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-                const idLibrePlaza = epLibre?.id_estado || 1;
+                const idLibrePlaza = ESTADO_PLAZA.LIBRE;
                 
                 if (asig.id_plaza) {
                     const { error: plzErr } = await supabase
@@ -401,7 +388,7 @@ export default function Asignaciones() {
                 showConfirmButton: false
             });
 
-            registrarLog('Finalización Contrato', `Asignación ${asig.id_asignacion} cerrada exitosamente.`);
+            handleRegistrarLog(EVENT_TYPES.CAMBIO_ESTADO, `Asignación ${asig.id_asignacion} cerrada exitosamente.`);
             setChangingStatusFor(null);
             loadData();
         } catch (error) {
@@ -424,9 +411,8 @@ export default function Asignaciones() {
             try {
                 setLoading(true);
                 // 1. Obtener estados
-                const { data: epData } = await supabase.from('estado_plaza').select('id_estado, nombre');
-                const idLibre = epData?.find(e => e.nombre === 'Libre')?.id_estado || 1;
-                const idAsignada = epData?.find(e => e.nombre === 'Asignada')?.id_estado || 2;
+                const idLibre = ESTADO_PLAZA.LIBRE;
+                const idAsignada = ESTADO_PLAZA.ASIGNADA;
 
                 // 2. Obtener plazas marcadas como asignadas
                 const { data: plazasAsignadas } = await supabase.from('plaza').select('id_plaza').eq('id_estado', idAsignada);

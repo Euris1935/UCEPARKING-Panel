@@ -13,6 +13,7 @@ import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
 import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
+import { ESTADO_PLAZA, ESTADO_RESERVA } from '../lib/constants';
 
 export default function Reservaciones() {
   const { tienePermiso } = useRbac();
@@ -134,8 +135,8 @@ export default function Reservaciones() {
         setReservas(resData || []);
         setReservasZona(resZonaData || []);
         
-        const idLibre = epLibre?.id_estado || 1;
-        const idResActiva = erActivo?.id_estado || 1;
+        const idLibre = ESTADO_PLAZA.LIBRE;
+        const idResActiva = ESTADO_RESERVA.ACTIVA;
 
         // 1. Procesar Personas y Bloqueos
         const soloUsuarios = (uData || []).map(u => ({ id_persona: u.id_persona || u.persona_id, nombre: u.nombre, apellido: u.apellido }));
@@ -174,8 +175,7 @@ export default function Reservaciones() {
   useEffect(() => {
     if (formData.id_zona && activeTab === 'zonas') {
       const fetchPlazas = async () => {
-        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-        const idEstLibrePlaza = epLibre?.id_estado || 1;
+        const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
         const { data } = await supabase.from('plaza').select('id_plaza, numero_plaza').eq('id_zona', formData.id_zona).eq('id_estado', idEstLibrePlaza).order('numero_plaza');
         setPlazasDeZona(data || []);
       };
@@ -194,13 +194,9 @@ export default function Reservaciones() {
     // Usamos el tiempo sincronizado con el servidor
     const ahora = new Date(Date.now() + serverTimeOffset);
     
-    // Requerimos IDs de estado para que el bucle sea eficiente
-    const { data: stVencida } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Vencida').maybeSingle();
-    const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-    
     // Fallback seguro para IDs
-    const idEstVencida = stVencida?.id_estado || 4;
-    const idEstLibre = epLibre?.id_estado || 1;
+    const idEstVencida = ESTADO_RESERVA.VENCIDA;
+    const idEstLibre = ESTADO_PLAZA.LIBRE;
 
     const commonIds = {
       idEstVencidaRes: idEstVencida,
@@ -258,12 +254,10 @@ export default function Reservaciones() {
         }
 
         if (!idEstCompletadoRes) {
-          const { data: stCompletada } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Completada').maybeSingle();
-          idEstCompletadoRes = stCompletada?.id_estado || 3;
+          idEstCompletadoRes = ESTADO_RESERVA.COMPLETADA;
         }
         if (!idEstLibrePlaza) {
-          const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-          idEstLibrePlaza = epLibre?.id_estado || 1;
+          idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
         }
 
         // ORDEN ATÓMICO: Liberamos la plaza PRIMERO para que el monitor cambie a verde de inmediato
@@ -307,10 +301,8 @@ export default function Reservaciones() {
   const handleCancelReserva = async (idReserva, idPlaza) => {
     const result = await Swal.fire({ title: '¿Cancelar?', text: "La plaza se liberará.", icon: 'warning', showCancelButton: true, confirmButtonColor: '#f59e0b' });
     if (result.isConfirmed) {
-        const { data: stCancelada } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Cancelada').maybeSingle();
-        const idEstCanceladaRes = stCancelada?.id_estado || 2;
-        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-        const idEstLibrePlaza = epLibre?.id_estado || 1;
+        const idEstCanceladaRes = ESTADO_RESERVA.CANCELADA;
+        const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
 
         await supabase.from('reserva').update({ id_estado: idEstCanceladaRes }).eq('id_reserva', idReserva);
         if (idPlaza) await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', idPlaza);
@@ -334,8 +326,7 @@ export default function Reservaciones() {
     try {
         let idEstCompletadoRes = forcedIds?.idEstCompletadoRes;
         if (!idEstCompletadoRes) {
-          const { data: stCompletada } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Completada').maybeSingle();
-          idEstCompletadoRes = stCompletada?.id_estado || 3;
+          idEstCompletadoRes = ESTADO_RESERVA.COMPLETADA;
         }
 
         // Obtener info de la reserva para saber la zona
@@ -369,8 +360,7 @@ export default function Reservaciones() {
   const handleCancelReservaZona = async (id) => {
     const result = await Swal.fire({ title: '¿Cancelar?', text: "La zona quedará disponible.", icon: 'warning', showCancelButton: true, confirmButtonColor: '#f59e0b' });
     if (result.isConfirmed) {
-        const { data: stCancelada } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Cancelada').maybeSingle();
-        const idEstCanceladaRes = stCancelada?.id_estado || 2;
+        const idEstCanceladaRes = ESTADO_RESERVA.CANCELADA;
         
         // Info de zona
         const { data: resInfo } = await supabase.from('reserva_zona').select('id_zona').eq('id_reserva_zona', id).single();
@@ -390,8 +380,7 @@ export default function Reservaciones() {
 
   const liberarPlazasZona = async (idZona) => {
     try {
-      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-      const idEstLibrePlaza = epLibre?.id_estado || 1;
+      const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
 
       // Obtener plazas de la zona
       const { data: plazasZona } = await supabase.from('plaza').select('id_plaza').eq('id_zona', idZona);
@@ -446,12 +435,9 @@ export default function Reservaciones() {
           return Swal.fire('Error de Sesión', 'No se pudo identificar tu organización. Por favor, recarga la página.', 'error');
         }
 
-        const { data: stActiva } = await supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle();
-        const idEstActivaRes = stActiva?.id_estado || 1;
-        const { data: epReservado } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Reservad%').maybeSingle();
-        const idEstReservPlaza = epReservado?.id_estado || 3;
-        const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-        const idEstLibrePlaza = epLibre?.id_estado || 1;
+        const idEstActivaRes = ESTADO_RESERVA.ACTIVA;
+        const idEstReservPlaza = ESTADO_PLAZA.RESERVADA;
+        const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
 
         if (activeTab === 'personas') {
             // --- Lógica de Reserva por Persona (Existente) ---
@@ -629,8 +615,7 @@ export default function Reservaciones() {
     
     if (activeTab === 'personas') {
       // Recargar plazas libres al instante
-      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-      const idEstLibrePlaza = epLibre?.id_estado || 1;
+      const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
       const { data: plazaData } = await supabase.from('plaza').select('id_plaza, numero_plaza').eq('id_estado', idEstLibrePlaza).order('numero_plaza');
       setPlazasList(plazaData || []);
     } else {

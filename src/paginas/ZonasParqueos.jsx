@@ -12,6 +12,7 @@ import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
 import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
+import { ESTADO_ZONA, ESTADO_PLAZA } from '../lib/constants';
 
 export default function ZonasParqueo() {
   const { tienePermiso } = useRbac();
@@ -44,6 +45,22 @@ export default function ZonasParqueo() {
   useEffect(() => { 
     if (orgId) loadData(); 
   }, [orgId]);
+
+  useEffect(() => {
+    async function loadUserSession() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: usr } = await supabase.from('usuario').select('id_persona, organizacion_id').eq('id', session.user.id).single();
+        if (usr) {
+          setCurrentPersonaId(usr.id_persona);
+          setLocalOrgId(usr.organizacion_id);
+          const { data: emp } = await supabase.from('empleado').select('id_empleado').eq('id_persona', usr.id_persona).maybeSingle();
+          if (emp) setCurrentEmpleadoId(emp.id_empleado);
+        }
+      }
+    }
+    loadUserSession();
+  }, []);
 
   const loadData = async () => {
     if (!orgId) return;
@@ -163,8 +180,7 @@ export default function ZonasParqueo() {
     // 1. Determinar ID del estado si no se seleccionó
     let finalIdEstado = zoneForm.id_estado ? parseInt(zoneForm.id_estado) : null;
     if (estaCreando && !finalIdEstado) {
-      const { data: stAct } = await supabase.from('estado_zona').select('id_estado').ilike('nombre', 'Activa').maybeSingle();
-      if (stAct) finalIdEstado = stAct.id_estado;
+      finalIdEstado = ESTADO_ZONA.ACTIVA;
     }
 
     const payload = { 
@@ -208,8 +224,7 @@ export default function ZonasParqueo() {
         if (errZ) throw errZ;
 
         if (confirm.isConfirmed) {
-          const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-          const idLibre = epLibre?.id_estado || 1;
+          const idLibre = ESTADO_PLAZA.LIBRE;
           const idTipoPlazaInferido = mapearTipoZonaATipoPlaza(payload.id_tipo);
           const { total } = await generarPlazasEnLote(zonaCreada.id_zona, zonaCreada.nombre, cap, idLibre, idTipoPlazaInferido);
           
@@ -257,28 +272,25 @@ export default function ZonasParqueo() {
         if (stNombre.toLowerCase().includes('mantenimiento') || stNombre.toLowerCase().includes('cerrada')) {
             const { data: stPlaza } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', stNombre).maybeSingle();
             if (stPlaza) {
-                const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-                const idLibre = epLibre?.id_estado || 1;
+                const idLibre = ESTADO_PLAZA.LIBRE;
                 // Dejamos marcadas como mantenimiento/cerrada solo las que estaban libres
                 await supabase.from('plaza').update({ id_estado: stPlaza.id_estado }).eq('id_zona', editingZone.id_zona).eq('id_estado', idLibre);
             }
         } else if (stNombre === 'Activa') {
             // Si volvemos a Activa, liberamos las que estaban bloqueadas administrativamente
-            const { data: stLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+            const stLibre = ESTADO_PLAZA.LIBRE;
             const { data: stMant } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'En Mantenimiento').maybeSingle();
             const { data: stCerr } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Cerrada Temporalmente').maybeSingle();
             
-            if (stLibre) {
-                const idsParaLiberar = [];
-                if (stMant) idsParaLiberar.push(stMant.id_estado);
-                if (stCerr) idsParaLiberar.push(stCerr.id_estado);
-                
-                if (idsParaLiberar.length > 0) {
-                    await supabase.from('plaza')
-                        .update({ id_estado: stLibre.id_estado })
-                        .eq('id_zona', editingZone.id_zona)
-                        .in('id_estado', idsParaLiberar);
-                }
+            const idsParaLiberar = [];
+            if (stMant) idsParaLiberar.push(stMant.id_estado);
+            if (stCerr) idsParaLiberar.push(stCerr.id_estado);
+            
+            if (idsParaLiberar.length > 0) {
+                await supabase.from('plaza')
+                    .update({ id_estado: stLibre })
+                    .eq('id_zona', editingZone.id_zona)
+                    .in('id_estado', idsParaLiberar);
             }
         }
         
@@ -304,8 +316,7 @@ export default function ZonasParqueo() {
                 cancelButtonText: 'No por ahora'
             });
             if (confirmGen.isConfirmed) {
-                const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-                const idLibre = epLibre?.id_estado || 1;
+                const idLibre = ESTADO_PLAZA.LIBRE;
                 const idTipoPlazaInferido = mapearTipoZonaATipoPlaza(payload.id_tipo);
                 await generarPlazasEnLote(editingZone.id_zona, zoneForm.Nombre_Zona, newCap, idLibre, idTipoPlazaInferido);
                 Swal.fire('Éxito', `Zona actualizada y ${faltantes} plazas generadas.`, 'success');
@@ -352,8 +363,7 @@ export default function ZonasParqueo() {
 
     try {
       Swal.fire({ title: 'Generando...', didOpen: () => Swal.showLoading() });
-      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-      const idLibre = epLibre?.id_estado || 1;
+      const idLibre = ESTADO_PLAZA.LIBRE;
       const idTipoPlazaInferido = mapearTipoZonaATipoPlaza(zona.id_tipo);
 
       const { total } = await generarPlazasEnLote(zona.id_zona, zona.nombre, zona.capacidad_total, idLibre, idTipoPlazaInferido);
@@ -431,10 +441,7 @@ export default function ZonasParqueo() {
 
           if (confirmInac.isConfirmed) {
             try {
-              const { data: stInac } = await supabase.from('estado_zona').select('id_estado').ilike('nombre', 'Inactiva').maybeSingle();
-              if (!stInac) throw new Error('Estado "Inactiva" no encontrado en el sistema.');
-              
-              await supabase.from('zona').update({ id_estado: stInac.id_estado }).eq('id_zona', zoneId);
+              await supabase.from('zona').update({ id_estado: ESTADO_ZONA.INACTIVA }).eq('id_zona', zoneId);
               Swal.fire('Zona Desactivada', 'La zona ha sido marcada como Inactiva y sus plazas se han ocultado.', 'success');
               
               registrarLog({
@@ -536,8 +543,7 @@ export default function ZonasParqueo() {
         if (error) throw error;
         Swal.fire('Actualizada', `Plaza actualizada correctamente.`, 'success');
       } else {
-        const { data: est } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-        const idLibre = est?.id_estado || 1;
+        const idLibre = ESTADO_PLAZA.LIBRE;
 
         const { error } = await supabase.from('plaza').insert([{
           ...payload,
@@ -655,17 +661,19 @@ export default function ZonasParqueo() {
                       selectedItemClass="bg-emerald-100 text-emerald-800"
                     />
                   </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Estado de Zona</label>
-                    <SearchableSelect 
-                      options={estadosZona.map(e => ({ value: e.id_estado, label: e.nombre }))}
-                      value={zoneForm.id_estado}
-                      onChange={(val) => setZoneForm({ ...zoneForm, id_estado: val })}
-                      placeholder="— Seleccionar Estado —"
-                      focusRingClass="focus:ring-emerald-500"
-                      selectedItemClass="bg-emerald-100 text-emerald-800"
-                    />
-                  </div>
+                  {editingZone && (
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Estado de Zona</label>
+                      <SearchableSelect 
+                        options={estadosZona.map(e => ({ value: e.id_estado, label: e.nombre }))}
+                        value={zoneForm.id_estado}
+                        onChange={(val) => setZoneForm({ ...zoneForm, id_estado: val })}
+                        placeholder="— Seleccionar Estado —"
+                        focusRingClass="focus:ring-emerald-500"
+                        selectedItemClass="bg-emerald-100 text-emerald-800"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div>

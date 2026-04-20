@@ -6,6 +6,8 @@ import Swal from 'sweetalert2';
 import { FaSearch, FaPlus, FaCheckCircle, FaTools, FaCalendarAlt, FaEdit, FaTrash, FaSync, FaTimesCircle } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
+import { ESTADO_MANT, ESTADO_PLAZA, ESTADO_ZONA, ESTADO_DISPOSITIVO } from '../lib/constants';
 
 export default function Mantenimiento() {
     const { orgId } = useOrg();
@@ -130,26 +132,17 @@ export default function Mantenimiento() {
         }
     };
 
-    const registrarLog = async (tipo_nombre, descripcion, idDispositivo = null, idPlaza = null) => {
+    const handleRegistrarLog = async (tipo_nombre, descripcion, idDispositivo = null, idPlaza = null) => {
         if (!currentPersonaId) return;
-        try {
-            // #RF10: Fallback dinámico para evitar N/A en logs
-            let { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-            if (!te) {
-                const { data: fallback } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', 'Mantenimiento Iniciado').maybeSingle();
-                te = fallback;
-            }            const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Mantenimiento').maybeSingle();
-            await supabase.from('evento').insert([{
-                fecha_hora: new Date().toISOString(),
-                descripcion: descripcion,
-                id_persona: currentPersonaId,
-                id_tipo: te?.id_tipo || null,
-                id_origen_evento: oe?.id_origen || null,
-                id_dispositivo: idDispositivo,
-                id_plaza: idPlaza,
-                organizacion_id: orgId
-            }]);
-        } catch (err) { console.warn('Error log:', err.message); }
+        await registrarLog({
+            tipo_nombre,
+            descripcion,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            id_plaza: idPlaza,
+            id_dispositivo: idDispositivo,
+            origen: 'Panel Web - Mantenimiento'
+        });
     };
 
     const handleEdit = (item) => {
@@ -176,40 +169,28 @@ export default function Mantenimiento() {
     // Lógica de Sincronización en Cascada
     const syncEntityStatus = async (target, id, isStarting) => {
         try {
-            // Nombres de estados exactos según catálogos maestros
-            const statusZon = isStarting ? 'En Mantenimiento' : 'Activa';
-            const statusPla = isStarting ? 'En Mantenimiento' : 'Libre';
-            const statusDis = isStarting ? 'En Mantenimiento' : 'Activo';
+            const statusZon = isStarting ? ESTADO_ZONA.MANTENIMIENTO : ESTADO_ZONA.ACTIVA;
+            const statusPla = isStarting ? ESTADO_PLAZA.MANTENIMIENTO : ESTADO_PLAZA.LIBRE;
+            const statusDis = isStarting ? ESTADO_DISPOSITIVO.MANTENIMIENTO : ESTADO_DISPOSITIVO.OPERATIVO;
 
             if (target === 'zona') {
-                const { data: stZ } = await supabase.from('estado_zona').select('id_estado').ilike('nombre', statusZon).maybeSingle();
-                if (stZ) await supabase.from('zona').update({ id_estado: stZ.id_estado }).eq('id_zona', id);
-                
-                const { data: stP } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', statusPla).maybeSingle();
-                if (stP) {
-                    await supabase.from('plaza').update({ id_estado: stP.id_estado }).eq('id_zona', id);
-                    const { data: plazas } = await supabase.from('plaza').select('id_plaza').eq('id_zona', id);
-                    const plazaIds = (plazas || []).map(p => p.id_plaza);
-                    if (plazaIds.length > 0) {
-                        const { data: stD } = await supabase.from('estado_dispositivo').select('id_estado').ilike('nombre', statusDis).maybeSingle();
-                        if (stD) await supabase.from('dispositivo').update({ id_estado: stD.id_estado }).in('id_plaza', plazaIds);
-                    }
+                await supabase.from('zona').update({ id_estado: statusZon }).eq('id_zona', id);
+                await supabase.from('plaza').update({ id_estado: statusPla }).eq('id_zona', id);
+                const { data: plazas } = await supabase.from('plaza').select('id_plaza').eq('id_zona', id);
+                const plazaIds = (plazas || []).map(p => p.id_plaza);
+                if (plazaIds.length > 0) {
+                    await supabase.from('dispositivo').update({ id_estado: statusDis }).in('id_plaza', plazaIds);
                 }
             } else if (target === 'plaza') {
-                const { data: stP } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', statusPla).maybeSingle();
-                if (stP) await supabase.from('plaza').update({ id_estado: stP.id_estado }).eq('id_plaza', id);
-                
-                const { data: stD } = await supabase.from('estado_dispositivo').select('id_estado').ilike('nombre', statusDis).maybeSingle();
-                if (stD) await supabase.from('dispositivo').update({ id_estado: stD.id_estado }).eq('id_plaza', id);
+                await supabase.from('plaza').update({ id_estado: statusPla }).eq('id_plaza', id);
+                await supabase.from('dispositivo').update({ id_estado: statusDis }).eq('id_plaza', id);
             } else if (target === 'dispositivo') {
-                const { data: stD } = await supabase.from('estado_dispositivo').select('id_estado').ilike('nombre', statusDis).maybeSingle();
-                if (stD) await supabase.from('dispositivo').update({ id_estado: stD.id_estado }).eq('id_dispositivo', id);
+                await supabase.from('dispositivo').update({ id_estado: statusDis }).eq('id_dispositivo', id);
                 
                 // Buscar en el catálogo global para no perder la referencia de la plaza
                 const disp = allDispositivos.find(d => d.id_dispositivo === id);
                 if (disp?.id_plaza) {
-                    const { data: stP } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', statusPla).maybeSingle();
-                    if (stP) await supabase.from('plaza').update({ id_estado: stP.id_estado }).eq('id_plaza', disp.id_plaza);
+                    await supabase.from('plaza').update({ id_estado: statusPla }).eq('id_plaza', disp.id_plaza);
                 }
             }
         } catch (err) { console.warn('Error sync:', err.message); }
@@ -246,17 +227,16 @@ export default function Mantenimiento() {
                              estadosMantenimiento.find(e => e.id_estado === parseInt(payload.id_estado))?.nombre.toLowerCase().includes('cancelado');
             const nombreEstadoActual = estadosMantenimiento.find(e => e.id_estado === parseInt(payload.id_estado))?.nombre || 'Actualizado';
 
-            // Mapear nombre del estado al tipo de evento correspondiente
             const ESTADO_A_EVENTO = {
-                'completado': 'Mantenimiento Completado',
-                'en progreso': 'Mantenimiento En Progreso',
-                'cancelado': 'Mantenimiento Cancelado',
-                'en espera': 'Mantenimiento En Espera',
+                'completado': EVENT_TYPES.MANTENIMIENTO_COMPLETADO,
+                'en progreso': EVENT_TYPES.MANTENIMIENTO_INICIADO,
+                'cancelado': EVENT_TYPES.CAMBIO_ESTADO,
+                'en espera': EVENT_TYPES.CAMBIO_ESTADO,
             };
             const estadoLower = nombreEstadoActual.toLowerCase();
             const nombreEventoLog = editingId
-                ? (Object.entries(ESTADO_A_EVENTO).find(([key]) => estadoLower.includes(key))?.[1] || 'Mantenimiento Iniciado')
-                : 'Mantenimiento Iniciado';
+                ? (Object.entries(ESTADO_A_EVENTO).find(([key]) => estadoLower.includes(key))?.[1] || EVENT_TYPES.MANTENIMIENTO_INICIADO)
+                : EVENT_TYPES.MANTENIMIENTO_INICIADO;
 
             let error;
             if (editingId) {
@@ -278,7 +258,7 @@ export default function Mantenimiento() {
             // Log automático (RF10)
             const disp = dispositivos.find(d => d.id_dispositivo === payload.id_dispositivo);
             const idPlazaLog = payload.id_plaza || disp?.id_plaza || null;
-            await registrarLog(
+            await handleRegistrarLog(
                 nombreEventoLog,
                 `${editingId ? 'Actualización' : 'Nueva solicitud'} de mantenimiento (Estado: ${nombreEstadoActual}): "${formData.descripcion}"`,
                 payload.id_dispositivo,
@@ -345,14 +325,14 @@ export default function Mantenimiento() {
 
             // Registrar Log
             const ESTADO_A_EVENTO = {
-                'completado': 'Mantenimiento Completado',
-                'en progreso': 'Mantenimiento En Progreso',
-                'cancelado': 'Mantenimiento Cancelado',
-                'en espera': 'Mantenimiento En Espera',
+                'completado': EVENT_TYPES.MANTENIMIENTO_COMPLETADO,
+                'en progreso': EVENT_TYPES.MANTENIMIENTO_INICIADO,
+                'cancelado': EVENT_TYPES.CAMBIO_ESTADO,
+                'en espera': EVENT_TYPES.CAMBIO_ESTADO,
             };
-            const eventName = Object.entries(ESTADO_A_EVENTO).find(([key]) => statusLower.includes(key))?.[1] || 'Mantenimiento Iniciado';
+            const eventName = Object.entries(ESTADO_A_EVENTO).find(([key]) => statusLower.includes(key))?.[1] || EVENT_TYPES.MANTENIMIENTO_INICIADO;
             
-            await registrarLog(
+            await handleRegistrarLog(
                 eventName,
                 `Cambio de estado rápido a "${statusName}" para mantenimiento ID-${item.id_mantenimiento}.`,
                 item.id_dispositivo,

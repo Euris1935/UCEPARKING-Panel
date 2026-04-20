@@ -10,6 +10,8 @@ import {
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
+import { ESTADO_USUARIO } from '../lib/constants';
 
 export default function Empleados() {
   const { tienePermiso } = useRbac();
@@ -66,22 +68,7 @@ export default function Empleados() {
     }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion) => {
-    // El registro de log ahora debería usar los utils globales si es posible,
-    // pero mantenemos la compatibilidad mínima aquí.
-    try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Personal').maybeSingle();
-      await supabase.from('evento').insert([{ 
-        fecha_hora: new Date().toISOString(), 
-        descripcion: descripcion, 
-        id_persona: null, // Se obtendrá por RLS o contexto en el trigger
-        id_tipo: te?.id_tipo || null, 
-        id_origen_evento: oe?.id_origen || null,
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
-  };
+  // ── El log usa `registrarLog` global ──
 
   const cargarEmpleados = async (deptList) => {
     const { data: emps } = await supabase.from('empleado').select('*, estado:id_estado(nombre)').eq('organizacion_id', orgId).order('id_empleado');
@@ -173,15 +160,26 @@ export default function Empleados() {
           .update(payload)
           .eq('id_empleado', editingEmp.id_empleado);
         if (error) throw error;
-        registrarLog('Actualización Personal', `Datos de ${editingEmp.nombre} actualizados.`);
+        registrarLog({
+          tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+          descripcion: `Datos de ${editingEmp.nombre} actualizados.`,
+          id_persona: currentPersonaId,
+          organizacion_id: orgId,
+          origen: 'Panel Web - Personal'
+        });
         Swal.fire('Actualizado', 'Datos laborales actualizados.', 'success');
       } else {
-        const { data: eeActivo } = await supabase.from('estado_usuario').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
         const { error } = await supabase
           .from('empleado')
-          .insert([{ id_persona, id_estado: eeActivo?.id_estado || 1, ...payload }]);
+          .insert([{ id_persona, id_estado: ESTADO_USUARIO.ACTIVO, ...payload }]);
         if (error) throw error;
-        registrarLog('Nuevo Empleado', `Usuario ${id_persona} asignado como empleado.`);
+        registrarLog({
+          tipo_nombre: EVENT_TYPES.NUEVO_EMPLEADO || EVENT_TYPES.CAMBIO_ESTADO,
+          descripcion: `Usuario ${id_persona} asignado como empleado.`,
+          id_persona: currentPersonaId,
+          organizacion_id: orgId,
+          origen: 'Panel Web - Personal'
+        });
         Swal.fire('¡Asignado!', 'El usuario fue registrado como empleado.', 'success');
       }
 
@@ -204,7 +202,13 @@ export default function Empleados() {
       if (error) throw error;
       
       const stName = catEstados.find(s => s.id_estado === parseInt(newStatusChoice))?.nombre || 'Desconocido';
-      registrarLog('Cambio Estado Empleado', `Empleado ${emp.nombre} ${emp.apellido} cambiado a estado ${stName}`);
+      registrarLog({
+        tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+        descripcion: `Empleado ${emp.nombre} ${emp.apellido} cambiado a estado ${stName}`,
+        id_persona: currentPersonaId,
+        organizacion_id: orgId,
+        origen: 'Panel Web - Personal'
+      });
       
       Swal.fire({
         title: 'Estado Actualizado',

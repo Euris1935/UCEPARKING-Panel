@@ -19,7 +19,11 @@ export function RbacProvider({ children, session }) {
     }
 
     try {
-      setLoading(true);
+      // Si ya cargamos los permisos previamente para el mismo usuario, 
+      // evitamos reiniciar el loading para no interrumpir la navegación.
+      if (modulos.length === 0 && !loading) {
+          setLoading(true);
+      }
 
       // 1. Obtener rol_id del usuario
       const { data: usuarioData, error: uError } = await supabase
@@ -110,7 +114,7 @@ export function RbacProvider({ children, session }) {
 
   useEffect(() => {
     loadRbac();
-  }, [session]);
+  }, [session?.user?.id]);
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const tienePermiso = (nombreModulo, accion) => {
