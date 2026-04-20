@@ -84,9 +84,9 @@ export default function ZonasParqueo() {
         .from('zona')
         .select(`
           *,
-          tipo:tipo_zona(nombre),
-          estado:estado_zona(nombre),
-          creador:empleado(persona(nombre, apellido))
+          tipo:tipo_zona!id_tipo(nombre),
+          estado:estado_zona!id_estado(nombre),
+          creador:empleado!id_empleado_creador(persona:id_persona(nombre, apellido))
         `)
         .eq('organizacion_id', orgId)
         .order('nombre');
@@ -94,7 +94,7 @@ export default function ZonasParqueo() {
       setZonas(zData || []);
 
       // 3. Plazas ordenadas por número
-      const { data: pData } = await supabase.from('plaza').select(`*, estado_plaza(nombre)`).eq('organizacion_id', orgId).order('numero_plaza');
+      const { data: pData } = await supabase.from('plaza').select(`*, estado_plaza!id_estado(nombre)`).eq('organizacion_id', orgId).order('numero_plaza');
       setPlazas(pData || []);
     } catch (error) { console.error("Error cargando datos:", error); }
   };
@@ -333,7 +333,7 @@ export default function ZonasParqueo() {
             Swal.fire('Éxito', 'Zona actualizada.', 'success');
         }
 
-        registrarLog('Zona Modificada', `Edición de zona: ${zoneForm.Nombre_Zona}`);
+        /* Log ya registrado arriba con el objeto completo */
         setZoneForm(initialZoneState);
         setEditingZone(null);
         loadData();
@@ -425,7 +425,7 @@ export default function ZonasParqueo() {
         if (errZ) throw new Error(`Error al borrar zona: ${errZ.message}`);
 
         Swal.fire('Eliminado', 'Zona y plazas eliminadas con éxito.', 'success');
-        registrarLog('Zona Eliminada', `Eliminación de zona ID: ${zoneId}`);
+        registrarLog({ tipo_nombre: EVENT_TYPES.ZONA_MODIFICADA, descripcion: `Eliminación de zona ID: ${zoneId}`, id_persona: currentPersonaId, organizacion_id: orgId || localOrgId, origen: 'Panel Web - Parqueos' });
         loadData();
       } catch (error) {
         console.error('Error delete:', error);

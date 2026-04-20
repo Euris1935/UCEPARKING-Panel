@@ -80,7 +80,7 @@ export default function Sensores() {
         supabase.from('tipo_dispositivo').select('id_tipo, nombre').order('nombre'),
         supabase.from('marca').select('id_marca, nombre').order('nombre'),
         supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre'),
-        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, estado_zona(nombre))').eq('organizacion_id', orgId).order('numero_plaza'),
+        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, estado_zona:id_estado(nombre))').eq('organizacion_id', orgId).order('numero_plaza'),
         supabase.from('estado_dispositivo').select('id_estado, nombre').order('nombre')
       ]);
 

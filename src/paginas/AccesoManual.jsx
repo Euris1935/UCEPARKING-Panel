@@ -58,7 +58,7 @@ export default function AccesoManual() {
       // Obtener plazas filtrando zonas inactivas
       const { data: rawPlazas } = await supabase
         .from('plaza')
-        .select('*, zona:id_zona(estado_zona(nombre))')
+        .select('*, zona:id_zona(estado_zona:id_estado(nombre))')
         .eq('organizacion_id', orgId)
         .order('numero_plaza');
       
@@ -94,7 +94,7 @@ export default function AccesoManual() {
       // 3. Vehículos (Solo habilitados de la ORG)
       const { data: vhs } = await supabase
         .from('vehiculo')
-        .select('*, modelo(nombre, marca(nombre)), color(nombre)')
+        .select('*, modelo:id_modelo(nombre, marca:id_marca(nombre)), color:id_color(nombre)')
         .eq('organizacion_id', orgId)
         .eq('id_estado', 1);
       const vhsEnriquecidos = (vhs || []).map(v => ({ ...v, persona: pMap[v.id_persona] || null }));
@@ -112,7 +112,7 @@ export default function AccesoManual() {
       // 5. Accesos activos
       const { data: activos } = await supabase
         .from('acceso')
-        .select('*, vehiculo(*, modelo(nombre, marca(nombre)), color(nombre))')
+        .select('*, vehiculo:id_vehiculo(*, modelo:id_modelo(nombre, marca:id_marca(nombre)), color:id_color(nombre))')
         .eq('organizacion_id', orgId)
         .is('salida_at', null)
         .order('entrada_at', { ascending: false });
@@ -132,7 +132,7 @@ export default function AccesoManual() {
       // 6. Accesos Historial (ya salieron)
       const { data: historial } = await supabase
         .from('acceso')
-        .select('*, vehiculo(*, modelo(nombre, marca(nombre)), color(nombre))')
+        .select('*, vehiculo:id_vehiculo(*, modelo:id_modelo(nombre, marca:id_marca(nombre)), color:id_color(nombre))')
         .eq('organizacion_id', orgId)
         .not('salida_at', 'is', null)
         .order('salida_at', { ascending: false })

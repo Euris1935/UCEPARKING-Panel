@@ -69,10 +69,10 @@ export default function Logs() {
                 .from('evento')
                 .select(`
                     *,
-                    persona ( nombre, apellido ),
+                    persona:id_persona ( nombre, apellido ),
                     tipo:tipo_evento!id_tipo ( nombre ),
                     plaza:id_plaza ( numero_plaza ),
-                    dispositivo (
+                    dispositivo:id_dispositivo (
                         tipo:tipo_dispositivo!id_tipo ( nombre )
                     )
                 `)

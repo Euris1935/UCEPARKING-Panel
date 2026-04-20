@@ -127,7 +127,7 @@ export default function Asignaciones() {
                 { data: catEst }
             ] = await Promise.all([
                 supabase.from('asignacion').select('*').eq('organizacion_id', orgId).order('created_at', { ascending: false }),
-                supabase.from('empleado').select('id_empleado, persona(nombre, apellido)').eq('organizacion_id', orgId),
+                supabase.from('empleado').select('id_empleado, persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId),
                 supabase.from('plaza').select('id_plaza, numero_plaza').eq('organizacion_id', orgId),
                 supabase.from('estado_asignacion').select('*').order('id_estado')
             ]);
@@ -171,7 +171,7 @@ export default function Asignaciones() {
             // 4. Plazas libres (con filtro de zona activa)
             const { data: plazaData } = await supabase
                 .from('plaza')
-                .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
+                .select('id_plaza, numero_plaza, zona:id_zona(estado_zona:id_estado(nombre))')
                 .eq('organizacion_id', orgId)
                 .eq('id_estado', idEstLibrePlaza)
                 .order('numero_plaza');

@@ -27,7 +27,7 @@ export default function RolesPermisosManager() {
         { data: modulosData, error: modulosErr }
       ] = await Promise.all([
         supabase.from('rol').select('*').order('id_rol'),
-        supabase.from('modulo').select('*').order('id_modulo')
+        supabase.rpc('get_modulos_accesibles')
       ]);
 
       if (rolesErr) throw rolesErr;

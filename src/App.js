@@ -47,9 +47,9 @@ export default function App() {
         // Obtenemos los datos del perfil para el log
         const { data: uData } = await supabase
           .from('usuario')
-          .select('id_persona, organizacion_id, persona(nombre, apellido)')
+          .select('id_persona, organizacion_id, persona:id_persona(nombre, apellido)')
           .eq('id', session.user.id)
-          .single();
+          .maybeSingle();
 
         if (uData) {
           registrarLog({

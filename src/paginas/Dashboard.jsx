@@ -50,8 +50,8 @@ export default function Dashboard() {
       ] = await Promise.all([
         supabase.from('estado_plaza').select('*'),
         supabase.from('estado_reserva').select('*'),
-        supabase.from('plaza').select('*, zona(estado_zona(nombre))').eq('organizacion_id', orgId),
-        supabase.from('zona').select('id_zona, estado_zona(nombre)').eq('organizacion_id', orgId)
+        supabase.from('plaza').select('*, zona:id_zona(estado_zona:id_estado(nombre))').eq('organizacion_id', orgId),
+        supabase.from('zona').select('id_zona, estado_zona:id_estado(nombre)').eq('organizacion_id', orgId)
       ]);
 
       // Filtrar plazas de zonas inactivas (asumiendo que estado_zona inactiva es un valor que ya no usaremos o manejaremos por ID)

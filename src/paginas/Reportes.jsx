@@ -51,8 +51,8 @@ export default function Reportes() {
           .from('reporte')
           .select(`
             *,
-            persona (nombre, apellido),
-            tipo_reporte (nombre)
+            persona:id_persona (nombre, apellido),
+            tipo_reporte:id_tipo (nombre)
           `)
           .eq('organizacion_id', orgId)
           .order('created_at', { ascending: false });

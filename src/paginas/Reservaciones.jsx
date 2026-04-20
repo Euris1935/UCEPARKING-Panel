@@ -100,13 +100,13 @@ export default function Reservaciones() {
             { data: zonas },
             { data: tiposRZ }
         ] = await Promise.all([
-            supabase.from('reserva').select('*, persona(id_persona, nombre, apellido), plaza(id_plaza, numero_plaza), estado:estado_reserva(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
-            supabase.from('reserva_zona').select('*, zona(id_zona, nombre), tipo:tipo_reserva_zona(nombre), persona(id_persona, nombre, apellido), estado:estado_reserva(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
+            supabase.from('reserva').select('*, persona:id_persona(id_persona, nombre, apellido), plaza:id_plaza(id_plaza, numero_plaza), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
+            supabase.from('reserva_zona').select('*, zona:id_zona(id_zona, nombre), tipo:tipo_reserva_zona!id_tipo(nombre), persona:id_persona(id_persona, nombre, apellido), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
             supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle(),
             supabase.rpc('get_usuarios_org'),
             supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle(),
             supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1),
-            supabase.from('zona').select('id_zona, nombre, estado_zona(nombre)').eq('organizacion_id', orgId).order('nombre'),
+            supabase.from('zona').select('id_zona, nombre, estado_zona:id_estado(nombre)').eq('organizacion_id', orgId).order('nombre'),
             supabase.from('tipo_reserva_zona').select('*').order('nombre')
         ]);
 

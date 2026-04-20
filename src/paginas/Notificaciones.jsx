@@ -61,8 +61,8 @@ export default function Notificaciones() {
       ] = await Promise.all([
         supabase.from('notificacion').select(`
           id_notificacion, contenido, leida, created_at, id_persona, id_tipo,
-          persona ( nombre, apellido ),
-          tipo_notificacion ( id_tipo, nombre )
+          persona:id_persona ( nombre, apellido ),
+          tipo_notificacion:id_tipo ( id_tipo, nombre )
         `).eq('organizacion_id', orgId).order('created_at', { ascending: false }),
         supabase.from('tipo_notificacion').select('id_tipo, nombre').order('nombre'),
         supabase.rpc('get_usuarios_org')
@@ -78,7 +78,7 @@ export default function Notificaciones() {
       setTiposNotif(tData?.map(t => ({ id: t.id_tipo, nombre: t.nombre })) || []);
 
       if (uErr) {
-        const { data: fData } = await supabase.from('usuario').select('id_persona, persona(nombre, apellido)').eq('organizacion_id', orgId);
+        const { data: fData } = await supabase.from('usuario').select('id_persona, persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId);
         setPersonasList((fData || []).map(u => ({
            id_persona: u.id_persona,
            nombre: u.persona?.nombre || 'N/D',

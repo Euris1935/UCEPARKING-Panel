@@ -77,16 +77,16 @@ export default function Mantenimiento() {
             ] = await Promise.all([
                 supabase.from('mantenimiento').select(`
                     id_mantenimiento, fecha_inicio, fecha_fin, descripcion, id_dispositivo, id_zona, id_plaza, id_empleado, id_tipo, id_estado,
-                    estado:estado_mantenimiento ( nombre ),
-                    tipo:tipo_mantenimiento ( nombre ),
-                    dispositivo ( id_dispositivo, id_plaza, tipo:tipo_dispositivo ( nombre ) ),
-                    empleado ( id_empleado, persona ( nombre, apellido ) )
+                    estado:estado_mantenimiento!id_estado ( nombre ),
+                    tipo:tipo_mantenimiento!id_tipo ( nombre ),
+                    dispositivo:id_dispositivo ( id_dispositivo, id_plaza, tipo:tipo_dispositivo!id_tipo ( nombre ) ),
+                    empleado:id_empleado ( id_empleado, persona:id_persona ( nombre, apellido ) )
                 `).eq('organizacion_id', orgId).order('fecha_inicio', { ascending: false }),
-                supabase.from('dispositivo').select('id_dispositivo, id_plaza, id_estado, tipo:tipo_dispositivo(nombre), modelo(nombre, marca(nombre)), plaza:id_plaza(numero_plaza)').eq('organizacion_id', orgId),
+                supabase.from('dispositivo').select('id_dispositivo, id_plaza, id_estado, tipo:tipo_dispositivo!id_tipo(nombre), modelo:id_modelo(nombre, marca:id_marca(nombre)), plaza:id_plaza(numero_plaza)').eq('organizacion_id', orgId),
                 supabase.rpc('get_usuarios_org'),
                 supabase.from('empleado').select('id_empleado, id_persona').eq('organizacion_id', orgId),
-                supabase.from('zona').select('id_zona, nombre, id_estado, estado:estado_zona(nombre)').eq('organizacion_id', orgId),
-                supabase.from('plaza').select('id_plaza, numero_plaza, id_zona, id_estado, estado:estado_plaza(nombre)').eq('organizacion_id', orgId),
+                supabase.from('zona').select('id_zona, nombre, id_estado, estado:estado_zona!id_estado(nombre)').eq('organizacion_id', orgId),
+                supabase.from('plaza').select('id_plaza, numero_plaza, id_zona, id_estado, estado:estado_plaza!id_estado(nombre)').eq('organizacion_id', orgId),
                 supabase.from('tipo_mantenimiento').select('*').order('nombre'),
                 supabase.from('estado_mantenimiento').select('*').order('nombre')
             ]);
@@ -100,7 +100,7 @@ export default function Mantenimiento() {
             if (!rpcErr && rpcUsers) {
                 users = rpcUsers;
             } else {
-                const { data: directUsers } = await supabase.from('usuario').select('id_persona, id_rol, rol:id_rol(nombre), persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId);
+                const { data: directUsers } = await supabase.from('usuario').select('id_persona, rol_id, rol:rol_id(nombre), persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId);
                 users = (directUsers || []).map(u => ({ id_persona: u.id_persona, nombre: u.persona?.nombre, apellido: u.persona?.apellido, nombre_rol: u.rol?.nombre }));
             }
 

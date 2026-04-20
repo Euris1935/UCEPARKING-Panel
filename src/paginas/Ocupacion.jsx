@@ -43,7 +43,7 @@ export default function Ocupacion() {
         { data: tStats }
       ] = await Promise.all([
         supabase.from('estado_plaza').select('id_estado, nombre'),
-        supabase.from('zona').select('*, estado_zona(nombre)').eq('organizacion_id', orgId).order('nombre'),
+        supabase.from('zona').select('*, estado_zona:id_estado(nombre)').eq('organizacion_id', orgId).order('nombre'),
         supabase.from('ticket').select('id_estado').eq('organizacion_id', orgId) // Solo para cachear estados luego
       ]);
 
@@ -69,11 +69,11 @@ export default function Ocupacion() {
         { data: asigData }
       ] = await Promise.all([
         supabase.from('plaza').select('*, id_tipo').in('id_zona', idsZonasVivas).order('numero_plaza'),
-        supabase.from('acceso').select('id_plaza, vehiculo(placa, persona(nombre, apellido))').eq('organizacion_id', orgId).is('salida_at', null),
-        supabase.from('reserva').select('id_plaza, persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
-        supabase.from('reserva_zona').select('*, tipo:tipo_reserva_zona(nombre), persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
-        supabase.from('ticket').select('id_plaza_asignada, placa_capturada, persona:id_persona(nombre, apellido), visitante:id_visitante(persona(nombre, apellido))').eq('organizacion_id', orgId).eq('id_estado', ESTADO_TICKET.ACTIVO),
-        supabase.from('asignacion').select('id_plaza, empleado(persona(nombre, apellido))').eq('organizacion_id', orgId).eq('id_estado', 1).or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`)
+        supabase.from('acceso').select('id_plaza, vehiculo:id_vehiculo(placa, persona:id_persona(nombre, apellido))').eq('organizacion_id', orgId).is('salida_at', null),
+        supabase.from('reserva').select('id_plaza, persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
+        supabase.from('reserva_zona').select('*, tipo:tipo_reserva_zona!id_tipo(nombre), persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
+        supabase.from('ticket').select('id_plaza_asignada, placa_capturada, persona:id_persona(nombre, apellido), visitante:id_visitante(persona:id_persona(nombre, apellido))').eq('organizacion_id', orgId).eq('id_estado', ESTADO_TICKET.ACTIVO),
+        supabase.from('asignacion').select('id_plaza, empleado:id_empleado(persona:id_persona(nombre, apellido))').eq('organizacion_id', orgId).eq('id_estado', 1).or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`)
       ]);
 
       const mapaOcupacion = {};
