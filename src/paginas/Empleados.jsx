@@ -21,29 +21,32 @@ export default function Empleados() {
 
   const navigate = useNavigate();
 
-  // ── Datos generales ─────────────────────────────────────────────────────────
   const [empleados,           setEmpleados]           = useState([]);
   const [departamentos,       setDepartamentos]       = useState([]);
   const [catEstados,          setCatEstados]          = useState([]);
-  const [usuariosSinEmpleo,   setUsuariosSinEmpleo]   = useState([]); // usuarios no empleados aún
-  const [adminOrgId,          setAdminOrgId]          = useState(null);
-  const [adminOrgNombre,      setAdminOrgNombre]      = useState('');
+  const [usuariosSinEmpleo,   setUsuariosSinEmpleo]   = useState([]); 
   const [searchTerm,          setSearchTerm]          = useState('');
   const [loading,             setLoading]             = useState(false);
   const [currentPersonaId,    setCurrentPersonaId]    = useState(null);
   const [changingStatusFor,   setChangingStatusFor]   = useState(null);
   const [newStatusChoice,     setNewStatusChoice]     = useState('');
 
-  // ── Panel lateral ───────────────────────────────────────────────────────────
   const [panelOpen,     setPanelOpen]     = useState(false);
   const [editingEmp,    setEditingEmp]    = useState(null);
-  const [formData,      setFormData]      = useState({ id_persona: '', departamento_id: '' });
+  
+  // Enriquecemos el formData con los campos detectados en Branch-b
+  const [formData,      setFormData]      = useState({ 
+    id_persona: '', 
+    departamento_id: '',
+    sexo: 'M',
+    fecha_nacimiento: '',
+    telefono: '',
+    direccion: ''
+  });
 
   const isUpdating = !!editingEmp;
+  const { orgId, orgNombre } = useOrg();
 
-  const { orgId } = useOrg();
-
-  // ────────────────────────────────────────────────────────────────────────────
   useEffect(() => { 
     if (orgId) loadData(); 
   }, [orgId]);
@@ -52,7 +55,6 @@ export default function Empleados() {
     if (!orgId) return;
     setLoading(true);
     try {
-      // 1. Catálogos
       const { data: deptData } = await supabase.from('departamento').select('*').eq('organizacion_id', orgId);
       setDepartamentos(deptData || []);
 
@@ -61,6 +63,13 @@ export default function Empleados() {
       
       await cargarEmpleados(deptData || []);
 
+      // Obtener persona_id del usuario actual para el log
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: ud } = await supabase.from('usuario').select('id_persona').eq('id', user.id).maybeSingle();
+        setCurrentPersonaId(ud?.id_persona);
+      }
+
     } catch (err) {
       console.error('loadData error:', err);
     } finally {
@@ -68,17 +77,19 @@ export default function Empleados() {
     }
   };
 
-  // ── El log usa `registrarLog` global ──
-
   const cargarEmpleados = async (deptList) => {
     const { data: emps } = await supabase.from('empleado').select('*, estado:id_estado(nombre)').eq('organizacion_id', orgId).order('id_empleado');
+    const { data: orgUsers } = await supabase.rpc('get_usuarios_org');
+    
+    // #RF05: Enriquecer con datos de persona
+    const { data: pDatas } = await supabase.from('persona').select('*').eq('organizacion_id', orgId);
+    const pMap = {}; (pDatas || []).forEach(p => pMap[p.id_persona] = p);
 
-    const { data: orgUsers, error: rpcErr } = await supabase.rpc('get_usuarios_org');
-    if (rpcErr) console.warn('get_usuarios_org error:', rpcErr.message);
     const todosLosUsuarios = orgUsers || [];
 
     const lista = (emps || []).map(emp => {
       const uRow  = todosLosUsuarios.find(u => u.id_persona === emp.id_persona);
+      const pRow  = pMap[emp.id_persona];
       const depto = deptList.find(d => d.id_departamento === emp.departamento_id);
       return {
         id_empleado:     emp.id_empleado,
@@ -87,9 +98,13 @@ export default function Empleados() {
         organizacion_id: emp.organizacion_id,
         id_estado:       emp.id_estado,
         nombre_estado:   emp.estado?.nombre || 'Desconocido',
-        nombre:          uRow?.nombre   || 'Sin Nombre',
-        apellido:        uRow?.apellido || '',
-        email:           uRow?.email    || '',
+        nombre:          uRow?.nombre   || pRow?.nombre || 'Sin Nombre',
+        apellido:        uRow?.apellido || pRow?.apellido || '',
+        email:           uRow?.email    || pRow?.email || '',
+        telefono:        pRow?.telefono || '',
+        sexo:            pRow?.sexo || 'M',
+        fecha_nacimiento: pRow?.fecha_nacimiento || '',
+        direccion:       pRow?.direccion || '',
         nombre_depto:    depto?.nombre || 'Sin Depto',
       };
     });
@@ -107,19 +122,21 @@ export default function Empleados() {
     setUsuariosSinEmpleo(disponibles);
   };
 
-  // ── Abrir panel para crear ──
   const abrirCrear = () => {
     setEditingEmp(null);
-    setFormData({ id_persona: '', departamento_id: '' });
+    setFormData({ id_persona: '', departamento_id: '', sexo: 'M', fecha_nacimiento: '', telefono: '', direccion: '' });
     setPanelOpen(true);
   };
 
-  // ── Abrir panel para editar ──
   const abrirEditar = (emp) => {
     setEditingEmp(emp);
     setFormData({
       id_persona:      emp.persona_id,
       departamento_id: emp.departamento_id || '',
+      sexo:            emp.sexo || 'M',
+      fecha_nacimiento: emp.fecha_nacimiento || '',
+      telefono:        emp.telefono || '',
+      direccion:       emp.direccion || ''
     });
     setPanelOpen(true);
   };
@@ -127,52 +144,60 @@ export default function Empleados() {
   const cerrarPanel = () => {
     setPanelOpen(false);
     setEditingEmp(null);
-    setFormData({ id_persona: '', departamento_id: '' });
   };
 
-  // ── Guardar ─────────────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const { id_persona, departamento_id } = formData;
+    const { id_persona, departamento_id, fecha_nacimiento, sexo, telefono, direccion } = formData;
 
-    if (!departamento_id) {
-      return Swal.fire('Atención', 'Selecciona un departamento.', 'warning');
-    }
-    if (!isUpdating && !id_persona) {
-      return Swal.fire('Atención', 'Selecciona un usuario del sistema.', 'warning');
-    }
+    if (!departamento_id) return Swal.fire('Atención', 'Selecciona un departamento.', 'warning');
+    if (!isUpdating && !id_persona) return Swal.fire('Atención', 'Selecciona un usuario del sistema.', 'warning');
 
-    if (!adminOrgId) {
-      return Swal.fire('Error', 'No se ha detectado su organización de administración. Por favor, recargue la página o verifique su perfil.', 'error');
+    // Validación de edad (Branch-b feature)
+    if (fecha_nacimiento) {
+      const hoy = new Date();
+      const naci = new Date(fecha_nacimiento);
+      let edad = hoy.getFullYear() - naci.getFullYear();
+      const m = hoy.getMonth() - naci.getMonth();
+      if (m < 0 || (m === 0 && hoy.getDate() < naci.getDate())) edad--;
+      if (edad < 18) return Swal.fire('Error', 'El empleado debe ser mayor de 18 años.', 'error');
     }
 
     try {
       Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
 
+      // Actualizar datos de persona primero (sexo, fn, tel, dir)
+      const persona_id_target = isUpdating ? editingEmp.persona_id : id_persona;
+      const { error: pErr } = await supabase.from('persona').update({
+        sexo, fecha_nacimiento, telefono, direccion
+      }).eq('id_persona', persona_id_target);
+      if (pErr) throw pErr;
+
       const payload = {
         departamento_id: parseInt(departamento_id),
-        organizacion_id: adminOrgId,
+        organizacion_id: orgId,
       };
 
       if (isUpdating) {
-        const { error } = await supabase
-          .from('empleado')
-          .update(payload)
-          .eq('id_empleado', editingEmp.id_empleado);
+        const { error } = await supabase.from('empleado').update(payload).eq('id_empleado', editingEmp.id_empleado);
         if (error) throw error;
+        
         registrarLog({
           tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
-          descripcion: `Datos de ${editingEmp.nombre} actualizados.`,
+          descripcion: `Datos de ${editingEmp.nombre} actualizados (Asignación laboral).`,
           id_persona: currentPersonaId,
           organizacion_id: orgId,
           origen: 'Panel Web - Personal'
         });
-        Swal.fire('Actualizado', 'Datos laborales actualizados.', 'success');
+        Swal.fire('Actualizado', 'Datos laborales y personales actualizados.', 'success');
       } else {
-        const { error } = await supabase
-          .from('empleado')
-          .insert([{ id_persona, id_estado: ESTADO_USUARIO.ACTIVO, ...payload }]);
+        const { error } = await supabase.from('empleado').insert([{ 
+            id_persona, 
+            id_estado: ESTADO_USUARIO.ACTIVO, 
+            ...payload 
+        }]);
         if (error) throw error;
+
         registrarLog({
           tipo_nombre: EVENT_TYPES.NUEVO_EMPLEADO || EVENT_TYPES.CAMBIO_ESTADO,
           descripcion: `Usuario ${id_persona} asignado como empleado.`,
@@ -184,7 +209,7 @@ export default function Empleados() {
       }
 
       cerrarPanel();
-      await cargarEmpleados(departamentos);
+      loadData();
     } catch (err) {
       console.error(err);
       Swal.fire('Error', err.message, 'error');
@@ -210,15 +235,9 @@ export default function Empleados() {
         origen: 'Panel Web - Personal'
       });
       
-      Swal.fire({
-        title: 'Estado Actualizado',
-        icon: 'success',
-        timer: 1500,
-        showConfirmButton: false
-      });
-
+      Swal.fire({ title: 'Estado Actualizado', icon: 'success', timer: 1500, showConfirmButton: false });
       setChangingStatusFor(null);
-      await cargarEmpleados(departamentos);
+      loadData();
     } catch (err) {
       console.error(err);
       Swal.fire('Error', 'No se pudo cambiar el estado.', 'error');
@@ -227,59 +246,44 @@ export default function Empleados() {
     }
   };
 
-  // ── Helpers ──────────────────────────────────────────────────────────────────
   const filtrados = empleados.filter(e =>
     `${e.nombre} ${e.apellido} ${e.email}`.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // ════════════════════════════════════════════════════════════════════════════
   return (
     <Layout>
-      {/* ── Header ── */}
       <header className="mb-6 flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
             <FaUsers className="text-purple-600" /> Gestión de Empleados
           </h2>
           <p className="text-gray-500 text-sm mt-1">
-            Convierte usuarios del sistema en empleados y asígnales rol y departamento.
+            Convierte usuarios en empleados, valida mayoría de edad y asigna departamentos.
           </p>
         </div>
         <div className="flex gap-3">
-          <button
-            onClick={() => navigate('/usuarios')}
-            className="flex items-center gap-2 text-gray-600 bg-gray-100 hover:bg-gray-200 py-2 px-4 rounded-lg font-medium transition"
-          >
+          <button onClick={() => navigate('/usuarios')} className="flex items-center gap-2 text-gray-600 bg-gray-100 hover:bg-gray-200 py-2 px-4 rounded-lg font-medium transition">
             <FaArrowLeft /> Usuarios
           </button>
           {canCreate && (
-            <button
-              onClick={abrirCrear}
-              className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg shadow transition font-semibold"
-            >
+            <button onClick={abrirCrear} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg shadow transition font-semibold">
               <FaPlus /> Agregar Empleado
             </button>
           )}
         </div>
       </header>
 
-      {/* ── Barra organización del admin ── */}
-      {adminOrgNombre && (
+      {orgNombre && (
         <div className="mb-5 flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-xl px-4 py-2.5 w-fit">
           <FaBuilding className="text-purple-500" />
-          <span className="text-sm font-semibold text-purple-700">Organización activa:</span>
-          <span className="text-sm text-purple-900 font-bold">{adminOrgNombre}</span>
-          <span className="text-xs text-purple-400 ml-1">(los empleados se asignanaqui por defecto)</span>
+          <span className="text-sm font-semibold text-purple-700">Organización:</span>
+          <span className="text-sm text-purple-900 font-bold">{orgNombre}</span>
         </div>
       )}
 
-      {/* Contenedor principal con panel lateral */}
-      <div className="flex gap-6">
-
-        {/* ── Tabla de empleados ── */}
+      <div className="flex flex-col lg:flex-row gap-6">
         <div className="flex-1 min-w-0">
           <div className="bg-white rounded-2xl shadow border border-gray-100 overflow-hidden">
-            {/* Barra de búsqueda */}
             <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
               <div className="relative w-72">
                 <FaSearch className="absolute left-3 top-3 text-gray-400" />
@@ -291,129 +295,65 @@ export default function Empleados() {
                   onChange={e => setSearchTerm(e.target.value)}
                 />
               </div>
-              <span className="text-xs text-gray-400 font-medium">
-                {filtrados.length} empleado{filtrados.length !== 1 ? 's' : ''}
-              </span>
+              <span className="text-xs text-gray-400 font-medium">{filtrados.length} empleado(s)</span>
             </div>
 
-            {loading ? (
+            {loading && !changingStatusFor ? (
               <div className="text-center py-16 text-gray-400">
                 <div className="animate-spin inline-block w-6 h-6 border-4 border-purple-400 border-t-transparent rounded-full mb-3" />
-                <p className="text-sm">Cargando empleados...</p>
+                <p className="text-sm">Cargando...</p>
               </div>
             ) : filtrados.length === 0 ? (
               <div className="text-center py-16 text-gray-400">
                 <FaUserTie className="mx-auto text-4xl mb-3 opacity-20" />
                 <p className="text-sm">No hay empleados registrados.</p>
-                {canCreate && (
-                  <button onClick={abrirCrear} className="mt-4 text-purple-600 text-sm font-semibold hover:underline">
-                    + Agregar el primer empleado
-                  </button>
-                )}
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-100 text-base">
-                  <thead className="bg-gray-50 text-sm font-bold text-gray-500 uppercase">
+                  <thead className="bg-gray-50 text-xs font-black text-gray-400 uppercase tracking-widest">
                     <tr>
-                      <th className="px-5 py-3 text-left">Empleado</th>
-                      <th className="px-5 py-3 text-left">Contacto</th>
-                      <th className="px-5 py-3 text-left">Departamento</th>
-                      <th className="px-5 py-3 text-center">Estado</th>
-                      <th className="px-5 py-3 text-center">Acciones</th>
+                      <th className="px-5 py-4 text-left">Empleado</th>
+                      <th className="px-5 py-4 text-left">Departamento</th>
+                      <th className="px-5 py-4 text-center">Estado</th>
+                      <th className="px-5 py-4 text-center">Acciones</th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-50">
+                  <tbody className="bg-white divide-y divide-gray-50 text-sm font-medium">
                     {filtrados.map(emp => (
-                      <tr
-                        key={emp.id_empleado}
-                        className={`hover:bg-purple-50 transition-all cursor-pointer ${editingEmp?.id_empleado === emp.id_empleado ? 'bg-purple-50 ring-1 ring-inset ring-purple-300' : ''} ${emp.nombre_estado.toLowerCase() !== 'activo' ? 'opacity-60 grayscale-[0.3]' : ''}`}
-                        onClick={() => canEdit && abrirEditar(emp)}
-                      >
+                      <tr key={emp.id_empleado} className="hover:bg-purple-50/50 transition-all">
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="bg-gradient-to-br from-purple-500 to-purple-700 text-white w-10 h-10 rounded-full flex items-center justify-center font-bold text-base shadow-sm">
+                            <div className="bg-purple-600 text-white w-9 h-9 rounded-xl flex items-center justify-center font-bold shadow-sm">
                               {emp.nombre.charAt(0)}{emp.apellido.charAt(0)}
                             </div>
                             <div>
-                              <p className="font-bold text-gray-900 text-base">{emp.nombre} {emp.apellido}</p>
+                              <p className="font-bold text-gray-800">{emp.nombre} {emp.apellido}</p>
+                              <p className="text-[10px] text-gray-400">{emp.email || 'Sin email'}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-5 py-4 text-gray-500 text-sm">
-                          <div className="flex flex-col gap-0.5">
-                            <span>{emp.email || '—'}</span>
-                          </div>
+                        <td className="px-5 py-4 text-gray-500">
+                           <span className="bg-gray-100 px-2 py-1 rounded-lg text-xs font-bold text-gray-600">{emp.nombre_depto}</span>
                         </td>
-                        <td className="px-5 py-4 text-gray-600 text-sm">
-                          <span className="flex items-center gap-1">
-                            <FaSitemap size={12} className="text-gray-400" />
-                            {emp.nombre_depto}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-center" onClick={ev => ev.stopPropagation()}>
-                           {changingStatusFor === emp.id_empleado ? (
-                              <div className="flex items-center justify-center gap-1 animate-fadeIn">
-                                <select
-                                  value={newStatusChoice}
-                                  onChange={(e) => setNewStatusChoice(e.target.value)}
-                                  className="border border-purple-300 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-purple-200 focus:border-purple-500 outline-none transition-all cursor-pointer bg-white"
-                                >
-                                  {catEstados.map(s => (
-                                    <option key={s.id_estado} value={s.id_estado}>{s.nombre}</option>
-                                  ))}
-                                </select>
-                                <button 
-                                  onClick={() => handleConfirmarCambioEstado(emp)}
-                                  className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm"
-                                  title="Confirmar"
-                                >
-                                  {loading ? <FaSync size={12} className="animate-spin" /> : <FaCheck size={12} />}
-                                </button>
-                                <button 
-                                  onClick={() => setChangingStatusFor(null)}
-                                  className="p-2 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition"
-                                  title="Cancelar"
-                                >
-                                  <FaTimes size={12} />
-                                </button>
-                              </div>
-                           ) : (
-                             <div
-                                className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-                                  emp.nombre_estado.toLowerCase() === 'activo' ? 'bg-green-100 text-green-700' :
-                                  emp.nombre_estado.toLowerCase().includes('inactivo') ? 'bg-gray-100 text-gray-600' :
-                                  'bg-red-100 text-red-700'
-                                }`}
-                             >
-                                {emp.nombre_estado}
-                             </div>
-                           )}
-                        </td>
-                        <td className="px-5 py-4 text-center" onClick={ev => ev.stopPropagation()}>
-                          <div className="flex gap-1.5 justify-center">
-                            {canEdit && (
-                              <button
-                                onClick={() => abrirEditar(emp)}
-                                className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition"
-                                title="Editar asignación"
-                              >
-                                <FaEdit size={13} />
-                              </button>
+                        <td className="px-5 py-4 text-center">
+                            {changingStatusFor === emp.id_empleado ? (
+                                <div className="flex items-center justify-center gap-1">
+                                    <select value={newStatusChoice} onChange={e => setNewStatusChoice(e.target.value)} className="border rounded px-2 py-1 text-xs">
+                                        {catEstados.map(s => <option key={s.id_estado} value={s.id_estado}>{s.nombre}</option>)}
+                                    </select>
+                                    <button onClick={() => handleConfirmarCambioEstado(emp)} className="p-1 bg-green-500 text-white rounded"><FaCheck size={10}/></button>
+                                    <button onClick={() => setChangingStatusFor(null)} className="p-1 bg-gray-300 text-gray-600 rounded"><FaTimes size={10}/></button>
+                                </div>
+                            ) : (
+                                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${emp.nombre_estado.toLowerCase() === 'activo' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                    {emp.nombre_estado}
+                                </span>
                             )}
-                            {canEdit && (
-                              <button
-                                onClick={() => {
-                                  setChangingStatusFor(emp.id_empleado);
-                                  setNewStatusChoice(emp.id_estado.toString());
-                                }}
-                                className="px-3 py-2 rounded-lg border border-purple-200 text-purple-600 hover:bg-purple-50 text-xs font-bold transition flex items-center gap-2"
-                                title="Cambiar Estado"
-                              >
-                                <FaSync size={12} /> <span>Estado</span>
-                              </button>
-                            )}
-                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-center flex justify-center gap-3">
+                           {canEdit && <button onClick={() => abrirEditar(emp)} className="text-blue-500 hover:scale-110 transition"><FaEdit size={16}/></button>}
+                           {canEdit && <button onClick={() => { setChangingStatusFor(emp.id_empleado); setNewStatusChoice(emp.id_estado.toString()); }} className="text-purple-500 hover:scale-110 transition"><FaSync size={16}/></button>}
                         </td>
                       </tr>
                     ))}
@@ -424,124 +364,55 @@ export default function Empleados() {
           </div>
         </div>
 
-        {/* ── Panel lateral ── */}
         {panelOpen && (
-          <aside className="w-[340px] flex-shrink-0">
-            <div className="bg-white rounded-2xl shadow-xl border border-purple-100 overflow-hidden">
-              {/* Cabecera del panel */}
-              <div className="bg-gradient-to-r from-purple-600 to-purple-800 px-5 py-4 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-white">
-                  <FaUserCheck size={16} />
-                  <h3 className="font-bold text-base">
-                    {isUpdating ? 'Editar Asignación' : 'Nuevo Empleado'}
-                  </h3>
-                </div>
-                <button onClick={cerrarPanel} className="text-purple-200 hover:text-white transition">
-                  <FaTimes />
-                </button>
+          <aside className="w-full lg:w-[350px] flex-shrink-0 animate-in slide-in-from-right-4 fade-in">
+            <div className="bg-white rounded-2xl shadow-xl border border-purple-100 overflow-hidden sticky top-6">
+              <div className="bg-purple-600 px-5 py-4 flex items-center justify-between text-white font-bold">
+                <span className="flex items-center gap-2"><FaUserCheck /> {isUpdating ? 'Editar Ficha' : 'Nueva Asignación'}</span>
+                <button onClick={cerrarPanel}><FaTimes /></button>
               </div>
-
-              <form onSubmit={handleSubmit} className="p-5 space-y-5">
-
-                {/* ── Selección de usuario (solo en modo crear) ── */}
-                {!isUpdating ? (
+              <form onSubmit={handleSubmit} className="p-5 space-y-4">
+                {!isUpdating && (
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">
-                      👤 Usuario del sistema *
-                    </label>
-                    {usuariosSinEmpleo.length === 0 ? (
-                      <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                        Todos los usuarios ya tienen ficha de empleado, o los datos no cargaron. Verifica las políticas RLS en Supabase.
-                      </p>
-                    ) : (
-                      <select
-                        className="w-full border-2 border-purple-200 focus:border-purple-500 rounded-xl p-2.5 text-sm bg-white transition"
-                        value={formData.id_persona}
-                        onChange={e => setFormData(f => ({ ...f, id_persona: e.target.value }))}
-                        required
-                      >
-                        <option value="">— Seleccionar usuario —</option>
-                        {usuariosSinEmpleo.map(u => (
-                          <option key={u.id_persona} value={u.id_persona}>
-                            {u.nombreCompleto}{u.email ? ` (${u.email})` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    <p className="text-[10px] text-gray-400 mt-1">
-                      Solo se muestran usuarios que aún no están registrados como empleados.
-                    </p>
-                  </div>
-                ) : (
-                  /* Modo edición: mostrar nombre como badge */
-                  <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 flex items-center gap-3">
-                    <div className="bg-purple-600 text-white w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm">
-                      {editingEmp.nombre.charAt(0)}{editingEmp.apellido.charAt(0)}
-                    </div>
-                    <div>
-                      <p className="font-bold text-purple-900 text-sm">{editingEmp.nombre} {editingEmp.apellido}</p>
-                      <p className="text-xs text-purple-500">{editingEmp.email}</p>
-                    </div>
+                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Usuario Sistema *</label>
+                    <select className="w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-purple-200" value={formData.id_persona} onChange={e => setFormData({...formData, id_persona: e.target.value})} required>
+                      <option value="">— Elegir Usuario —</option>
+                      {usuariosSinEmpleo.map(u => <option key={u.id_persona} value={u.id_persona}>{u.nombreCompleto}</option>)}
+                    </select>
                   </div>
                 )}
-
-                <hr className="border-dashed border-purple-100" />
-
-                {/* ── Departamento ── */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">
-                    🏢 Departamento *
-                  </label>
-                  <select
-                    className="w-full border-2 border-gray-200 focus:border-purple-400 rounded-xl p-2.5 text-sm bg-white transition"
-                    value={formData.departamento_id}
-                    onChange={e => setFormData(f => ({ ...f, departamento_id: e.target.value }))}
-                    required
-                  >
-                    <option value="">— Seleccionar departamento —</option>
-                    {departamentos.map(d => (
-                      <option key={d.id_departamento} value={d.id_departamento}>
-                        {d.nombre}
-                      </option>
-                    ))}
+                  <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Departamento *</label>
+                  <select className="w-full border rounded-xl p-2.5 text-sm outline-none focus:ring-2 focus:ring-purple-200" value={formData.departamento_id} onChange={e => setFormData({...formData, departamento_id: e.target.value})} required>
+                    <option value="">— Seleccionar —</option>
+                    {departamentos.map(d => <option key={d.id_departamento} value={d.id_departamento}>{d.nombre}</option>)}
                   </select>
                 </div>
-
-                {/* ── Organización (solo lectura / auto) ── */}
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">
-                    🌐 Organización
-                  </label>
-                  {adminOrgNombre ? (
-                    <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
-                      <FaCheck className="text-green-500 flex-shrink-0" size={12} />
-                      <span className="text-sm font-semibold text-green-800">{adminOrgNombre}</span>
-                      <span className="text-[10px] text-green-500 ml-auto">Automático</span>
+                <hr className="border-gray-50"/>
+                <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Sexo</label>
+                        <select className="w-full border rounded-xl p-2.5 text-sm outline-none" value={formData.sexo} onChange={e => setFormData({...formData, sexo: e.target.value})}>
+                            <option value="M">Masculino</option>
+                            <option value="F">Femenino</option>
+                        </select>
                     </div>
-                  ) : (
-                    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                      ⚠️ No se detectó organización del administrador. Verifica tu ficha de empleado.
-                    </p>
-                  )}
+                    <div>
+                        <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Nacimiento (18+)</label>
+                        <input type="date" className="w-full border rounded-xl p-2 text-sm" value={formData.fecha_nacimiento} onChange={e => setFormData({...formData, fecha_nacimiento: e.target.value})} />
+                    </div>
                 </div>
-
-                {/* ── Botones ── */}
-                <div className="flex gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={cerrarPanel}
-                    className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl text-sm font-semibold transition"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow transition flex items-center justify-center gap-2"
-                  >
-                    <FaCheck size={12} />
-                    {isUpdating ? 'Actualizar' : 'Asignar como Empleado'}
-                  </button>
+                <div>
+                   <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Teléfono</label>
+                   <input type="text" className="w-full border rounded-xl p-2.5 text-sm" placeholder="809-xxx-xxxx" value={formData.telefono} onChange={e => setFormData({...formData, telefono: e.target.value})} />
                 </div>
+                <div>
+                   <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Dirección</label>
+                   <textarea className="w-full border rounded-xl p-2.5 text-sm h-20 resize-none" value={formData.direccion} onChange={e => setFormData({...formData, direccion: e.target.value})} />
+                </div>
+                <button type="submit" className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-xl font-bold transition shadow-md">
+                    {isUpdating ? 'ACTUALIZAR DATOS' : 'ASIGNAR COMO EMPLEADO'}
+                </button>
               </form>
             </div>
           </aside>

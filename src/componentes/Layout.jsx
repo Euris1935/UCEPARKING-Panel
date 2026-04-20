@@ -18,29 +18,32 @@ export default function Layout({ children }) {
   const firstLoad = useRef(true);
 
   useEffect(() => {
-    loadMonitorData();
+    if (orgId) {
+      loadMonitorData();
 
-    const channel = supabase
-      .channel('global_monitor')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'plaza' }, (payload) => {
-          loadMonitorData();
-          // Disparar sonido si la plaza estaba LIBRE (o null) y ahora NO lo está
-          const idLibre = 1; // Fallback común, pero se ajusta dinámicamente si es posible
-          const eraLibre = !payload.old.id_estado || payload.old.id_estado === idLibre;
-          const ahoraNoEsLibre = payload.new.id_estado && payload.new.id_estado !== idLibre;
-          
-          if (eraLibre && ahoraNoEsLibre) {
-              playBeep();
-          }
-      })
-      .subscribe();
+      const channel = supabase
+        .channel('global_monitor')
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'plaza' }, (payload) => {
+            loadMonitorData();
+            // Disparar sonido si la plaza estaba LIBRE (o null) y ahora NO lo está
+            const idLibre = 1; 
+            const eraLibre = !payload.old.id_estado || payload.old.id_estado === idLibre;
+            const ahoraNoEsLibre = payload.new.id_estado && payload.new.id_estado !== idLibre;
+            
+            if (eraLibre && ahoraNoEsLibre) {
+                playBeep();
+            }
+        })
+        .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
-  }, []);
+      return () => { supabase.removeChannel(channel); };
+    }
+  }, [orgId]);
 
   const loadMonitorData = async () => {
+    if (!orgId) return;
     try {
-      // 1. Obtener estados de plazas de la tabla correcta (estado_plaza)
+      // 1. Obtener estados de plazas y plazas filtradas por organización
       const { data: estados } = await supabase.from('estado_plaza').select('id_estado, nombre');
       const { data: rawPlazas } = await supabase
         .from('plaza')
@@ -49,7 +52,8 @@ export default function Layout({ children }) {
             zona:id_zona(
                 estado_zona(nombre)
             )
-        `);
+        `)
+        .eq('organizacion_id', orgId);
 
       if (!estados || !rawPlazas) return;
 
@@ -89,18 +93,18 @@ export default function Layout({ children }) {
 
   // Monitor de alerta de capacidad
   useEffect(() => {
-    if (stats.total === 0) return;
+    if (stats.total === 0 || !orgId) return;
     const ocupadasTotales = stats.ocupadas + stats.reservadas + (stats.asignadas || 0);
     const pct = Math.round((ocupadasTotales / stats.total) * 100);
     const savedSettings = localStorage.getItem('appSettings');
     const umbral = savedSettings ? parseInt(JSON.parse(savedSettings).alertaCapacidad) : 90;
 
     if (pct >= umbral) {
-      setAlertaBanner({ pct, umbral });
+      setAlertaBanner({ pct, umbral, libres: stats.libres });
       if (!alertaYaEnviada.current) {
         alertaYaEnviada.current = true;
         supabase.from('notificacion').insert([{
-          contenido: `ALERTA GLOBAL: El parqueo alcanzó el ${pct}% de ocupación.`,
+          contenido: `⚠️ ALERTA DE CAPACIDAD: el parqueo alcanzó el ${pct}% de ocupación (umbral: ${umbral}%). Espacios libres: ${stats.libres}.`,
           leida: false,
           organizacion_id: orgId
         }]).then(({ error }) => { if (error) console.warn('Error notif global:', error.message); });
@@ -121,16 +125,18 @@ export default function Layout({ children }) {
           <div className="mb-6 flex items-center gap-4 bg-red-600 text-white px-5 py-3 rounded-xl shadow-lg animate-pulse sticky top-0 z-50">
             <FaBell className="text-2xl shrink-0" />
             <div className="flex-1">
-              <p className="font-bold text-sm">ALERTA DE CAPACIDAD — Parqueo al {alertaBanner.pct}%</p>
-              <p className="text-xs opacity-90">Umbral configurado: {alertaBanner.umbral}%. Espacios libres: {stats.libres}</p>
+              <p className="font-bold text-sm">⚠️ ALERTA DE CAPACIDAD — Parqueo al {alertaBanner.pct}%</p>
+              <p className="text-xs opacity-90">
+                Se superó el umbral configurado del {alertaBanner.umbral}%.
+                Solo quedan <strong>{alertaBanner.libres}</strong> plaza(s) libre(s).
+                Notificación registrada automáticamente.
+              </p>
             </div>
             <button onClick={() => setAlertaBanner(null)} className="text-white/70 hover:text-white text-lg font-bold px-2">✕</button>
           </div>
         )}
-
         {children}
       </main>
     </div>
   );
 }
-  
