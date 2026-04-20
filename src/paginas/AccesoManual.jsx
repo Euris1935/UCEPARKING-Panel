@@ -188,7 +188,7 @@ export default function AccesoManual() {
         }
       } catch (_) { }
 
-      const nombrePuerta = entradaForm.puertaDestino === 'vip' ? 'VIP' : 'Principal';
+      const nombrePuerta = entradaForm.puertaDestino === 'vip' ? 'VIP' : (entradaForm.puertaDestino === 'exit' ? 'Salida' : 'Principal');
       Swal.fire('Registro Exitoso', `Entrada registrada para ${vehiculoSelect.placa}. Barrera ${nombrePuerta} abriéndose.`, 'success');
       setEntradaForm({ vehiculo_id: '', id_plaza: '', puertaDestino: 'main' });
       setBusquedaVehiculo('');
@@ -202,21 +202,27 @@ export default function AccesoManual() {
 
   const handleRegistrarSalida = async (acc) => {
     const plazaEncontrada = todasPlazas.find(p => p.id_plaza === acc.id_plaza);
-    const result = await Swal.fire({
+    const { value: barreraSalida } = await Swal.fire({
       title: '¿Registrar Salida Manual?',
-      html: `Vehículo: <b>${acc.vehiculo?.placa}</b><br/>Plaza: <b>${plazaEncontrada?.numero_plaza || 'No asig.'}</b><br/><br/><span class="text-sm text-gray-500">Seleccione la barrera a abrir:</span>`,
+      html: `Vehículo: <b>${acc.vehiculo?.placa}</b><br/>Plaza: <b>${plazaEncontrada?.numero_plaza || 'No asig.'}</b><br/><br/>Seleccione la barrera a abrir:`,
       icon: 'question',
+      input: 'radio',
+      inputOptions: {
+        'main': 'Barrera Principal',
+        'vip': 'Barrera VIP',
+        'exit': 'Barrera Salida'
+      },
+      inputValidator: (value) => {
+        if (!value) return '¡Debes seleccionar una barrera!';
+      },
       showCancelButton: true,
-      showDenyButton: true,
-      confirmButtonColor: '#16a34a',
-      denyButtonColor: '#9333ea',
-      confirmButtonText: 'Abrir Principal',
-      denyButtonText: 'Abrir VIP',
-      cancelButtonText: 'Cancelar'
+      confirmButtonText: 'Confirmar Salida',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#3085d6',
+      cancelButtonColor: '#d33'
     });
-    if (!result.isConfirmed && !result.isDenied) return;
 
-    const barreraSalida = result.isConfirmed ? 'main' : 'vip';
+    if (!barreraSalida) return;
 
     try {
       const ahora = new Date().toISOString();
@@ -259,7 +265,7 @@ export default function AccesoManual() {
         }
       } catch (_) { }
 
-      const nombrePuertaSalida = barreraSalida === 'vip' ? 'VIP' : 'Principal';
+      const nombrePuertaSalida = barreraSalida === 'vip' ? 'VIP' : (barreraSalida === 'exit' ? 'Salida' : 'Principal');
       Swal.fire('Salida Registrada', `La plaza quedó libre y la barrera ${nombrePuertaSalida} se está abriendo.`, 'success');
       loadData();
     } catch (err) {
@@ -336,6 +342,12 @@ export default function AccesoManual() {
             className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
           >
             PUERTA VIP
+          </button>
+          <button
+            onClick={() => apiControlBarrera('open-exit', '¿Abrir Barrera de Salida?')}
+            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2"
+          >
+            PUERTA SALIDA
           </button>
         </div>
       </header>
@@ -455,7 +467,8 @@ export default function AccesoManual() {
                 <SearchableSelect
                   options={[
                     { value: 'main', label: 'Barrera Principal' },
-                    { value: 'vip', label: 'Barrera VIP' }
+                    { value: 'vip', label: 'Barrera VIP' },
+                    { value: 'exit', label: 'Barrera Salida' }
                   ]}
                   value={entradaForm.puertaDestino}
                   onChange={(val) => setEntradaForm({ ...entradaForm, puertaDestino: val })}

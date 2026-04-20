@@ -1,0 +1,3 @@
+To https://github.com/Amauris06/UCEPARKING-Panel.git
+ ! [remote rejected] javier-ultimas-actualizaciones -> javier-ultimas-actualizaciones (permission denied)
+error: failed to push some refs to 'https://github.com/Amauris06/UCEPARKING-Panel.git'
