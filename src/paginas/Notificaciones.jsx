@@ -5,6 +5,7 @@ import Swal from 'sweetalert2';
 import { FaBell, FaCheckDouble, FaTrash, FaPlus, FaEnvelopeOpen, FaSearch, FaSync, FaTimesCircle } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
 
 /* Colores de badge según nombre del tipo */
 const getBadgeColor = (tipo) => {
@@ -39,64 +40,57 @@ export default function Notificaciones() {
 
   /* ── Init ── */
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data } = await supabase
-          .from('usuario').select('id_persona').eq('id', user.id).single();
-        if (data) setCurrentPersonaId(data.id_persona);
-      }
-    };
-    init();
-    loadAll();
-
-    const channel = supabase
-      .channel('rt_notifs')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notificacion' }, loadAll)
-      .subscribe();
-
-    return () => supabase.removeChannel(channel);
-  }, []);
+    if (orgId) {
+      loadAll();
+      const channel = supabase
+        .channel('rt_notifs')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'notificacion' }, loadAll)
+        .subscribe();
+      return () => supabase.removeChannel(channel);
+    }
+  }, [orgId]);
 
   /* ── Cargar datos ── */
   const loadAll = async () => {
     setIsRefreshing(true);
     try {
-      /* Notificaciones: join personas (destinatario) y tipo_notificacion */
-      const { data: nData, error: nErr } = await supabase
-        .from('notificacion')
-        .select(`
-          id_notificacion,
-          contenido,
-          leida,
-          created_at,
-          id_persona,
-          id_tipo,
+      const [
+        { data: nData, error: nErr },
+        { data: tData },
+        { data: uData, error: uErr }
+      ] = await Promise.all([
+        supabase.from('notificacion').select(`
+          id_notificacion, contenido, leida, created_at, id_persona, id_tipo,
           persona ( nombre, apellido ),
-          tipo ( id, nombre )
-        `)
-        .order('created_at', { ascending: false });
+          tipo_notificacion ( id_tipo, nombre )
+        `).eq('organizacion_id', orgId).order('created_at', { ascending: false }),
+        supabase.from('tipo_notificacion').select('id_tipo, nombre').order('nombre'),
+        supabase.rpc('get_usuarios_org')
+      ]);
 
-      if (nErr) {
-        console.error('Error cargando notificaciones:', nErr.message);
-        Swal.fire('Error Interno BD', 'No se pudieron cargar las notificaciones: ' + nErr.message + ' (' + nErr.code + ')', 'error');
+      if (nErr) throw nErr;
+      
+      setNotifs((nData || []).map(n => ({
+        ...n,
+        tipo: { id: n.tipo_notificacion?.id_tipo, nombre: n.tipo_notificacion?.nombre }
+      })));
+
+      setTiposNotif(tData?.map(t => ({ id: t.id_tipo, nombre: t.nombre })) || []);
+
+      if (uErr) {
+        const { data: fData } = await supabase.from('usuario').select('id_persona, persona(nombre, apellido)').eq('organizacion_id', orgId);
+        setPersonasList((fData || []).map(u => ({
+           id_persona: u.id_persona,
+           nombre: u.persona?.nombre || 'N/D',
+           apellido: u.persona?.apellido || ''
+        })));
+      } else {
+        setPersonasList((uData || []).map(u => ({
+          id_persona: u.id_persona || u.persona_id,
+          nombre: u.nombre,
+          apellido: u.apellido
+        })).sort((a, b) => a.nombre.localeCompare(b.nombre)));
       }
-      setNotifs(nData || []);
-
-      /* Tipos de notificación desde la BD (Catálogo unificado) */
-      const { data: tData } = await supabase
-        .from('tipo')
-        .select('id, nombre')
-        .eq('contexto', 'notificacion')
-        .order('nombre');
-      setTiposNotif(tData || []);
-
-      /* Personas disponibles como destinatarios */
-      const { data: pData } = await supabase
-        .from('persona')
-        .select('id_persona, nombre, apellido')
-        .order('nombre');
-      setPersonasList(pData || []);
 
     } catch (e) {
       console.error('Error notificaciones:', e.message);
@@ -107,20 +101,15 @@ export default function Notificaciones() {
     }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion) => {
+  const handleRegistrarLog = async (tipo_nombre, descripcion) => {
     if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Alertas').maybeSingle();
-      await supabase.from('evento').insert([{ 
-        fecha_hora: new Date().toISOString(), 
-        descripcion: descripcion, 
-        id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
-        id_origen_evento: oe?.id_origen || null,
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
+    await registrarLog({
+      tipo_nombre,
+      descripcion,
+      id_persona: currentPersonaId,
+      organizacion_id: orgId,
+      origen: 'Panel Web - Notificaciones'
+    });
   };
 
   /* ── Cuando cambia id_tipo, sincroniza el campo Tipo (texto) ── */
@@ -153,7 +142,7 @@ export default function Notificaciones() {
       Swal.fire('Enviada', 'Notificación creada correctamente.', 'success');
       const p = personasList.find(p => p.id_persona === form.id_persona);
       const t = tiposNotif.find(t => t.id === parseInt(form.id_tipo));
-      registrarLog('Alerta', `Envío de notificación (${t?.nombre}): ${form.Contenido.substring(0, 30)}... ${p ? 'a ' + p.nombre : 'a todos'}`);
+      await handleRegistrarLog(EVENT_TYPES.ALERTA, `Envío de notificación (${t?.nombre}): ${form.Contenido.substring(0, 30)}... ${p ? 'a ' + p.nombre : 'a todos'}`);
       
       setShowModal(false);
       setForm({ Tipo: '', Contenido: '', id_persona: '', id_tipo: '' });
@@ -211,7 +200,7 @@ export default function Notificaciones() {
         Swal.fire('Error', 'No se pudo eliminar: ' + error.message, 'error');
     } else {
         const n = notifs.find(n => n.id_notificacion === id);
-        registrarLog('Alerta', `Notificación eliminada: ${n?.contenido?.substring(0, 30)}...`);
+        await handleRegistrarLog(EVENT_TYPES.ALERTA, `Notificación eliminada: ${n?.contenido?.substring(0, 30)}...`);
         loadAll();
     }
   };

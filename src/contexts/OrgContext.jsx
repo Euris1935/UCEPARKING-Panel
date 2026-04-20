@@ -3,65 +3,71 @@ import { supabase } from '../supabaseClient';
 
 const OrgContext = createContext(null);
 
-export function OrgProvider({ children }) {
+export function OrgProvider({ children, user }) {
   const [orgId, setOrgId] = useState(null);
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setLoading(false); return; }
-
-      // 1. Fetch user to id_persona mapping
-      const { data: usr } = await supabase
-        .from('usuario')
-        .select('id_persona')
-        .eq('id', user.id)
-        .single();
-        
-      if (!usr) { 
-        console.warn('OrgContext: No persona found for user', user.id);
+      if (!user) { 
+        setOrgId(null);
+        setPlan(null);
         setLoading(false); 
         return; 
       }
 
-      console.log('OrgContext: Persona found', usr.id_persona);
-
-      // 2. Fetch the actual organization for that persona
-      const { data: emp } = await supabase
-        .from('empleado')
-        .select('organizacion_id')
-        .eq('id_persona', usr.id_persona)
-        .single();
-
-      if (emp && emp.organizacion_id) {
-        console.log('OrgContext: Org found', emp.organizacion_id);
-        setOrgId(emp.organizacion_id);
-        const { data: sus } = await supabase
-          .from('suscripcion')
-          .select('*, plan(*)')
-          .eq('organizacion_id', emp.organizacion_id)
-          .in('estado', ['Activa','Trial'])
+      setLoading(true);
+      try {
+        // 1. Obtener organización directamente del perfil del usuario (pasado por prop)
+        const { data: usr, error: usrErr } = await supabase
+          .from('usuario')
+          .select('id_persona, organizacion_id')
+          .eq('id', user.id)
           .maybeSingle();
-        // sus.plan corresponds to the joined table
-        if (sus && sus.plan) {
-          setPlan(sus.plan);
+
+        if (usrErr) {
+          console.error('OrgContext: Error fetching user record:', usrErr);
+          setError('Error al conectar con el perfil de usuario.');
+        } else if (!usr) {
+          console.warn('OrgContext: No records found in "usuario" table for UID:', user.id);
+          setError('No se encontró un registro de usuario vinculado a esta cuenta.');
+        } else {
+          console.log('OrgContext: User metadata found:', usr);
+          setError(null);
         }
-      } else {
-        console.warn('OrgContext: No empleado record found for Persona. Using fallback organization.');
-        const { data: fallbackOrg } = await supabase.from('organizacion').select('id_organizacion').limit(1).single();
-        if (fallbackOrg && fallbackOrg.id_organizacion) {
-           setOrgId(fallbackOrg.id_organizacion);
+
+        const effectiveOrgId = usr?.organizacion_id || null;
+        
+        if (effectiveOrgId) {
+          setOrgId(effectiveOrgId);
+          
+          // 2. Cargar detalles de suscripción y plan activo
+          const { data: sus, error: susErr } = await supabase
+            .from('suscripcion')
+            .select('*, plan(*), estado_suscripcion!inner(nombre)')
+            .eq('organizacion_id', effectiveOrgId)
+            .in('estado_suscripcion.nombre', ['Activa', 'Trial'])
+            .maybeSingle();
+
+          if (susErr) {
+            console.error('OrgContext: Error fetching subscription:', susErr);
+          } else if (sus?.plan) {
+            setPlan(sus.plan);
+          }
         }
+      } catch (err) {
+        console.error('OrgContext Error:', err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
     load();
-  }, []);
+  }, [user?.id]);
 
   return (
-    <OrgContext.Provider value={{ orgId, plan, loadingOrg: loading }}>
+    <OrgContext.Provider value={{ orgId, plan, loadingOrg: loading, orgError: error }}>
       {children}
     </OrgContext.Provider>
   );

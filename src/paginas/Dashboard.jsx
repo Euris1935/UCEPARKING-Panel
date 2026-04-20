@@ -5,6 +5,7 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaBell, FaUserTie, FaUsers } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
+import { ESTADO_PLAZA, ESTADO_RESERVA, TIPO_NOTIF } from '../lib/constants';
 
 export default function Dashboard() {
   const { orgId } = useOrg();
@@ -22,70 +23,156 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadDashboardData();
+    if (orgId) {
+      loadDashboardData();
 
-    const channel = supabase
-      .channel('dashboard_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadDashboardData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reserva' }, () => loadDashboardData())
-      .subscribe();
+      const channel = supabase
+        .channel('dashboard_realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadDashboardData())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reserva' }, () => loadDashboardData())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, () => loadDashboardData())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket' }, () => loadDashboardData())
+        .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
-  }, []);
+      return () => { supabase.removeChannel(channel); };
+    }
+  }, [orgId]);
 
   const loadDashboardData = async () => {
+    if (!orgId) return;
     try {
-      // 1. Obtener catálogos de estados (contexto plaza)
-      const { data: estados } = await supabase.from('estado').select('*').eq('contexto', 'plaza');
+      // 1. Obtener catálogos y datos base
+      const [
+        { data: estadosPlaza },
+        { data: estadosReserva },
+        { data: rawPlazas },
+        { data: zonasData }
+      ] = await Promise.all([
+        supabase.from('estado_plaza').select('*'),
+        supabase.from('estado_reserva').select('*'),
+        supabase.from('plaza').select('*, zona(estado_zona(nombre))').eq('organizacion_id', orgId),
+        supabase.from('zona').select('id_zona, estado_zona(nombre)').eq('organizacion_id', orgId)
+      ]);
 
-      // 2. Obtener plazas
-      const { data: plazas } = await supabase.from('plaza').select('id_estado');
+      // Filtrar plazas de zonas inactivas (asumiendo que estado_zona inactiva es un valor que ya no usaremos o manejaremos por ID)
+      const plazasFiltradas = (rawPlazas || []).filter(p => p.zona?.estado_zona?.nombre !== 'Inactiva');
 
-      // 3. Obtener Reservas de la tabla reserva
-      const { count: reservasTablaCount } = await supabase
+      // 2. Obtener información de ocupación
+      const mapaOcupacion = {};
+
+      // 2.1 ACCESOS (Ocupación real)
+      const { data: accesosActivos } = await supabase
+        .from('acceso')
+        .select('id_plaza')
+        .eq('organizacion_id', orgId)
+        .is('salida_at', null);
+      
+      (accesosActivos || []).forEach(acc => {
+        if (acc.id_plaza) mapaOcupacion[acc.id_plaza] = { type: 'acceso' };
+      });
+
+      // 2.2 RESERVAS (Individuales y por Zona)
+      const { data: reservasActivas } = await supabase
         .from('reserva')
-        .select('*', { count: 'exact', head: true })
-        .eq('id_estado', estados?.find(e => e.nombre === 'Activa')?.id || 0);
+        .select('id_plaza')
+        .eq('organizacion_id', orgId)
+        .eq('id_estado', ESTADO_RESERVA.ACTIVA);
+      
+      (reservasActivas || []).forEach(res => {
+        if (res.id_plaza) {
+          mapaOcupacion[res.id_plaza] = { type: 'reserva' };
+        }
+      });
 
-      const getId = (name) => estados?.find(e => e.nombre.trim().toUpperCase() === name.toUpperCase())?.id;
+      const { data: reservasZonasActivas } = await supabase
+        .from('reserva_zona')
+        .select('id_zona')
+        .eq('organizacion_id', orgId)
+        .eq('id_estado', ESTADO_RESERVA.ACTIVA);
+      
+      if (reservasZonasActivas?.length > 0) {
+        reservasZonasActivas.forEach(rz => {
+          plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => {
+            if (!mapaOcupacion[p.id_plaza]) {
+              mapaOcupacion[p.id_plaza] = { type: 'reserva_zona' };
+            }
+          });
+        });
+      }
 
-      const idLibre = getId('Libre');
-      const idOcupada = getId('Ocupada');
-      const idReservada = getId('Reservada');
-      const idMantenimiento = getId('Mantenimiento') || getId('Fuera de Servicio');
-      const idAsignada = getId('Asignada');
+      // 2.3 ASIGNACIONES (Solo activas - id_estado: 1)
+      const { data: asigData } = await supabase.from('asignacion')
+        .select('id_plaza')
+        .eq('organizacion_id', orgId)
+        .eq('id_estado', 1)
+        .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
+      
+      (asigData || []).forEach(asig => {
+        if (asig.id_plaza) {
+          mapaOcupacion[asig.id_plaza] = { type: 'asignacion' };
+        }
+      });
 
-      // Cálculos
-      const total = plazas?.length || 0;
-      const ocupadasNum = plazas?.filter(p => p.id_estado === idOcupada).length || 0;
-      const reservadasEnMapa = plazas?.filter(p => p.id_estado === idReservada).length || 0;
-      const mantenimientoNum = plazas?.filter(p => p.id_estado === idMantenimiento).length || 0;
-      const asignadasNum = plazas?.filter(p => p.id_estado === idAsignada).length || 0;
-      const libresNum = plazas?.filter(p => p.id_estado === idLibre || p.id_estado === null).length || 0;
+      // 2.4 TICKETS ACTIVOS (Visitantes)
+      const { data: stActivoTk } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
+      const idTicketActivo = stActivoTk?.id_estado || 1;
+      const { data: ticketsData } = await supabase.from('ticket')
+        .select('id_plaza_asignada')
+        .eq('organizacion_id', orgId)
+        .eq('id_estado', idTicketActivo);
+      
+      (ticketsData || []).forEach(tk => {
+        if (tk.id_plaza_asignada) {
+          mapaOcupacion[tk.id_plaza_asignada] = { type: 'ticket' };
+        }
+      });
 
-      const reservasActivasNum = reservasTablaCount > 0 ? reservasTablaCount : reservadasEnMapa;
-      const personasActivasNum = ocupadasNum + asignadasNum + reservasActivasNum;
+      // 3. Procesar estados de plazas
+      const plazasProcesadas = plazasFiltradas.map(p => {
+        const estadoObj = (estadosPlaza || []).find(e => e.id_estado === p.id_estado);
+        const rawId = p.id_estado;
+        
+        let finalNombre = estadoObj ? estadoObj.nombre.toUpperCase() : 'LIBRE';
+        const info = mapaOcupacion[p.id_plaza];
+        
+        if (info && rawId === ESTADO_PLAZA.LIBRE) {
+          if (info.type === 'acceso' || info.type === 'ticket') finalNombre = 'OCUPADA';
+          else if (info.type === 'reserva' || info.type === 'reserva_zona') finalNombre = 'RESERVADA';
+          else if (info.type === 'asignacion') finalNombre = 'ASIGNADA';
+        }
+
+        return { ...p, Nombre_Final: finalNombre };
+      });
+
+      // 4. Calcular Estadísticas (Siguiendo exactamente los filtros de Ocupacion.jsx)
+      const libres = plazasProcesadas.filter(p => p.Nombre_Final === 'LIBRE' && !mapaOcupacion[p.id_plaza]).length;
+      const asignadas = plazasProcesadas.filter(p => p.Nombre_Final.startsWith('ASIGNAD') || mapaOcupacion[p.id_plaza]?.type === 'asignacion').length;
+      const ocupadas = plazasProcesadas.filter(p => p.Nombre_Final === 'OCUPADA' && mapaOcupacion[p.id_plaza]?.type !== 'asignacion').length;
+      const reservadas = plazasProcesadas.filter(p => (p.Nombre_Final === 'RESERVADA' || p.Nombre_Final === 'RESERVADO') && mapaOcupacion[p.id_plaza]?.type !== 'asignacion').length;
+      const mantenimiento = plazasProcesadas.filter(p => ['MANTENIMIENTO', 'FUERA DE SERVICIO', 'EN MANTENIMIENTO'].includes(p.Nombre_Final)).length;
+
+      const totalPersonas = ocupadas + asignadas + reservadas;
 
       setStats({
-        totalPlazas: total,
-        ocupadas: ocupadasNum,
-        reservadas: reservadasEnMapa,
-        libres: libresNum,
-        mantenimiento: mantenimientoNum,
-        asignadas: asignadasNum,
-        reservasActivas: reservasActivasNum,
-        personasActivas: personasActivasNum
+        totalPlazas: plazasProcesadas.length,
+        ocupadas,
+        reservadas,
+        libres,
+        asignadas,
+        mantenimiento,
+        reservasActivas: reservadas, 
+        personasActivas: totalPersonas
       });
 
     } catch (error) {
-      console.error("Error:", error.message);
+      console.error("Error cargando Dashboard:", error.message);
     } finally {
       setLoading(false);
     }
   };
 
   const ocupacionPorcentaje = stats.totalPlazas > 0
-    ? Math.round(((stats.ocupadas + stats.reservadas + stats.asignadas) / stats.totalPlazas) * 100)
+    ? Math.round((stats.personasActivas / stats.totalPlazas) * 100)
     : 0;
 
   return (
@@ -102,7 +189,7 @@ export default function Dashboard() {
           <div>
             <p className="text-gray-500 text-sm font-semibold uppercase">Ocupación Actual</p>
             <h3 className="text-3xl font-bold text-gray-800 mt-1">
-              {stats.ocupadas} <span className="text-sm text-gray-400 font-normal">/ {stats.totalPlazas}</span>
+              {stats.personasActivas} <span className="text-sm text-gray-400 font-normal">/ {stats.totalPlazas}</span>
             </h3>
             <p className="text-xs text-green-600 mt-2 font-medium">{stats.libres} plazas libres</p>
           </div>

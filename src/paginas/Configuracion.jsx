@@ -7,58 +7,76 @@ import {
     FaEnvelope, FaIdBadge, FaKey, FaCheckCircle, FaCog,
     FaEye, FaEyeSlash, FaVolumeUp
 } from 'react-icons/fa';
+import { useOrg } from '../contexts/OrgContext';
 import { playBeep } from '../utils/audio';
+import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 
 export default function Configuracion() {
+    const { orgId } = useOrg();
     const [activeTab, setActiveTab] = useState('sistema');
+    
+    // --- Estado General ---
+    const [currentPersonaId, setCurrentPersonaId] = useState(null);
+    const [esAdmin, setEsAdmin] = useState(false);
 
     // --- Tab: Sistema ---
     const [settings, setSettings] = useState({
         notificacionesSonoras: true,
         alertaCapacidad: 90,
         tiempoMaximoReserva: 4,
+        maxPlazasPorGrupo: 3,
     });
-    const [currentPersonaId, setCurrentPersonaId] = useState(null);
-    const [orgId, setOrgId] = useState(null);
 
     useEffect(() => {
         const init = async () => {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-                const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
+                const { data: uData } = await supabase.from('usuario').select('id_persona, rol_id, rol:rol_id(nombre)').eq('id', user.id).single();
                 if (uData?.id_persona) {
                     setCurrentPersonaId(uData.id_persona);
-                    const { data: empData } = await supabase.from('empleado').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
-                    if (empData?.organizacion_id) setOrgId(empData.organizacion_id);
+                    const rolName = uData.rol?.nombre?.toLowerCase() || '';
+                    setEsAdmin(rolName === 'admin' || rolName === 'administrador');
                 }
             }
         };
         init();
         const saved = localStorage.getItem('appSettings');
-        if (saved) setSettings(JSON.parse(saved));
+        if (saved) {
+            try {
+                const parsed = JSON.parse(saved);
+                setSettings(prev => ({
+                    ...prev,
+                    notificacionesSonoras: parsed.notificacionesSonoras ?? true,
+                    alertaCapacidad: parsed.alertaCapacidad ?? 90,
+                    tiempoMaximoReserva: parsed.tiempoMaximoReserva ?? 4,
+                    maxPlazasPorGrupo: parsed.maxPlazasPorGrupo ?? 3
+                }));
+            } catch (e) {
+                console.error("Error parsing settings:", e);
+            }
+        }
     }, []);
 
     const handleSaveSettings = () => {
+        const saved = localStorage.getItem('appSettings');
+        const oldSettings = saved ? JSON.parse(saved) : {};
+        
         localStorage.setItem('appSettings', JSON.stringify(settings));
-        registrarLog('Configuración Cambiada', `Actualización de parámetros del sistema: Notificaciones=${settings.notificacionesSonoras}, Alerta Capacidad=${settings.alertaCapacidad}%, Max Reserva=${settings.tiempoMaximoReserva}h`);
+
+        const descCambios = generarDescripcionCambio(oldSettings, settings, 'Actualización de parámetros del sistema');
+        
+        registrarLog({
+            tipo_nombre: EVENT_TYPES.CONFIGURACION_CAMBIADA,
+            descripcion: descCambios,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            origen: 'Panel Web - Configuración'
+        });
+
         Swal.fire({ title: 'Guardado', text: 'Configuración actualizada.', icon: 'success', timer: 1500, showConfirmButton: false });
     };
 
-    const registrarLog = async (tipo_nombre, descripcion) => {
-        if (!currentPersonaId) return;
-        try {
-          const { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
-          const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Configuración').maybeSingle();
-          await supabase.from('evento').insert([{ 
-            fecha_hora: new Date().toISOString(), 
-            descripcion: descripcion, 
-            id_persona: currentPersonaId, 
-            id_tipo: te?.id || null, 
-            id_origen_evento: oe?.id_origen || null,
-            organizacion_id: orgId
-          }]);
-        } catch (e) { console.warn('Log error:', e.message); }
-      };
+    // La función registrarLog local ha sido eliminada para usar la global.
 
     // --- Tab: Cuenta ---
     const [profile, setProfile] = useState(null);
@@ -159,12 +177,106 @@ export default function Configuracion() {
             if (updateError) throw updateError;
 
             Swal.fire('Proceso completado', 'Tu contraseña ha sido actualizada correctamente.', 'success');
-            registrarLog('Cambio de Estado', `Actualización de contraseña de seguridad para usuario ${profile?.email}`);
+            
+            registrarLog({
+                tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+                descripcion: `El usuario ${profile?.nombre} ${profile?.apellido} actualizó su contraseña de acceso.`,
+                id_persona: currentPersonaId,
+                organizacion_id: orgId,
+                origen: 'Panel Web - Configuración'
+            });
             setPassData({ currentPassword: '', newPassword: '', confirmPassword: '' });
         } catch (error) {
             Swal.fire('Error', error.message, 'error');
         } finally {
             setLoadingPass(false);
+        }
+    };
+    
+    // --- Tab: Horario Laboral ---
+    const [horarios, setHorarios] = useState([]);
+    const [loadingHorarios, setLoadingHorarios] = useState(false);
+
+    const DIAS = [
+        { id: 1, nombre: 'Lunes' },
+        { id: 2, nombre: 'Martes' },
+        { id: 3, nombre: 'Miércoles' },
+        { id: 4, nombre: 'Jueves' },
+        { id: 5, nombre: 'Viernes' },
+        { id: 6, nombre: 'Sábado' },
+        { id: 0, nombre: 'Domingo' }
+    ];
+
+    useEffect(() => {
+        if (activeTab === 'horario' && orgId) loadHorarios();
+    }, [activeTab, orgId]);
+
+    const loadHorarios = async () => {
+        setLoadingHorarios(true);
+        try {
+            const { data, error } = await supabase
+                .from('horario_laboral')
+                .select('*')
+                .eq('organizacion_id', orgId);
+            
+            if (error) throw error;
+
+            // Mapear y rellenar días faltantes
+            const base = DIAS.map(d => {
+                const existente = data?.find(h => h.dia_semana === d.id);
+                return existente || { 
+                    dia_semana: d.id, 
+                    hora_apertura: '08:00', 
+                    hora_cierre: '18:00', 
+                    activo: true,
+                    organizacion_id: orgId
+                };
+            });
+            setHorarios(base);
+        } catch (e) {
+            console.error('Error cargando horarios:', e.message);
+        } finally {
+            setLoadingHorarios(false);
+        }
+    };
+
+    const handleHorarioChange = (dia_semana, field, value) => {
+        setHorarios(prev => prev.map(h => h.dia_semana === dia_semana ? { ...h, [field]: value } : h));
+    };
+
+    const handleSaveHorarios = async () => {
+        if (!esAdmin) return Swal.fire('Acceso denegado', 'Solo los administradores pueden modificar el horario.', 'error');
+        
+        setLoadingHorarios(true);
+        try {
+            // Limpiar datos para upsert (quitar id si es nuevo para que no choque o usar onConflict)
+            const payload = horarios.map(h => ({
+                organizacion_id: orgId,
+                dia_semana: h.dia_semana,
+                hora_apertura: h.hora_apertura,
+                hora_cierre: h.hora_cierre,
+                activo: h.activo
+            }));
+
+            const { error } = await supabase
+                .from('horario_laboral')
+                .upsert(payload, { onConflict: 'organizacion_id, dia_semana' });
+            
+            if (error) throw error;
+
+            Swal.fire('¡Éxito!', 'Horarios actualizados correctamente.', 'success');
+            
+            registrarLog({
+                tipo_nombre: EVENT_TYPES.CONFIGURACION_CAMBIADA,
+                descripcion: `Modificación de los horarios laborales de la organización por el administrador.`,
+                id_persona: currentPersonaId,
+                organizacion_id: orgId,
+                origen: 'Panel Web - Configuración'
+            });
+        } catch (e) {
+            Swal.fire('Error', e.message, 'error');
+        } finally {
+            setLoadingHorarios(false);
         }
     };
 
@@ -180,6 +292,7 @@ export default function Configuracion() {
 
     const tabs = [
         { id: 'sistema', label: 'Parámetros del Sistema', icon: FaCog },
+        { id: 'horario', label: 'Horario Laboral', icon: FaClock },
         { id: 'cuenta', label: 'Configuración de Cuenta', icon: FaUser },
     ];
 
@@ -253,18 +366,33 @@ export default function Configuracion() {
                         </div>
 
                         {/* Tiempo máximo reserva */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Tiempo Máximo de Reserva
-                                <span className="ml-2 text-blue-600 font-bold">{settings.tiempoMaximoReserva} horas</span>
-                            </label>
-                            <p className="text-xs text-gray-400 mb-2">Duración máxima permitida al crear una reserva.</p>
-                            <input
-                                type="number" min="1" max="24"
-                                value={settings.tiempoMaximoReserva}
-                                onChange={e => setSettings({ ...settings, tiempoMaximoReserva: parseInt(e.target.value) || 1 })}
-                                className="w-full border p-2 rounded-lg bg-gray-50 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                            />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Tiempo Máximo de Reserva
+                                    <span className="ml-2 text-blue-600 font-bold">{settings.tiempoMaximoReserva} horas</span>
+                                </label>
+                                <p className="text-xs text-gray-400 mb-2">Duración máxima permitida al crear una reserva.</p>
+                                <input
+                                    type="number" min="1" max="24"
+                                    value={settings.tiempoMaximoReserva}
+                                    onChange={e => setSettings({ ...settings, tiempoMaximoReserva: parseInt(e.target.value) || 1 })}
+                                    className="w-full border p-2 rounded-lg bg-gray-50 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Límite de Plazas (Grupo)
+                                    <span className="ml-2 text-purple-600 font-bold">{settings.maxPlazasPorGrupo} plazas</span>
+                                </label>
+                                <p className="text-xs text-gray-400 mb-2">Número máximo de plazas por reserva grupal.</p>
+                                <input
+                                    type="number" min="2" max="20"
+                                    value={settings.maxPlazasPorGrupo}
+                                    onChange={e => setSettings({ ...settings, maxPlazasPorGrupo: parseInt(e.target.value) || 2 })}
+                                    className="w-full border p-2 rounded-lg bg-gray-50 focus:ring-purple-500 focus:border-purple-500 outline-none"
+                                />
+                            </div>
                         </div>
 
                         {/* Alerta de capacidad */}
@@ -291,6 +419,102 @@ export default function Configuracion() {
                         >
                             <FaSave /> Guardar Configuración
                         </button>
+                    </section>
+                </div>
+            )}
+
+            {/* Tab: Horario Laboral */}
+            {activeTab === 'horario' && (
+                <div className="max-w-4xl">
+                    <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                        <div className="flex items-center justify-between border-b pb-4 mb-6">
+                            <div className="flex items-center gap-3">
+                                <FaClock className="text-orange-500 text-xl" />
+                                <div>
+                                    <h3 className="text-xl font-bold text-gray-800">Horario de Operación</h3>
+                                    <p className="text-xs text-gray-500">Define los días y horas en los que el sistema permitirá realizar operaciones.</p>
+                                </div>
+                            </div>
+                            {esAdmin && (
+                                <button
+                                    onClick={handleSaveHorarios}
+                                    disabled={loadingHorarios}
+                                    className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition shadow-sm disabled:opacity-50"
+                                >
+                                    <FaSave /> {loadingHorarios ? 'Guardando...' : 'Guardar Horarios'}
+                                </button>
+                            )}
+                        </div>
+
+                        {!esAdmin && (
+                            <div className="mb-6 p-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm flex items-center gap-3">
+                                <FaLock className="text-amber-500" />
+                                <span>Solo los administradores pueden modificar los horarios de la organización.</span>
+                            </div>
+                        )}
+
+                        {loadingHorarios && horarios.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                                <FaClock className="animate-pulse text-4xl mb-2" />
+                                <p>Cargando horarios...</p>
+                            </div>
+                        ) : (
+                            <div className="grid gap-3">
+                                {horarios.map((horario) => {
+                                    const diaNombre = DIAS.find(d => d.id === horario.dia_semana)?.nombre;
+                                    return (
+                                        <div key={horario.dia_semana} className={`flex flex-col md:flex-row items-center justify-between p-4 rounded-xl border transition-all ${horario.activo ? 'bg-white border-gray-200 shadow-sm' : 'bg-gray-50 border-gray-100 opacity-60'}`}>
+                                            <div className="flex items-center gap-4 w-full md:w-48 mb-3 md:mb-0">
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${horario.activo ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                                                    {diaNombre?.substring(0, 2)}
+                                                </div>
+                                                <span className="font-bold text-gray-700">{diaNombre}</span>
+                                            </div>
+
+                                            <div className="flex items-center gap-4 flex-grow justify-center mb-3 md:mb-0">
+                                                <div className="flex flex-col">
+                                                    <label className="text-[10px] text-gray-400 uppercase font-bold ml-1">Apertura</label>
+                                                    <input 
+                                                        type="time" 
+                                                        disabled={!horario.activo || !esAdmin}
+                                                        value={horario.hora_apertura}
+                                                        onChange={(e) => handleHorarioChange(horario.dia_semana, 'hora_apertura', e.target.value)}
+                                                        className="border rounded-lg p-2 text-sm focus:ring-2 focus:ring-green-400 outline-none disabled:bg-gray-100"
+                                                    />
+                                                </div>
+                                                <span className="text-gray-300 mt-4">—</span>
+                                                <div className="flex flex-col">
+                                                    <label className="text-[10px] text-gray-400 uppercase font-bold ml-1">Cierre</label>
+                                                    <input 
+                                                        type="time" 
+                                                        disabled={!horario.activo || !esAdmin}
+                                                        value={horario.hora_cierre}
+                                                        onChange={(e) => handleHorarioChange(horario.dia_semana, 'hora_cierre', e.target.value)}
+                                                        className="border rounded-lg p-2 text-sm focus:ring-2 focus:ring-green-400 outline-none disabled:bg-gray-100"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+                                                <span className={`text-[10px] font-bold uppercase transition-colors ${horario.activo ? 'text-green-600' : 'text-gray-400'}`}>
+                                                    {horario.activo ? 'En Servicio' : 'Cerrado'}
+                                                </span>
+                                                <label className="relative inline-flex items-center cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        className="sr-only peer"
+                                                        disabled={!esAdmin}
+                                                        checked={horario.activo}
+                                                        onChange={(e) => handleHorarioChange(horario.dia_semana, 'activo', e.target.checked)}
+                                                    />
+                                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </section>
                 </div>
             )}

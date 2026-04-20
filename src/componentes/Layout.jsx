@@ -10,9 +10,11 @@ import BarraLateral from './barraLateral';
 export default function Layout({ children }) {
   const { orgId } = useOrg();
   const [alertaBanner, setAlertaBanner] = useState(null);
-  const [stats, setStats] = useState({ total: 0, ocupadas: 0, reservadas: 0, libres: 0 });
+  const [stats, setStats] = useState({ total: 0, ocupadas: 0, reservadas: 0, asignadas: 0, libres: 0 });
   const alertaYaEnviada = useRef(false);
   const prevOcupadas = useRef(0);
+  const prevReservadas = useRef(0);
+  const prevAsignadas = useRef(0);
   const firstLoad = useRef(true);
 
   useEffect(() => {
@@ -20,7 +22,17 @@ export default function Layout({ children }) {
 
     const channel = supabase
       .channel('global_monitor')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadMonitorData())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'plaza' }, (payload) => {
+          loadMonitorData();
+          // Disparar sonido si la plaza estaba LIBRE (o null) y ahora NO lo está
+          const idLibre = 1; // Fallback común, pero se ajusta dinámicamente si es posible
+          const eraLibre = !payload.old.id_estado || payload.old.id_estado === idLibre;
+          const ahoraNoEsLibre = payload.new.id_estado && payload.new.id_estado !== idLibre;
+          
+          if (eraLibre && ahoraNoEsLibre) {
+              playBeep();
+          }
+      })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -28,39 +40,58 @@ export default function Layout({ children }) {
 
   const loadMonitorData = async () => {
     try {
-      const { data: estados } = await supabase.from('estado').select('id, nombre').eq('contexto', 'plaza');
-      const { data: plazas } = await supabase.from('plaza').select('id_estado');
+      // 1. Obtener estados de plazas de la tabla correcta (estado_plaza)
+      const { data: estados } = await supabase.from('estado_plaza').select('id_estado, nombre');
+      const { data: rawPlazas } = await supabase
+        .from('plaza')
+        .select(`
+            id_estado,
+            zona:id_zona(
+                estado_zona(nombre)
+            )
+        `);
 
-      if (!estados || !plazas) return;
+      if (!estados || !rawPlazas) return;
 
-      const getId = (name) => estados.find(e => e.nombre.trim().toUpperCase() === name.toUpperCase())?.id;
-      const idOcupada = getId('Ocupada');
-      const idReservada = getId('Reservada');
-      const idLibre = getId('Libre');
+      // Filtrar plazas de zonas que NO estén inactivas
+      const plazas = rawPlazas.filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
+
+      const getId = (pattern) => estados.find(e => {
+        const n = (e.nombre || '').trim().toUpperCase();
+        return n.startsWith(pattern) || (pattern === 'OCUPAD' && n === 'OCUPADO');
+      })?.id_estado;
+      
+      const idOcupada = getId('OCUPAD');
+      const idReservada = getId('RESERVAD');
+      const idAsignada = getId('ASIGNAD');
+      const idLibre = getId('LIBRE');
 
       const total = plazas.length;
       const ocupadasNum = plazas.filter(p => p.id_estado === idOcupada).length;
       const reservadasNum = plazas.filter(p => p.id_estado === idReservada).length;
-      const libresNum = plazas.filter(p => p.id_estado === idLibre || p.id_estado === null).length;
+      const asignadasNum  = plazas.filter(p => p.id_estado === idAsignada).length;
+      const libresNum = plazas.filter(p => p.id_estado === idLibre || p.id_estado === null || 
+                                     (![idOcupada, idReservada, idAsignada].includes(p.id_estado))).length;
 
-      // Alerta Sonora (Beep) si aumenta la ocupación
-      if (!firstLoad.current && ocupadasNum > prevOcupadas.current) {
-        playBeep();
-      }
-      
-      prevOcupadas.current = ocupadasNum;
-      firstLoad.current = false;
-
-      setStats({ total, ocupadas: ocupadasNum, reservadas: reservadasNum, libres: libresNum });
+      // Actualizar stats
+      setStats({ total, ocupadas: ocupadasNum, reservadas: reservadasNum, asignadas: asignadasNum, libres: libresNum });
     } catch (error) {
       console.error("Monitor Error:", error.message);
     }
   };
 
+  // Efecto reactivo para actualizar referencias
+  useEffect(() => {
+    prevOcupadas.current = stats.ocupadas;
+    prevReservadas.current = stats.reservadas;
+    prevAsignadas.current = stats.asignadas;
+  }, [stats]);
+
   // Monitor de alerta de capacidad
   useEffect(() => {
     if (stats.total === 0) return;
-    const pct = Math.round(((stats.ocupadas + stats.reservadas) / stats.total) * 100);
+    const ocupadasTotales = stats.ocupadas + stats.reservadas + (stats.asignadas || 0);
+    const pct = Math.round((ocupadasTotales / stats.total) * 100);
     const savedSettings = localStorage.getItem('appSettings');
     const umbral = savedSettings ? parseInt(JSON.parse(savedSettings).alertaCapacidad) : 90;
 

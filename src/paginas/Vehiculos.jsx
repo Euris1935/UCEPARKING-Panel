@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaCar, FaSave, FaTrash, FaEdit, FaSyncAlt, FaSearch } from 'react-icons/fa';
+import { FaCar, FaSave, FaTrash, FaEdit, FaSyncAlt, FaSearch, FaSync, FaCheck, FaTimes } from 'react-icons/fa';
+import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
@@ -31,93 +32,94 @@ export default function Vehiculos() {
   const [editandoVehiculo, setEditandoVehiculo] = useState(null);
   const [editVehiculoForm, setEditVehiculoForm] = useState({ placa: '', id_marca: '', id_modelo: '', id_color: '' });
 
+  // Estados para catálogo y edición in-place
+  const [estadosVehiculosList, setEstadosVehiculosList] = useState([]);
+  const [changingStatusFor, setChangingStatusFor] = useState(null);
+  const [newStatusChoice, setNewStatusChoice] = useState('');
+
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-        if (uData?.id_persona) setCurrentPersonaId(uData.id_persona);
-      }
-    };
-    init();
-    loadData();
-    const ch = supabase.channel('rt_vehiculos')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculo' }, loadData)
-      .subscribe();
-    return () => supabase.removeChannel(ch);
-  }, []);
+    if (orgId) {
+      loadData();
+      const ch = supabase.channel('rt_vehiculos')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'vehiculo' }, loadData)
+        .subscribe();
+      return () => supabase.removeChannel(ch);
+    }
+  }, [orgId]);
 
   const loadData = async () => {
+    if (!orgId) return;
     setIsRefreshing(true);
     try {
       const { data: vhs } = await supabase
         .from('vehiculo')
-        .select('*, marca(nombre), modelo(nombre), color(nombre), persona(nombre, apellido)')
+        .select('*, modelo(nombre, marca(nombre)), color(nombre), persona(nombre, apellido)')
+        .eq('organizacion_id', orgId)
+        .not('id_persona', 'is', null)
         .order('created_at', { ascending: false });
 
-      const { data: catMarcas } = await supabase.from('marca').select('id_marca, nombre').eq('tipo', 'vehiculo').order('nombre');
-      const { data: catModelos } = await supabase.from('modelo').select('id_modelo, nombre, id_marca').eq('tipo', 'vehiculo').order('nombre');
-      const { data: catColores } = await supabase.from('color').select('id_color, nombre').order('nombre');
+      const [
+        { data: catMarcas },
+        { data: catModelos },
+        { data: catColores },
+        { data: catEst }
+      ] = await Promise.all([
+        supabase.from('marca').select('id_marca, nombre').order('nombre'),
+        supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre'),
+        supabase.from('color').select('id_color, nombre').order('nombre'),
+        supabase.from('estado_vehiculo').select('id_estado, nombre').order('id_estado')
+      ]);
 
-      // Personal del sistema
-      const { data: usuariosRaw } = await supabase.from('usuario').select('id_persona');
-      const personaIds = (usuariosRaw || []).filter(u => u.id_persona).map(u => u.id_persona);
-      let personasDeUsuarios = [];
-      if (personaIds.length > 0) {
-        const { data: pData } = await supabase.from('persona').select('id_persona, nombre, apellido').in('id_persona', personaIds);
-        personasDeUsuarios = (pData || []).map(p => ({ ...p, rol: 'Usuario' }));
-      }
-      const { data: empleadosData } = await supabase.from('empleado').select('id_persona', 'persona(id_persona, nombre, apellido)');
-      const personalEmpleados = (empleadosData || []).filter(e => e.persona).map(e => ({ ...e.persona, rol: 'Empleado' }));
-      const mapa = new Map();
-      personasDeUsuarios.forEach(p => { if (p.id_persona) mapa.set(p.id_persona, p); });
-      personalEmpleados.forEach(p => { if (p.id_persona) mapa.set(p.id_persona, p); });
+      // Personal del sistema (RPC optimizado)
+      const { data: orgUsers } = await supabase.rpc('get_usuarios_org');
+      const personal = (orgUsers || []).map(u => ({
+        id_persona: u.id_persona,
+        nombre: u.nombre,
+        apellido: u.apellido,
+        rol: u.tipo || 'Usuario'
+      }));
 
       setVehiculos(vhs || []);
       setListaMarcas(catMarcas || []);
       setListaModelos(catModelos || []);
       setListaColores(catColores || []);
-      setPersonasSistema(Array.from(mapa.values()).sort((a, b) =>
-        `${a.nombre} ${a.apellido}`.toLowerCase().localeCompare(`${b.nombre} ${b.apellido}`.toLowerCase())
-      ));
+      setEstadosVehiculosList(catEst || []);
+      setPersonasSistema(personal.sort((a,b) => `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`)));
+
     } catch (err) { console.error('Error cargando datos:', err); } finally { setIsRefreshing(false); }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion) => {
-    if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Vehículos').maybeSingle();
-      await supabase.from('evento').insert([{ 
-        fecha_hora: new Date().toISOString(), 
-        descripcion: descripcion, 
-        id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
-        id_origen_evento: oe?.id_origen || null,
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
-  };
+  // La función registrarLog local ha sido eliminada para usar la global importada.
 
   const handleVehiculoPersonalSubmit = async (e) => {
     e.preventDefault();
+    if (!orgId) {
+      return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+    }
     if (!vehiculoPersonalForm.persona_id) return Swal.fire('Atención', 'Seleccione un propietario.', 'warning');
     const placaLimpia = vehiculoPersonalForm.placa.replace(/[^A-Z0-9]/gi, '');
-    if (placaLimpia.length > 6) return Swal.fire('Atención', 'La placa no debe superar los 6 caracteres.', 'warning');
+    if (placaLimpia.length > 7) return Swal.fire('Atención', 'La placa no debe superar los 7 caracteres (1 letra y 6 números).', 'warning');
     setLoading(true);
     try {
       const { error } = await supabase.from('vehiculo').insert([{
         id_persona: vehiculoPersonalForm.persona_id,
         placa: vehiculoPersonalForm.placa.toUpperCase(),
-        id_marca: vehiculoPersonalForm.id_marca ? parseInt(vehiculoPersonalForm.id_marca) : null,
         id_modelo: vehiculoPersonalForm.id_modelo ? parseInt(vehiculoPersonalForm.id_modelo) : null,
         id_color: vehiculoPersonalForm.id_color ? parseInt(vehiculoPersonalForm.id_color) : null,
+        id_estado: 1, // Por defecto Habilitado
         organizacion_id: orgId
       }]);
       if (error) throw error;
       Swal.fire('Registrado', 'Vehículo vinculado correctamente.', 'success');
       const p = personasSistema.find(p => p.id_persona === vehiculoPersonalForm.persona_id);
-      registrarLog('Vehículo Registrado', `Vehículo ${vehiculoPersonalForm.placa.toUpperCase()} registrado a nombre de ${p?.nombre} ${p?.apellido}`);
+      
+      registrarLog({
+        tipo_nombre: EVENT_TYPES.VEHICULO_REGISTRADO,
+        descripcion: `Vehículo ${vehiculoPersonalForm.placa.toUpperCase()} vinculado a: ${p?.nombre} ${p?.apellido}`,
+        id_persona: currentPersonaId,
+        organizacion_id: orgId,
+        origen: 'Panel Web - Vehículos'
+      });
       setVehiculoPersonalForm({ persona_id: '', placa: '', id_marca: '', id_modelo: '', id_color: '' });
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
@@ -126,41 +128,91 @@ export default function Vehiculos() {
 
   const handleEditarVehiculo = async (e) => {
     e.preventDefault();
+    const placaLimpia = editVehiculoForm.placa.replace(/[^A-Z0-9]/gi, '');
+    if (placaLimpia.length > 7) return Swal.fire('Atención', 'La placa no debe superar los 7 caracteres (1 letra y 6 números).', 'warning');
     try {
       const { error, count } = await supabase.from('vehiculo').update(
-        { placa: editVehiculoForm.placa.toUpperCase(), id_marca: editVehiculoForm.id_marca ? parseInt(editVehiculoForm.id_marca) : null, id_modelo: editVehiculoForm.id_modelo ? parseInt(editVehiculoForm.id_modelo) : null, id_color: editVehiculoForm.id_color ? parseInt(editVehiculoForm.id_color) : null },
+        { placa: editVehiculoForm.placa.toUpperCase(), id_modelo: editVehiculoForm.id_modelo ? parseInt(editVehiculoForm.id_modelo) : null, id_color: editVehiculoForm.id_color ? parseInt(editVehiculoForm.id_color) : null },
         { count: 'exact' }
       ).eq('id_vehiculo', editandoVehiculo.id_vehiculo);
       if (error) throw error;
       Swal.fire('Actualizado', 'Datos actualizados correctamente.', 'success');
-      registrarLog('Cambio de Estado', `Edición de datos para vehículo con placa ${editVehiculoForm.placa}`);
+      
+      const descCambios = generarDescripcionCambio(editandoVehiculo, editVehiculoForm, `Edición de datos vehículo placa ${editandoVehiculo.placa}`);
+      
+      registrarLog({
+        tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+        descripcion: descCambios,
+        id_persona: currentPersonaId,
+        organizacion_id: orgId,
+        origen: 'Panel Web - Vehículos'
+      });
       setEditandoVehiculo(null);
       loadData();
     } catch (err) { Swal.fire('Error', err.message, 'error'); }
   };
 
-  const handleEliminarVehiculo = async (vehiculo) => {
-    // Buscar si tiene un ticket activo. id_estado para Ticket 'Activo' ahora depende del contexto en tabla estado.
-    // Buscamos el ID del estado 'Activo' para 'ticket'.
-    const { data: estActivo } = await supabase.from('estado').select('id').eq('contexto', 'ticket').eq('nombre', 'Activo').maybeSingle();
-    
-    const { data: ticketsActivos } = await supabase.from('ticket').select('id_ticket').eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', estActivo?.id || 1);
-    if (ticketsActivos && ticketsActivos.length > 0) return Swal.fire('No se puede eliminar', `Este vehículo tiene ${ticketsActivos.length} ticket(s) activo(s). Registre la salida primero.`, 'warning');
+  const handleConfirmarCambioEstado = async (vehiculo) => {
+    if (!orgId) return;
+    const oldStatus = vehiculo.id_estado;
+    const nextStatus = parseInt(newStatusChoice);
 
-    const result = await Swal.fire({ title: '¿Eliminar vehículo?', html: `Placa: <b>${vehiculo.placa}</b><br><small>Se eliminarán también sus registros de acceso históricos.</small>`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Sí, eliminar' });
-    
+    if (oldStatus === nextStatus) {
+        setChangingStatusFor(null);
+        return;
+    }
+
     try {
-      if (result.isConfirmed) {
-        const { error } = await supabase.from('vehiculo').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
-        if (error) {
-          Swal.fire('Error', error.message, 'error');
-        } else {
-          Swal.fire('Eliminado', 'Vehículo borrado correctamente.', 'success');
-          registrarLog('Vehículo Eliminado', `Vehículo con placa ${vehiculo.placa} eliminado del sistema.`);
-          loadData();
-        }
-      }
-    } catch (err) { Swal.fire('Error al eliminar', err.message, 'error'); }
+        setLoading(true);
+        const { error: upErr } = await supabase
+            .from('vehiculo')
+            .update({ id_estado: nextStatus })
+            .eq('id_vehiculo', vehiculo.id_vehiculo);
+        
+        if (upErr) throw upErr;
+
+        Swal.fire({
+            title: 'Actualizado',
+            text: 'Estado del vehículo actualizado correctamente.',
+            icon: 'success',
+            timer: 1500,
+            showConfirmButton: false
+        });
+
+        const estViejo = estadosVehiculosList.find(e => e.id_estado === oldStatus)?.nombre || oldStatus;
+        const estNuevo = estadosVehiculosList.find(e => e.id_estado === nextStatus)?.nombre || nextStatus;
+
+        registrarLog({
+            tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+            descripcion: `Estatus vehicular de ${vehiculo.placa} modificado: de "${estViejo}" a "${estNuevo}"`,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            origen: 'Panel Web - Vehículos'
+        });
+        setChangingStatusFor(null);
+        loadData();
+    } catch (error) {
+        Swal.fire('Error', error.message, 'error');
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const handleEliminarVehiculo = async (vehiculo) => {
+    // Soft Delete Moderno: Ahora simplemente lo inhabilitamos
+    const result = await Swal.fire({ 
+        title: '¿Inhabilitar vehículo?', 
+        html: `La placa <b>${vehiculo.placa}</b> dejará de estar habilitada pero se conservará en el sistema.`, 
+        icon: 'warning', 
+        showCancelButton: true, 
+        confirmButtonColor: '#d33', 
+        confirmButtonText: 'Sí, inhabilitar' 
+    });
+    
+    if (result.isConfirmed) {
+        setNewStatusChoice('2'); // ID 2: Inhabilitado
+        handleConfirmarCambioEstado({ ...vehiculo });
+    }
   };
 
   return (
@@ -173,7 +225,7 @@ export default function Vehiculos() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
         {/* Formulario */}
         {canCreate && (
-        <section className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
+        <section className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
           <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-gray-800">
             <FaCar className="text-purple-600" /> Vincular Vehículo Personal
           </h3>
@@ -188,15 +240,15 @@ export default function Vehiculos() {
               />
             </div>
             <div>
-              <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (máx. 6 caracteres)</label>
+              <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (1 Letra + 6 Números)</label>
               <input
-                className="w-full border-2 border-purple-200 rounded-lg p-2 text-sm font-mono uppercase tracking-widest text-center text-base mt-0.5"
-                placeholder="ABC123" value={vehiculoPersonalForm.placa} maxLength={7}
-                onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (val.length <= 6) setVehiculoPersonalForm(f => ({ ...f, placa: val })); }}
+                className="w-full border-2 border-purple-200 rounded-lg p-2 font-mono uppercase tracking-widest text-center text-base mt-0.5"
+                placeholder="L 010536" value={vehiculoPersonalForm.placa} maxLength={8}
+                onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); const letterMatch = val.match(/[A-Z]/); let nuevaPlaca = ''; if (letterMatch) { const letter = letterMatch[0]; const digits = val.replace(/[A-Z]/g, '').replace(/[^0-9]/g, '').slice(0, 6); nuevaPlaca = digits ? `${letter} ${digits}` : letter; } setVehiculoPersonalForm(f => ({ ...f, placa: nuevaPlaca })); }}
                 required
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Marca</label>
                 <SearchableSelect
@@ -234,11 +286,18 @@ export default function Vehiculos() {
         )}
 
         {/* Tabla flota */}
-        <section className={`${canCreate ? 'lg:col-span-3' : 'lg:col-span-5'} bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden flex flex-col`}>
+        <section className={`${canCreate ? 'lg:col-span-4' : 'lg:col-span-5'} bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden flex flex-col`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between p-5 border-b gap-4">
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
               <FaCar className="text-purple-600" /> Flota Registrada
-              <span className="ml-2 bg-purple-100 text-purple-700 text-xs font-bold px-2 py-0.5 rounded-full">{vehiculos.length} vehículos</span>
+              <div className="flex items-center gap-1.5 ml-2">
+                <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter">
+                  {vehiculos.filter(v => (v.id_estado || 1) === 1).length} Habilitados
+                </span>
+                <span className="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-tighter">
+                  {vehiculos.length} Total
+                </span>
+              </div>
             </h3>
             <div className="flex items-center gap-2 w-full sm:w-auto">
               <div className="relative flex-1 sm:w-64">
@@ -264,6 +323,7 @@ export default function Vehiculos() {
                   <th className="px-5 py-3 text-left">Placa</th>
                   <th className="px-5 py-3 text-left">Marca / Modelo / Color</th>
                   <th className="px-5 py-3 text-left">Registro</th>
+                  <th className="px-5 py-3 text-center">Estado</th>
                   <th className="px-5 py-3 text-center">Acción</th>
                 </tr>
               </thead>
@@ -273,21 +333,93 @@ export default function Vehiculos() {
                     const matchPlaca = (v.placa || '').toLowerCase().includes(searchFlota.toLowerCase());
                     return matchName || matchPlaca;
                 }).length === 0
-                  ? <tr><td colSpan="5" className="text-center py-10 text-gray-400">No hay vehículos que coincidan.</td></tr>
+                  ? <tr><td colSpan="6" className="text-center py-10 text-gray-400">No hay vehículos que coincidan.</td></tr>
                   : vehiculos.filter(v => {
                         const matchName = `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`.toLowerCase().includes(searchFlota.toLowerCase());
                         const matchPlaca = (v.placa || '').toLowerCase().includes(searchFlota.toLowerCase());
                         return matchName || matchPlaca;
-                    }).map(v => (
-                    <tr key={v.id_vehiculo} className="hover:bg-gray-50 transition-all">
-                      <td className="px-5 py-4 font-medium text-gray-800">{v.persona?.nombre} {v.persona?.apellido}</td>
-                      <td className="px-5 py-4"><span className="font-mono font-bold bg-gray-900 text-white px-2 py-0.5 rounded text-xs">{v.placa}</span></td>
-                      <td className="px-5 py-4 text-gray-500 text-xs">{[v.marca?.nombre, v.modelo?.nombre, v.color?.nombre].filter(Boolean).join(' · ') || '—'}</td>
+                  }).map(v => (
+                    <tr key={v.id_vehiculo} className={`transition-all ${(v.id_estado || 1) !== 1 ? 'bg-gray-50/50 opacity-60 grayscale-[0.3]' : 'hover:bg-gray-50'}`}>
+                      <td className="px-5 py-4 font-medium text-gray-800">
+                        <div className="flex flex-col">
+                            <span>{v.persona?.nombre} {v.persona?.apellido}</span>
+                            {(v.id_estado || 1) !== 1 && <span className="text-[9px] font-bold text-gray-400 uppercase italic">Registro no operativo</span>}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${(v.id_estado || 1) === 1 ? 'bg-gray-900 text-white shadow-sm' : 'bg-gray-300 text-gray-600'}`}>
+                            {v.placa}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-gray-500 text-xs">{[v.modelo?.marca?.nombre, v.modelo?.nombre, v.color?.nombre].filter(Boolean).join(' · ') || '—'}</td>
                       <td className="px-5 py-4 text-xs text-gray-400">{new Date(v.created_at).toLocaleDateString('es-DO')}</td>
+                      
+                      <td className="px-5 py-4 text-center">
+                        {changingStatusFor === v.id_vehiculo ? (
+                            <div className="flex items-center justify-center gap-1 animate-fadeIn">
+                                <select 
+                                    className="border border-purple-300 rounded-lg px-2 py-1.5 text-[10px] focus:ring-2 focus:ring-purple-200 focus:border-purple-500 outline-none transition-all cursor-pointer bg-white"
+                                    value={newStatusChoice}
+                                    onChange={e => setNewStatusChoice(e.target.value)}
+                                >
+                                    {estadosVehiculosList.map(e => (
+                                        <option key={e.id_estado} value={e.id_estado}>{e.nombre}</option>
+                                    ))}
+                                </select>
+                                <button 
+                                    onClick={() => handleConfirmarCambioEstado(v)} 
+                                    className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm"
+                                    title="Confirmar"
+                                >
+                                    {loading ? <FaSync size={10} className="animate-spin" /> : <FaCheck size={10} />}
+                                </button>
+                                <button 
+                                    onClick={() => setChangingStatusFor(null)} 
+                                    className="p-1.5 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition"
+                                    title="Cancelar"
+                                >
+                                    <FaTimes size={10} />
+                                </button>
+                            </div>
+                        ) : (
+                            <div 
+                                className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider cursor-default ${
+                                    (v.id_estado || 1) === 1 ? 'bg-green-100 text-green-700' :
+                                    v.id_estado === 2 ? 'bg-red-100 text-red-700' :
+                                    v.id_estado === 3 ? 'bg-orange-100 text-orange-700' :
+                                    'bg-gray-100 text-gray-600'
+                                }`}
+                            >
+                                {estadosVehiculosList.find(e => e.id_estado === (v.id_estado || 1))?.nombre || 'Indefinido'}
+                            </div>
+                        )}
+                      </td>
+
                       <td className="px-5 py-4 text-center">
                         <div className="flex gap-1 justify-center">
-                          {canEdit && <button onClick={() => { setEditandoVehiculo(v); setEditVehiculoForm({ placa: v.placa, id_marca: v.id_marca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); }} className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-lg transition" title="Editar"><FaEdit size={14} /></button>}
-                          {canDelete && <button onClick={() => handleEliminarVehiculo(v)} className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition" title="Eliminar"><FaTrash size={14} /></button>}
+                          {canEdit && (
+                            <button 
+                                onClick={() => { 
+                                    setEditandoVehiculo(v); 
+                                    const idMarca = v.id_modelo ? listaModelos.find(m => m.id_modelo === v.id_modelo)?.id_marca : '';
+                                    setEditVehiculoForm({ placa: v.placa, id_marca: idMarca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); 
+                                }} 
+                                className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-lg transition" 
+                                title="Editar"
+                            >
+                                <FaEdit size={14} />
+                            </button>
+                          )}
+                          <button 
+                            onClick={() => {
+                                setChangingStatusFor(v.id_vehiculo);
+                                setNewStatusChoice((v.id_estado || 1).toString());
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg border border-purple-200 text-purple-600 hover:bg-purple-50 text-[10px] font-bold transition flex items-center gap-1"
+                            title="Cambiar Estado"
+                          >
+                            <FaSync size={10} /> <span>Estado</span>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -306,8 +438,8 @@ export default function Vehiculos() {
             <h3 className="text-lg font-bold mb-4 text-gray-800">Editar Vehículo</h3>
             <form onSubmit={handleEditarVehiculo} className="space-y-3">
               <div>
-                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa *</label>
-                <input className="w-full border-2 border-purple-200 rounded-lg p-2 font-mono uppercase tracking-widest text-center text-base mt-0.5" value={editVehiculoForm.placa} maxLength={7} onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); if (val.length <= 6) setEditVehiculoForm(f => ({ ...f, placa: val })); }} required />
+                <label className="text-[10px] font-bold text-gray-400 uppercase">Placa * (1 Letra + 6 Números)</label>
+                <input className="w-full border-2 border-purple-200 rounded-lg p-2 font-mono uppercase tracking-widest text-center text-base mt-0.5" placeholder="L 010536" value={editVehiculoForm.placa} maxLength={8} onChange={e => { const val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); const letterMatch = val.match(/[A-Z]/); let nuevaPlaca = ''; if (letterMatch) { const letter = letterMatch[0]; const digits = val.replace(/[A-Z]/g, '').replace(/[^0-9]/g, '').slice(0, 6); nuevaPlaca = digits ? `${letter} ${digits}` : letter; } setEditVehiculoForm(f => ({ ...f, placa: nuevaPlaca })); }} required />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

@@ -19,49 +19,56 @@ export function RbacProvider({ children, session }) {
     }
 
     try {
-      setLoading(true);
+      // Si ya cargamos los permisos previamente para el mismo usuario, 
+      // evitamos reiniciar el loading para no interrumpir la navegación.
+      if (modulos.length === 0 && !loading) {
+          setLoading(true);
+      }
 
-      // ── 1. Obtener rol_id del usuario (su propia fila — siempre accesible) ──
+      // 1. Obtener rol_id del usuario
       const { data: usuarioData, error: uError } = await supabase
         .from('usuario')
-        .select('rol_id')
+        .select('rol_id, id_estado')
         .eq('id', session.user.id)
-        .single();
+        .maybeSingle();
 
       if (uError) {
-        console.error('RbacContext: no se pudo leer usuarios:', uError.message);
+        console.error('RbacContext: Error fetching user record:', uError);
+        setLoading(false);
+        return;
+      }
+
+      if (!usuarioData) {
+        console.warn('RbacContext: No record found in "usuario" table for UID:', session.user.id);
+        setLoading(false);
+        return;
+      }
+
+      console.log('RbacContext: User found, checking status and roles:', usuarioData);
+
+      if (usuarioData?.id_estado !== 1 && usuarioData?.id_estado !== null) {
         setLoading(false);
         return;
       }
 
       const rolId = usuarioData?.rol_id;
       if (!rolId) {
-        console.warn('RbacContext: usuario sin rol asignado.');
         setLoading(false);
         return;
       }
 
-      // ── 2. Leer nombre del rol por separado (evita el bug de join en PostgREST con RLS) ──
-      const { data: rolData, error: rolError } = await supabase
+      // 2. Leer nombre del rol
+      const { data: rolData } = await supabase
         .from('rol')
         .select('nombre')
         .eq('id_rol', rolId)
         .maybeSingle();
 
-      // Si roles tiene RLS restrictivo y falla, caemos al plan B:
-      // comparamos directamente el id con los conocidos (no ideal, pero funciona de emergencia)
-      let nombreRol = rolData?.nombre ?? null;
-
-      if (rolError) {
-        console.warn('RbacContext: no se pudo leer roles con RLS, fallback por id:', rolError.message);
-      }
-
-      const _esAdmin = nombreRol?.toLowerCase() === 'administrador';
+      const nombreRol = rolData?.nombre?.toLowerCase() || '';
+      const _esAdmin = nombreRol.includes('admin') || nombreRol.includes('administrador');
       setEsAdmin(_esAdmin);
 
-      // ── 3. Si es admin, no necesita cargar permisos — tiene acceso total ──
       if (_esAdmin) {
-        // Cargamos módulos igual para poder mostrar la barra lateral correctamente
         const { data: modulosData } = await supabase
           .from('modulo')
           .select('*')
@@ -72,49 +79,34 @@ export function RbacProvider({ children, session }) {
         return;
       }
 
-      // ── 4. Para no-admins: cargar permisos asignados a su rol ──
+      // 3. Para no-admins: cargar permisos específicos
       const [
-        { data: rpData,      error: rpError },
-        { data: permisosData, error: pError },
-        { data: modulosData,  error: mError }
+        { data: rpData },
+        { data: permisosData },
+        { data: modulosData }
       ] = await Promise.all([
         supabase.from('rol_permiso').select('*').eq('id_rol', rolId),
         supabase.from('permiso').select('*'),
         supabase.from('modulo').select('*').eq('activo', true)
       ]);
 
-      if (rpError)  console.warn('RbacContext: roles_permisos:', rpError.message);
-      if (pError)   console.warn('RbacContext: permisos:', pError.message);
-      if (mError)   console.warn('RbacContext: modulos:', mError.message);
-
-      // ── 5. Ensamblar en memoria ──
       const modulosAccesibles  = [];
       const permisosExtraidos  = [];
 
       (rpData || []).forEach(rp => {
         const permisoObj = (permisosData || []).find(p => p.id_permiso === rp.id_permiso);
         if (!permisoObj) return;
-
         const moduloObj = (modulosData || []).find(m => m.id_modulo === permisoObj.id_modulo);
         if (!moduloObj) return;
-
-        if (!modulosAccesibles.some(m => m.id_modulo === moduloObj.id_modulo)) {
-          modulosAccesibles.push(moduloObj);
-        }
-
-        permisosExtraidos.push({
-          accion:       permisoObj.accion,
-          id_modulo:    permisoObj.id_modulo,
-          nombre_modulo: moduloObj.nombre
-        });
+        if (!modulosAccesibles.some(m => m.id_modulo === moduloObj.id_modulo)) modulosAccesibles.push(moduloObj);
+        permisosExtraidos.push({ accion: permisoObj.accion, id_modulo: permisoObj.id_modulo, nombre_modulo: moduloObj.nombre });
       });
 
-      console.log('RBAC cargado — módulos:', modulosAccesibles.length, '| permisos:', permisosExtraidos.length);
       setModulos(modulosAccesibles);
       setPermisos(permisosExtraidos);
 
     } catch (error) {
-      console.error('RbacContext: error inesperado:', error);
+      console.error('Rbac Error:', error);
     } finally {
       setLoading(false);
     }
@@ -122,7 +114,7 @@ export function RbacProvider({ children, session }) {
 
   useEffect(() => {
     loadRbac();
-  }, [session]);
+  }, [session?.user?.id]);
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const tienePermiso = (nombreModulo, accion) => {

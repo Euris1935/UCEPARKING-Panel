@@ -16,9 +16,6 @@ export default function SearchableSelect({
     const wrapperRef = useRef(null);
 
     const selectedOption = options.find(o => String(o.value) === String(value));
-
-    // Si el menú está cerrado, mostramos el label del valor.
-    // Si está abierto, mostramos el estado 'search' temporal.
     const inputValue = isOpen ? search : (selectedOption ? selectedOption.label : '');
 
     useEffect(() => {
@@ -46,13 +43,10 @@ export default function SearchableSelect({
                     onChange={(e) => {
                         setSearch(e.target.value);
                         if (!isOpen) setIsOpen(true);
-                        // Limpiar la selección si borra todo el texto manual
-                        if (e.target.value === '') {
-                             onChange('');
-                        }
+                        if (e.target.value === '') onChange('');
                     }}
                     onFocus={() => {
-                        setSearch(''); // Limpia al dar click para mostrar todas las opciones
+                        setSearch('');
                         setIsOpen(true);
                     }}
                     disabled={disabled}
@@ -63,30 +57,48 @@ export default function SearchableSelect({
                 />
             </div>
 
-            {/* Menú Desplegable sin buscador interno */}
             {isOpen && (
                 <div className="absolute z-50 w-full mt-1 bg-white border rounded-lg shadow-xl max-h-60 overflow-y-auto">
                     <div className="py-1">
                         {filteredOptions.length === 0 ? (
                             <div className="p-3 text-sm text-gray-500 text-center">No hay resultados.</div>
                         ) : (
-                            filteredOptions.map(opt => (
-                                <div
-                                    key={opt.value}
-                                    className={`px-3 py-2 text-sm cursor-pointer transition-colors ${String(opt.value) === String(value) ? `${selectedItemClass} font-bold` : 'text-gray-700 hover:bg-gray-100'}`}
-                                    onMouseDown={(e) => {
-                                        // onMouseDown previene que el input pierda focus antes de registrar el clic
-                                        e.preventDefault(); 
-                                        onChange(opt.value);
-                                        setIsOpen(false);
-                                    }}
-                                >
-                                    <div className="flex items-center gap-2">
-                                        {opt.icon && <span className="flex-shrink-0">{opt.icon}</span>}
-                                        <div className="flex-grow">{opt.display || opt.label}</div>
+                            filteredOptions.map(opt => {
+                                const isItemDisabled = opt.disabled === true;
+                                const isSelected = String(opt.value) === String(value);
+                                return (
+                                    <div
+                                        key={opt.value}
+                                        className={`px-3 py-2 text-sm transition-colors
+                                            ${isItemDisabled
+                                                ? 'opacity-50 cursor-not-allowed bg-gray-50'
+                                                : isSelected
+                                                    ? `${selectedItemClass} font-bold cursor-pointer`
+                                                    : 'text-gray-700 hover:bg-gray-100 cursor-pointer'
+                                            }`}
+                                        onMouseDown={(e) => {
+                                            e.preventDefault();
+                                            if (!isItemDisabled) {
+                                                onChange(opt.value);
+                                                setIsOpen(false);
+                                            }
+                                        }}
+                                        title={isItemDisabled && opt.subtitle ? opt.subtitle : undefined}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            {opt.icon && <span className="flex-shrink-0">{opt.icon}</span>}
+                                            <div className="flex-grow">
+                                                <div>{opt.display || opt.label}</div>
+                                                {opt.subtitle && (
+                                                    <div className={`text-[10px] ${isItemDisabled ? 'text-red-400' : 'text-gray-400'}`}>
+                                                        {opt.subtitle}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            ))
+                                );
+                            })
                         )}
                     </div>
                 </div>

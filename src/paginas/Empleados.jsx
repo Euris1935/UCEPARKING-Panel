@@ -4,11 +4,14 @@ import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import {
-  FaSearch, FaUserTie, FaTrash, FaPlus, FaArrowLeft,
+  FaSearch, FaUserTie, FaSync, FaPlus, FaArrowLeft,
   FaBuilding, FaEdit, FaTimes, FaCheck, FaUserCheck,
   FaSitemap, FaUsers
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
+import { useOrg } from '../contexts/OrgContext';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
+import { ESTADO_USUARIO } from '../lib/constants';
 
 export default function Empleados() {
   const { tienePermiso } = useRbac();
@@ -21,12 +24,15 @@ export default function Empleados() {
   // ── Datos generales ─────────────────────────────────────────────────────────
   const [empleados,           setEmpleados]           = useState([]);
   const [departamentos,       setDepartamentos]       = useState([]);
+  const [catEstados,          setCatEstados]          = useState([]);
   const [usuariosSinEmpleo,   setUsuariosSinEmpleo]   = useState([]); // usuarios no empleados aún
   const [adminOrgId,          setAdminOrgId]          = useState(null);
   const [adminOrgNombre,      setAdminOrgNombre]      = useState('');
   const [searchTerm,          setSearchTerm]          = useState('');
   const [loading,             setLoading]             = useState(false);
   const [currentPersonaId,    setCurrentPersonaId]    = useState(null);
+  const [changingStatusFor,   setChangingStatusFor]   = useState(null);
+  const [newStatusChoice,     setNewStatusChoice]     = useState('');
 
   // ── Panel lateral ───────────────────────────────────────────────────────────
   const [panelOpen,     setPanelOpen]     = useState(false);
@@ -35,69 +41,37 @@ export default function Empleados() {
 
   const isUpdating = !!editingEmp;
 
-  // ────────────────────────────────────────────────────────────────────────────
-  useEffect(() => { init(); }, []);
+  const { orgId } = useOrg();
 
-  const init = async () => {
+  // ────────────────────────────────────────────────────────────────────────────
+  useEffect(() => { 
+    if (orgId) loadData(); 
+  }, [orgId]);
+
+  const loadData = async () => {
+    if (!orgId) return;
     setLoading(true);
     try {
-      // 1. Obtener org del admin activo
-      const { data: { user } } = await supabase.auth.getUser();
-      let orgId   = null;
-      let orgNom  = '';
-
-      if (user) {
-        const { data: uRow } = await supabase
-          .from('usuario').select('id_persona').eq('id', user.id).single();
-
-        if (uRow?.id_persona) {
-          setCurrentPersonaId(uRow.id_persona);
-          const { data: empRow } = await supabase
-            .from('empleado')
-            .select('organizacion_id, organizacion(nombre)')
-            .eq('id_persona', uRow.id_persona)
-            .maybeSingle();
-
-          orgId  = empRow?.organizacion_id   || null;
-          orgNom = empRow?.organizacion?.nombre || '';
-        }
-      }
-
-      setAdminOrgId(orgId);
-      setAdminOrgNombre(orgNom);
-
-      // 2. Catálogos
-      const { data: deptData } = await supabase.from('departamento').select('*');
+      // 1. Catálogos
+      const { data: deptData } = await supabase.from('departamento').select('*').eq('organizacion_id', orgId);
       setDepartamentos(deptData || []);
 
-      // 3. Empleados + datos de persona
+      const { data: estData } = await supabase.from('estado_usuario').select('*').order('id_estado');
+      setCatEstados(estData || []);
+      
       await cargarEmpleados(deptData || []);
 
     } catch (err) {
-      console.error('init error:', err);
+      console.error('loadData error:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion) => {
-    if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('contexto', 'evento').eq('nombre', tipo_nombre).maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Personal').maybeSingle();
-      await supabase.from('evento').insert([{ 
-        fecha_hora: new Date().toISOString(), 
-        descripcion: descripcion, 
-        id_persona: currentPersonaId, 
-        id_tipo: te?.id || null, 
-        id_origen_evento: oe?.id_origen || null,
-        organizacion_id: adminOrgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
-  };
+  // ── El log usa `registrarLog` global ──
 
   const cargarEmpleados = async (deptList) => {
-    const { data: emps } = await supabase.from('empleado').select('*').order('id_empleado');
+    const { data: emps } = await supabase.from('empleado').select('*, estado:id_estado(nombre)').eq('organizacion_id', orgId).order('id_empleado');
 
     const { data: orgUsers, error: rpcErr } = await supabase.rpc('get_usuarios_org');
     if (rpcErr) console.warn('get_usuarios_org error:', rpcErr.message);
@@ -111,6 +85,8 @@ export default function Empleados() {
         persona_id:      emp.id_persona,
         departamento_id: emp.departamento_id,
         organizacion_id: emp.organizacion_id,
+        id_estado:       emp.id_estado,
+        nombre_estado:   emp.estado?.nombre || 'Desconocido',
         nombre:          uRow?.nombre   || 'Sin Nombre',
         apellido:        uRow?.apellido || '',
         email:           uRow?.email    || '',
@@ -166,12 +142,16 @@ export default function Empleados() {
       return Swal.fire('Atención', 'Selecciona un usuario del sistema.', 'warning');
     }
 
+    if (!adminOrgId) {
+      return Swal.fire('Error', 'No se ha detectado su organización de administración. Por favor, recargue la página o verifique su perfil.', 'error');
+    }
+
     try {
       Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
 
       const payload = {
         departamento_id: parseInt(departamento_id),
-        ...(adminOrgId ? { organizacion_id: adminOrgId } : {}),
+        organizacion_id: adminOrgId,
       };
 
       if (isUpdating) {
@@ -180,12 +160,26 @@ export default function Empleados() {
           .update(payload)
           .eq('id_empleado', editingEmp.id_empleado);
         if (error) throw error;
+        registrarLog({
+          tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+          descripcion: `Datos de ${editingEmp.nombre} actualizados.`,
+          id_persona: currentPersonaId,
+          organizacion_id: orgId,
+          origen: 'Panel Web - Personal'
+        });
         Swal.fire('Actualizado', 'Datos laborales actualizados.', 'success');
       } else {
         const { error } = await supabase
           .from('empleado')
-          .insert([{ id_persona, ...payload }]);
+          .insert([{ id_persona, id_estado: ESTADO_USUARIO.ACTIVO, ...payload }]);
         if (error) throw error;
+        registrarLog({
+          tipo_nombre: EVENT_TYPES.NUEVO_EMPLEADO || EVENT_TYPES.CAMBIO_ESTADO,
+          descripcion: `Usuario ${id_persona} asignado como empleado.`,
+          id_persona: currentPersonaId,
+          organizacion_id: orgId,
+          origen: 'Panel Web - Personal'
+        });
         Swal.fire('¡Asignado!', 'El usuario fue registrado como empleado.', 'success');
       }
 
@@ -197,22 +191,40 @@ export default function Empleados() {
     }
   };
 
-  // ── Eliminar ────────────────────────────────────────────────────────────────
-  const handleDelete = async (emp) => {
-    const r = await Swal.fire({
-      title: '¿Quitar como empleado?',
-      html: `<b>${emp.nombre} ${emp.apellido}</b><br><small class="text-gray-500">Se eliminará la ficha laboral. El usuario del sistema no se borra.</small>`,
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#d33',
-      confirmButtonText: 'Sí, quitar',
-      cancelButtonText: 'Cancelar',
-    });
-    if (!r.isConfirmed) return;
-    const { error } = await supabase.from('empleado').delete().eq('id_empleado', emp.id_empleado);
-    if (error) return Swal.fire('Error', error.message, 'error');
-    Swal.fire('Eliminado', 'Ficha de empleado eliminada. El usuario del sistema sigue activo.', 'success');
-    await cargarEmpleados(departamentos);
+  const handleConfirmarCambioEstado = async (emp) => {
+    try {
+      setLoading(true);
+      const { error } = await supabase
+        .from('empleado')
+        .update({ id_estado: parseInt(newStatusChoice) })
+        .eq('id_empleado', emp.id_empleado);
+      
+      if (error) throw error;
+      
+      const stName = catEstados.find(s => s.id_estado === parseInt(newStatusChoice))?.nombre || 'Desconocido';
+      registrarLog({
+        tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+        descripcion: `Empleado ${emp.nombre} ${emp.apellido} cambiado a estado ${stName}`,
+        id_persona: currentPersonaId,
+        organizacion_id: orgId,
+        origen: 'Panel Web - Personal'
+      });
+      
+      Swal.fire({
+        title: 'Estado Actualizado',
+        icon: 'success',
+        timer: 1500,
+        showConfirmButton: false
+      });
+
+      setChangingStatusFor(null);
+      await cargarEmpleados(departamentos);
+    } catch (err) {
+      console.error(err);
+      Swal.fire('Error', 'No se pudo cambiar el estado.', 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -301,12 +313,13 @@ export default function Empleados() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-100 text-sm">
-                  <thead className="bg-gray-50 text-xs font-bold text-gray-500 uppercase">
+                <table className="min-w-full divide-y divide-gray-100 text-base">
+                  <thead className="bg-gray-50 text-sm font-bold text-gray-500 uppercase">
                     <tr>
                       <th className="px-5 py-3 text-left">Empleado</th>
                       <th className="px-5 py-3 text-left">Contacto</th>
-                        <th className="px-5 py-3 text-left">Departamento</th>
+                      <th className="px-5 py-3 text-left">Departamento</th>
+                      <th className="px-5 py-3 text-center">Estado</th>
                       <th className="px-5 py-3 text-center">Acciones</th>
                     </tr>
                   </thead>
@@ -314,30 +327,68 @@ export default function Empleados() {
                     {filtrados.map(emp => (
                       <tr
                         key={emp.id_empleado}
-                        className={`hover:bg-purple-50 transition-all cursor-pointer ${editingEmp?.id_empleado === emp.id_empleado ? 'bg-purple-50 ring-1 ring-inset ring-purple-300' : ''}`}
+                        className={`hover:bg-purple-50 transition-all cursor-pointer ${editingEmp?.id_empleado === emp.id_empleado ? 'bg-purple-50 ring-1 ring-inset ring-purple-300' : ''} ${emp.nombre_estado.toLowerCase() !== 'activo' ? 'opacity-60 grayscale-[0.3]' : ''}`}
                         onClick={() => canEdit && abrirEditar(emp)}
                       >
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="bg-gradient-to-br from-purple-500 to-purple-700 text-white w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm shadow-sm">
+                            <div className="bg-gradient-to-br from-purple-500 to-purple-700 text-white w-10 h-10 rounded-full flex items-center justify-center font-bold text-base shadow-sm">
                               {emp.nombre.charAt(0)}{emp.apellido.charAt(0)}
                             </div>
                             <div>
-                              <p className="font-bold text-gray-900">{emp.nombre} {emp.apellido}</p>
+                              <p className="font-bold text-gray-900 text-base">{emp.nombre} {emp.apellido}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-5 py-4 text-gray-500 text-xs">
+                        <td className="px-5 py-4 text-gray-500 text-sm">
                           <div className="flex flex-col gap-0.5">
                             <span>{emp.email || '—'}</span>
-                            <span>{emp.telefono || ''}</span>
                           </div>
                         </td>
-                        <td className="px-5 py-4 text-gray-600 text-xs">
+                        <td className="px-5 py-4 text-gray-600 text-sm">
                           <span className="flex items-center gap-1">
-                            <FaSitemap size={10} className="text-gray-400" />
+                            <FaSitemap size={12} className="text-gray-400" />
                             {emp.nombre_depto}
                           </span>
+                        </td>
+                        <td className="px-5 py-4 text-center" onClick={ev => ev.stopPropagation()}>
+                           {changingStatusFor === emp.id_empleado ? (
+                              <div className="flex items-center justify-center gap-1 animate-fadeIn">
+                                <select
+                                  value={newStatusChoice}
+                                  onChange={(e) => setNewStatusChoice(e.target.value)}
+                                  className="border border-purple-300 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-purple-200 focus:border-purple-500 outline-none transition-all cursor-pointer bg-white"
+                                >
+                                  {catEstados.map(s => (
+                                    <option key={s.id_estado} value={s.id_estado}>{s.nombre}</option>
+                                  ))}
+                                </select>
+                                <button 
+                                  onClick={() => handleConfirmarCambioEstado(emp)}
+                                  className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm"
+                                  title="Confirmar"
+                                >
+                                  {loading ? <FaSync size={12} className="animate-spin" /> : <FaCheck size={12} />}
+                                </button>
+                                <button 
+                                  onClick={() => setChangingStatusFor(null)}
+                                  className="p-2 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition"
+                                  title="Cancelar"
+                                >
+                                  <FaTimes size={12} />
+                                </button>
+                              </div>
+                           ) : (
+                             <div
+                                className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
+                                  emp.nombre_estado.toLowerCase() === 'activo' ? 'bg-green-100 text-green-700' :
+                                  emp.nombre_estado.toLowerCase().includes('inactivo') ? 'bg-gray-100 text-gray-600' :
+                                  'bg-red-100 text-red-700'
+                                }`}
+                             >
+                                {emp.nombre_estado}
+                             </div>
+                           )}
                         </td>
                         <td className="px-5 py-4 text-center" onClick={ev => ev.stopPropagation()}>
                           <div className="flex gap-1.5 justify-center">
@@ -350,13 +401,16 @@ export default function Empleados() {
                                 <FaEdit size={13} />
                               </button>
                             )}
-                            {canDelete && (
+                            {canEdit && (
                               <button
-                                onClick={() => handleDelete(emp)}
-                                className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition"
-                                title="Quitar como empleado"
+                                onClick={() => {
+                                  setChangingStatusFor(emp.id_empleado);
+                                  setNewStatusChoice(emp.id_estado.toString());
+                                }}
+                                className="px-3 py-2 rounded-lg border border-purple-200 text-purple-600 hover:bg-purple-50 text-xs font-bold transition flex items-center gap-2"
+                                title="Cambiar Estado"
                               >
-                                <FaTrash size={13} />
+                                <FaSync size={12} /> <span>Estado</span>
                               </button>
                             )}
                           </div>

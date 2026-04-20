@@ -64,10 +64,10 @@ export default function BarraLateral() {
     <aside className="w-64 h-screen bg-white flex flex-col p-4 border-r border-gray-200 fixed left-0 top-0 z-50 overflow-hidden">
 
 
-      <div className="flex items-center gap-2 mb-8 px-2 h-16 shrink-0">
+      <Link to="/" className="flex items-center gap-2 mb-8 px-2 h-16 shrink-0 hover:opacity-80 transition-opacity">
         <FaParking className="text-green-600 text-4xl" />
         <h1 className="text-2xl font-extrabold text-green-700 tracking-wide">UCE PARKING</h1>
-      </div>
+      </Link>
 
 
       <nav className="flex-grow space-y-1 overflow-y-auto custom-scrollbar">

@@ -5,13 +5,13 @@ import Swal from 'sweetalert2';
 import { FaSearch, FaPlus, FaMicrochip, FaTrash, FaEdit, FaSync, FaTimesCircle } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
 
 export default function Sensores() {
   const { orgId } = useOrg();
   const [dispositivos, setDispositivos] = useState([]);
   const [plazas, setPlazas] = useState([]);
   const [estadosEquipo, setEstadosEquipo] = useState([]);
-  const [estadosSensor, setEstadosSensor] = useState([]);
   
   // Catálogos nuevos v2.0
   const [listaTipos, setListaTipos] = useState([]);
@@ -28,16 +28,10 @@ export default function Sensores() {
     id_tipo: '',
     id_marca: '',
     id_modelo: '',
-    tipo_descripcion: '',
     id_plaza: '',
     id_estado: '',       // Estado Operativo (contexto equipo)
-    id_estado_sensor: '', // Estado del Sensor (contexto sensor)
     fecha_instalacion: new Date().toISOString().split('T')[0],
-    ultimo_mantenimiento: '',
-    // RF4: Parámetros IoT configurables
-    param_frecuencia: 5,
-    param_umbral: 10,
-    param_timeout: 30
+    ultimo_mantenimiento: ''
   };
   const [formData, setFormData] = useState(initialForm);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -45,21 +39,17 @@ export default function Sensores() {
   const [localOrgId, setLocalOrgId] = useState(null);
 
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        // Obtener persona y organización de forma redundante (como en Tickets.jsx)
-        const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user.id).single();
-        if (uData?.id_persona) {
-          setCurrentPersonaId(uData.id_persona);
-          const { data: empData } = await supabase.from('empleado').select('organizacion_id').eq('id_persona', uData.id_persona).maybeSingle();
-          if (empData?.organizacion_id) setLocalOrgId(empData.organizacion_id);
-        }
-      }
-    };
-    init();
-    loadData();
-  }, []);
+    if (orgId) {
+      loadData();
+      // Sincronización en tiempo real
+      const channel = supabase.channel('realtime_sensores')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'dispositivo' }, loadData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
+        .subscribe();
+      return () => { supabase.removeChannel(channel); };
+    }
+  }, [orgId]);
 
   const loadData = async () => {
     setIsRefreshing(true);
@@ -68,51 +58,49 @@ export default function Sensores() {
         .from('dispositivo')
         .select(`
           *,
-          tipo:id_tipo(id, nombre),
-          modelo:id_modelo(id_modelo, nombre, id_marca, marca(id_marca, nombre)),
-          plaza:id_plaza(id_plaza, numero_plaza),
-          estado:id_estado(id, nombre),
-          estado_sensor:id_estado_sensor(id, nombre)
+          tipo:tipo_dispositivo!id_tipo(id_tipo, nombre),
+          modelo:modelo!id_modelo(id_modelo, nombre, id_marca, marca!modelo_marca_fk(id_marca, nombre)),
+          plaza:plaza!id_plaza(id_plaza, numero_plaza),
+          estado:estado_dispositivo!dispositivo_estado_fk(id_estado, nombre)
         `)
+        .eq('organizacion_id', orgId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setDispositivos(dispData || []);
-      console.log("Lista de Dispositivos recuperada:", dispData);
 
-      // 2. Carga paralela de catálogos para mayor velocidad y blindaje
+      // 2. Carga paralela de catálogos
       const [
         { data: tTipos }, 
         { data: tMarcas }, 
         { data: tModelos }, 
         { data: pData }, 
-        { data: eEquipo },
-        { data: eSensor }
+        { data: eDisp }
       ] = await Promise.all([
-        supabase.from('tipo').select('*').eq('contexto', 'dispositivo').order('nombre'),
-        supabase.from('marca').select('*').eq('tipo', 'equipo').order('nombre'),
-        supabase.from('modelo').select('*').eq('tipo', 'equipo').order('nombre'),
-        supabase.from('plaza').select('*').order('numero_plaza'),
-        supabase.from('estado').select('*').eq('contexto', 'equipo').order('nombre'),
-        supabase.from('estado').select('*').eq('contexto', 'sensor').order('nombre')
+        supabase.from('tipo_dispositivo').select('id_tipo, nombre').order('nombre'),
+        supabase.from('marca').select('id_marca, nombre').order('nombre'),
+        supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre'),
+        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, estado_zona(nombre))').eq('organizacion_id', orgId).order('numero_plaza'),
+        supabase.from('estado_dispositivo').select('id_estado, nombre').order('nombre')
       ]);
 
       setListaTipos(tTipos || []);
       setListaMarcas(tMarcas || []);
       setListaModelos(tModelos || []);
-      setPlazas(pData || []);
-      setEstadosEquipo(eEquipo || []);
-      setEstadosSensor(eSensor || []);
+      
+      // Filtrar plazas solo de zonas "Activas"
+      const plazasDisponibles = (pData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa');
+      setPlazas(plazasDisponibles);
+      
+      setEstadosEquipo(eDisp || []);
 
       // Valores por defecto para nuevos registros
       if (!editingId && !formData.id_estado) {
-        const estOperativo = (eEquipo || []).find(e => e.nombre.toLowerCase().includes('operativo'));
-        const estActivo = (eSensor || []).find(e => e.nombre.toLowerCase().includes('activo'));
+        const estOperativo = (eDisp || []).find(e => e.nombre.toLowerCase().includes('operativo'));
         
         setFormData(prev => ({ 
           ...prev, 
-          id_estado: estOperativo?.id || prev.id_estado,
-          id_estado_sensor: estActivo?.id || prev.id_estado_sensor
+          id_estado: estOperativo?.id_estado || prev.id_estado
         }));
       }
       
@@ -132,42 +120,30 @@ export default function Sensores() {
     }
   };
 
-  const registrarLog = async (tipo_nombre, descripcion, idPlaza = null, idDisp = null) => {
+  const handleRegistrarLog = async (tipo_nombre, descripcion, idPlaza = null, idDisp = null) => {
     if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo').select('id').eq('nombre', tipo_nombre).eq('contexto', 'evento').maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Hardware').maybeSingle();
-      
-      await supabase.from('evento').insert([{
-        fecha_hora: new Date().toISOString(),
-        descripcion: descripcion,
-        id_plaza: idPlaza,
-        id_persona: currentPersonaId,
-        id_tipo: te?.id || null,
-        id_origen_evento: oe?.id_origen || null,
-        id_dispositivo: idDisp,
-        organizacion_id: orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
+    await registrarLog({
+      tipo_nombre,
+      descripcion,
+      id_persona: currentPersonaId,
+      organizacion_id: orgId,
+      id_plaza: idPlaza,
+      id_dispositivo: idDisp,
+      origen: 'Panel Web - Hardware y Sensores'
+    });
   };
 
   const handleEdit = (disp) => {
     setEditingId(disp.id_dispositivo);
     
-    let params = { param_frecuencia: 5, param_umbral: 10, param_timeout: 30 };
-    let descTexto = '';
-
     setFormData({
       id_tipo: disp.id_tipo || '',
       id_marca: disp.modelo?.id_marca || '',
       id_modelo: disp.id_modelo || '',
-      tipo_descripcion: disp.ubicacion || descTexto,
       id_plaza: disp.id_plaza ? String(disp.id_plaza) : '',
       id_estado: disp.id_estado ? String(disp.id_estado) : '',
-      id_estado_sensor: disp.id_estado_sensor ? String(disp.id_estado_sensor) : '',
       fecha_instalacion: disp.fecha_instalacion ? disp.fecha_instalacion.split('T')[0] : '',
-      ultimo_mantenimiento: disp.ultimo_mantenimiento || '',
-      ...params
+      ultimo_mantenimiento: disp.ultimo_mantenimiento || ''
     });
     setShowModal(true);
   };
@@ -176,20 +152,9 @@ export default function Sensores() {
     e.preventDefault();
     setLoading(true);
 
-    const tipoObj = listaTipos.find(t => t.id === parseInt(formData.id_tipo));
-    const esSensor = tipoObj?.nombre?.toLowerCase().includes('sensor');
+    const tipoObj = listaTipos.find(t => String(t.id_tipo) === String(formData.id_tipo));
 
     try {
-      if (esSensor) {
-         const descripcionFinal = JSON.stringify({
-            descripcion: formData.tipo_descripcion,
-            frecuencia: parseInt(formData.param_frecuencia),
-            umbral: parseInt(formData.param_umbral),
-            timeout: parseInt(formData.param_timeout)
-          });
-          await supabase.from('tipo').update({ descripcion: descripcionFinal }).eq('id', formData.id_tipo);
-      }
-
       const effectiveOrgId = localOrgId || orgId;
 
       const dispData = {
@@ -197,10 +162,8 @@ export default function Sensores() {
         id_modelo: parseInt(formData.id_modelo),
         id_plaza: formData.id_plaza || null,
         id_estado: parseInt(formData.id_estado) || null,
-        id_estado_sensor: parseInt(formData.id_estado_sensor) || null,
         fecha_instalacion: formData.fecha_instalacion,
         ultimo_mantenimiento: formData.ultimo_mantenimiento || null,
-        ubicacion: formData.tipo_descripcion,
         // Enviar organizacion_id solo si existe (evita violar RLS por null)
         ...(effectiveOrgId ? { organizacion_id: effectiveOrgId } : {})
       };
@@ -218,18 +181,14 @@ export default function Sensores() {
         if (error) throw error;
         
         // Log de actualización inteligente
-        const nombreEstadoOp = estadosEquipo.find(e => String(e.id) === String(formData.id_estado))?.nombre || 'N/A';
-        const nombreEstadoSen = esSensor ? (estadosSensor.find(e => String(e.id) === String(formData.id_estado_sensor))?.nombre || 'N/A') : null;
+        const nombreEstadoOp = estadosEquipo.find(e => String(e.id_estado) === String(formData.id_estado))?.nombre || 'N/A';
         
-        const tipoLog = nombreEstadoOp.toLowerCase().includes('operativo') ? 'Dispositivo Online' : 
-                       nombreEstadoOp.toLowerCase().includes('mantenimiento') ? 'Mantenimiento En Progreso' : 'Dispositivo Offline';
+        const tipoLog = nombreEstadoOp.toLowerCase().includes('operativo') ? EVENT_TYPES.DISPOSITIVO_ONLINE : 
+                       nombreEstadoOp.toLowerCase().includes('mantenimiento') ? EVENT_TYPES.MANTENIMIENTO_INICIADO : EVENT_TYPES.DISPOSITIVO_OFFLINE;
         
         let descLog = `Actualización de ${tipoObj?.nombre || 'Dispositivo'}: Estado Operativo a ${nombreEstadoOp}.`;
-        if (esSensor && nombreEstadoSen) {
-          descLog += ` Estado técnico del sensor: ${nombreEstadoSen}.`;
-        }
 
-        await registrarLog(
+        await handleRegistrarLog(
           tipoLog,
           descLog,
           formData.id_plaza || null,
@@ -241,8 +200,8 @@ export default function Sensores() {
         const { data: nDisp, error } = await supabase.from('dispositivo').insert([dispData]).select('id_dispositivo').single();
         if (error) throw error;
         
-        await registrarLog(
-          'Dispositivo Online',
+        await handleRegistrarLog(
+          EVENT_TYPES.DISPOSITIVO_ONLINE,
           `Nuevo dispositivo registrado: ${tipoObj?.nombre || 'Equipo'}.`,
           formData.id_plaza || null,
           nDisp.id_dispositivo
@@ -265,12 +224,10 @@ export default function Sensores() {
   const handleNew = () => {
     setEditingId(null);
     const estOperativo = estadosEquipo.find(e => e.nombre.toLowerCase().includes('operativo'));
-    const estActivo = estadosSensor.find(e => e.nombre.toLowerCase().includes('activo'));
     
     setFormData({
       ...initialForm,
-      id_estado: estOperativo?.id || '',
-      id_estado_sensor: estActivo?.id || ''
+      id_estado: estOperativo?.id_estado || ''
     });
     setShowModal(true);
   };
@@ -305,8 +262,8 @@ export default function Sensores() {
         
         if (error) throw error;
 
-        await registrarLog(
-          'Dispositivo Offline',
+        await handleRegistrarLog(
+          EVENT_TYPES.DISPOSITIVO_OFFLINE,
           `Dispositivo eliminado permanentemente: ${disp.tipo?.nombre || 'Equipo'}.`,
           disp.id_plaza || null,
           null // Ya no existe el ID del dispositivo
@@ -326,7 +283,7 @@ export default function Sensores() {
     return nombreTipo.includes(busqueda) || numeroPlaza.includes(busqueda);
   });
 
-  const tipoActual = listaTipos.find(t => t.id === parseInt(formData.id_tipo));
+  const tipoActual = listaTipos.find(t => String(t.id_tipo) === String(formData.id_tipo));
   const esSensor = tipoActual?.nombre?.toLowerCase().includes('sensor');
 
   return (
@@ -386,7 +343,6 @@ export default function Sensores() {
                     <tr key={disp.id_dispositivo} className="hover:bg-gray-50/50 transition duration-150 group">
                       <td className="px-6 py-4">
                         <div className="font-bold text-gray-900 uppercase text-xs">{disp.tipo?.nombre}</div>
-                        <div className="text-[10px] text-gray-400 italic font-medium">{disp.ubicacion || '-'}</div>
                       </td>
                       <td className="px-6 py-4 font-medium text-gray-600 text-xs">
                         {disp.modelo?.marca?.nombre} - {disp.modelo?.nombre}
@@ -418,15 +374,6 @@ export default function Sensores() {
                           ) : (
                             <span className="text-gray-300 text-[10px] italic">Estado N/A</span>
                           )}
-                          
-                          {disp.id_estado_sensor && disp.estado_sensor && disp.tipo?.nombre?.toLowerCase().includes('sensor') && (
-                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border uppercase tracking-tighter w-fit ${
-                              disp.estado_sensor.nombre.toLowerCase().includes('activo') ? 'bg-purple-50 text-purple-600 border-purple-100' :
-                              'bg-gray-50 text-gray-500 border-gray-200'
-                            }`}>
-                              Sensor: {disp.estado_sensor.nombre}
-                            </span>
-                          )}
                         </div>
                       </td>
                       <td className="px-6 py-4 text-right flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
@@ -457,7 +404,7 @@ export default function Sensores() {
               <div>
                 <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo de Equipo *</label>
                 <SearchableSelect 
-                  options={listaTipos.map(t => ({ value: t.id, label: t.nombre }))}
+                  options={listaTipos.map(t => ({ value: t.id_tipo, label: t.nombre }))}
                   value={formData.id_tipo} 
                   onChange={val => setFormData({ ...formData, id_tipo: val })} 
                   placeholder="— Seleccionar Tipo —"
@@ -467,16 +414,7 @@ export default function Sensores() {
                 />
               </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Descripción Breve</label>
-                <input 
-                  type="text" 
-                  className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" 
-                  placeholder="Ej: Cámara carril entrada" 
-                  value={formData.tipo_descripcion} 
-                  onChange={e => setFormData({ ...formData, tipo_descripcion: e.target.value })} 
-                />
-              </div>
+              {/* Campo ubicación eliminado por normalización */}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -550,46 +488,9 @@ export default function Sensores() {
                     disabled={!editingId}
                   >
                     {!editingId && <option value="">Auto: Operativo</option>}
-                    {estadosEquipo.map(est => <option key={est.id} value={est.id}>{est.nombre}</option>)}
+                    {estadosEquipo.map(est => <option key={est.id_estado} value={est.id_estado}>{est.nombre}</option>)}
                   </select>
                 </div>
-
-                {/* MOSTRAR ESTADO SENSOR E IOT SOLO SI ES SENSOR */}
-                {esSensor && (
-                  <>
-                    <div className="border-t border-gray-200 pt-3">
-                      <label className="block text-[10px] font-black text-purple-600 mb-1 uppercase tracking-widest">Estado del Sensor</label>
-                      <select 
-                        className={`border p-2 rounded-lg w-full text-sm bg-purple-50 border-purple-200 outline-none focus:ring-2 focus:ring-purple-200 font-bold ${!editingId ? 'bg-gray-100 cursor-not-allowed opacity-75' : ''}`}
-                        value={formData.id_estado_sensor} 
-                        onChange={e => setFormData({ ...formData, id_estado_sensor: e.target.value })}
-                        required
-                        disabled={!editingId}
-                      >
-                        {!editingId && <option value="">Auto: Activo</option>}
-                        {estadosSensor.map(est => <option key={est.id} value={est.id}>{est.nombre}</option>)}
-                      </select>
-                    </div>
-
-                    <div className="border-t border-purple-100 pt-3">
-                      <p className="text-[10px] font-black text-orange-600 uppercase tracking-widest mb-3">Parámetros IoT Remotos</p>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Frecuencia (s)</label>
-                          <input type="number" min="1" max="60" className="w-full border rounded-lg p-2 text-sm text-center font-bold bg-orange-50 border-orange-200" value={formData.param_frecuencia} onChange={e => setFormData({ ...formData, param_frecuencia: e.target.value })} />
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Umbral (cm)</label>
-                          <input type="number" min="1" max="500" className="w-full border rounded-lg p-2 text-sm text-center font-bold bg-orange-50 border-orange-200" value={formData.param_umbral} onChange={e => setFormData({ ...formData, param_umbral: e.target.value })} />
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-bold text-gray-500 uppercase block mb-1">Timeout (s)</label>
-                          <input type="number" min="5" max="300" className="w-full border rounded-lg p-2 text-sm text-center font-bold bg-orange-50 border-orange-200" value={formData.param_timeout} onChange={e => setFormData({ ...formData, param_timeout: e.target.value })} />
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
               </div>
 
               <div className={`grid ${editingId ? 'grid-cols-2' : ''} gap-3`}>

@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import { FaSearch, FaFilter, FaSync, FaExclamationTriangle, FaCheckCircle, FaBolt, FaHistory, FaCar, FaCarSide, FaBan, FaTicketAlt, FaTools, FaWifi, FaWrench, FaTrash, FaUserPlus, FaList, FaLock, FaCog, FaMapMarkerAlt, FaUserTie } from 'react-icons/fa';
+import { FaSearch, FaFilter, FaSync, FaExclamationTriangle, FaCheckCircle, FaBolt, FaHistory, FaCar, FaCarSide, FaBan, FaTicketAlt, FaTools, FaWifi, FaWrench, FaTrash, FaUserPlus, FaList, FaLock, FaCog, FaMapMarkerAlt, FaUserTie, FaSignOutAlt } from 'react-icons/fa';
+import { useOrg } from '../contexts/OrgContext';
 
 const TIPO_COLORES = {
     'Entrada': { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', icon: FaCar },
@@ -36,26 +37,32 @@ const TIPO_COLORES = {
     'Zona Modificada': { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: FaMapMarkerAlt },
     'Empleado Registrado': { bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200', icon: FaUserTie },
     'Cambio de Estado': { bg: 'bg-zinc-50', text: 'text-zinc-700', border: 'border-zinc-200', icon: FaSync },
+    'Inicio de Sesión': { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: FaLock },
+    'Cierre de Sesión': { bg: 'bg-slate-50', text: 'text-slate-700', border: 'border-slate-200', icon: FaSignOutAlt },
+    'Acceso Manual': { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', icon: FaBolt },
 };
 const TIPO_DEFAULT = { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200', icon: FaHistory };
 
 export default function Logs() {
+    const { orgId } = useOrg();
     const [eventos, setEventos] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [filtroTipo, setFiltroTipo] = useState('TODOS');
 
     useEffect(() => {
-        loadEventos();
-        // Suscripción en tiempo real
-        const channel = supabase
-            .channel('realtime_eventos')
-            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'evento' }, () => loadEventos())
-            .subscribe();
-        return () => supabase.removeChannel(channel);
-    }, []);
+        if (orgId) {
+            loadEventos();
+            const channel = supabase
+                .channel('realtime_eventos')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'evento' }, () => loadEventos())
+                .subscribe();
+            return () => supabase.removeChannel(channel);
+        }
+    }, [orgId]);
 
     const loadEventos = async () => {
+        if (!orgId) return;
         setLoading(true);
         try {
             const { data, error } = await supabase
@@ -63,13 +70,13 @@ export default function Logs() {
                 .select(`
                     *,
                     persona ( nombre, apellido ),
-                    tipo ( nombre ),
-                    origen_evento ( nombre ),
+                    tipo:tipo_evento!id_tipo ( nombre ),
+                    plaza:id_plaza ( numero_plaza ),
                     dispositivo (
-                        ubicacion,
-                        tipo ( nombre )
+                        tipo:tipo_dispositivo!id_tipo ( nombre )
                     )
                 `)
+                .eq('organizacion_id', orgId)
                 .order('fecha_hora', { ascending: false })
                 .limit(200);
 
@@ -180,15 +187,14 @@ export default function Logs() {
                                                 </p>
                                             </td>
                                             <td className="px-6 py-4 text-gray-500">
-                                                {ev.id_plaza ? (
-                                                    <span className="font-bold text-blue-600">#{ev.id_plaza}</span>
+                                                {ev.plaza?.numero_plaza ? (
+                                                    <span className="font-bold text-blue-600">{ev.plaza.numero_plaza}</span>
                                                 ) : <span className="text-gray-300">—</span>}
                                             </td>
                                             <td className="px-6 py-4 text-xs text-gray-500">
                                                 {ev.dispositivo ? (
                                                     <span>
                                                         <span className="font-semibold">{ev.dispositivo.tipo?.nombre}</span>
-                                                        <span className="block text-gray-400">{ev.dispositivo.ubicacion}</span>
                                                     </span>
                                                 ) : (
                                                     <span className="text-gray-300">—</span>
@@ -196,7 +202,6 @@ export default function Logs() {
                                             </td>
                                             <td className="px-6 py-4 text-xs text-gray-600">
                                                 <span className="block font-medium">{ev.persona ? `${ev.persona.nombre} ${ev.persona.apellido}` : 'Sistema'}</span>
-                                                {ev.origen_evento?.nombre && <span className="text-gray-400 italic">{ev.origen_evento.nombre}</span>}
                                             </td>
                                         </tr>
                                     );

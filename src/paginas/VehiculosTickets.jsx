@@ -7,6 +7,10 @@ import {
   FaPrint, FaSignOutAlt, FaClipboardCheck, FaSyncAlt, FaBan, FaSearch
 } from 'react-icons/fa';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { useOrg } from '../contexts/OrgContext';
+import { useRbac } from '../contexts/RbacContext';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
+import { ESTADO_PLAZA, ESTADO_TICKET } from '../lib/constants';
 
 // ═══════════════════════════════════════════════════════════
 // BD REAL:
@@ -69,6 +73,9 @@ function Row({ label, value, bold, mono }) {
 }
 
 export default function VehiculosTickets() {
+  const { orgId } = useOrg();
+  const { esAdmin } = useRbac();
+  
   const [loading, setLoading]                 = useState(false);
   const [activeTab, setActiveTab]             = useState('entrada');
   const [tickets, setTickets]                 = useState([]);
@@ -82,7 +89,6 @@ export default function VehiculosTickets() {
   const [isRefreshing, setIsRefreshing]       = useState(false);
   const [searchTerm, setSearchTerm]             = useState('');
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
-  const [currentOrgId, setCurrentOrgId]         = useState(null); 
   const [ticketParaImprimir, setTicketParaImprimir] = useState(null);
   const intervaloRef = useRef(null);
 
@@ -99,123 +105,101 @@ export default function VehiculosTickets() {
   const [editVehForm, setEditVehForm]           = useState({ placa: '', id_marca: '', id_color: '' });
 
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: uData } = await supabase
-          .from('usuario')
-          .select('id_persona')
-          .eq('id', user.id)
-          .single();
-        if (uData?.id_persona) {
-          setCurrentPersonaId(uData.id_persona);
-          // Obtener organizacion_id del empleado activo
-          const { data: empData } = await supabase
-            .from('empleado')
-            .select('organizacion_id')
-            .eq('id_persona', uData.id_persona)
-            .maybeSingle();
-          if (empData?.organizacion_id) setCurrentOrgId(empData.organizacion_id);
-        }
-      }
-    };
-    init();
-    loadData();
+    if (orgId) {
+      loadData();
+    }
     intervaloRef.current = setInterval(checkExpiredTickets, 60_000);
     const ch = supabase.channel('rt_vt')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket' }, loadData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, loadData)
       .subscribe((s) => { if (s === 'CHANNEL_ERROR') console.error('Error canal rt_vt'); });
     return () => { supabase.removeChannel(ch); clearInterval(intervaloRef.current); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [orgId]);
 
   const loadData = async () => {
+    if (!orgId) return;
     try {
       setIsRefreshing(true);
-      // 1. Plazas libres
-      const { data: epLibre } = await supabase
-        .from('estado').select('id').eq('contexto', 'plaza').ilike('nombre', 'Libre').maybeSingle();
-      const idLibre = epLibre?.id ?? 1;
-      const { data: plazas } = await supabase.from('plaza').select('*').eq('id_estado', idLibre);
-
-      // 2. Catálogo de estados
-      const { data: stCat } = await supabase.from('estado').select('id, nombre').eq('contexto', 'ticket');
-      const stMap = {}; (stCat || []).forEach(s => { stMap[s.id] = s.nombre; });
-
-      // 3. Cargar TODO el universo de Personas y Visitantes (Para que aparezca Jarol)
-      const { data: allP } = await supabase.from('persona').select('*').order('nombre');
-      const { data: allV } = await supabase.from('visitante').select('*');
+      const hoy = new Date(); hoy.setHours(0,0,0,0);
       
+      const [
+        { data: epLibre },
+        { data: plazasRaw },
+        { data: stCat },
+        { data: allP },
+        { data: allV },
+        { data: tks },
+        { data: vhs },
+        { data: marcas },
+        { data: colores }
+      ] = await Promise.all([
+        supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle(),
+        supabase.from('plaza').select('*, zona:id_zona(estado_zona(nombre))').eq('id_estado', 1).eq('organizacion_id', orgId),
+        supabase.from('estado_ticket').select('id_estado, nombre'),
+        supabase.from('persona').select('*').eq('organizacion_id', orgId).order('nombre'),
+        supabase.from('visitante').select('*').eq('organizacion_id', orgId),
+        supabase.from('ticket').select('*, plaza:id_plaza_asignada(numero_plaza)').eq('organizacion_id', orgId).gte('fecha_hora_emision', hoy.toISOString()).order('fecha_hora_emision', { ascending: false }),
+        supabase.from('vehiculo').select('*, modelo(nombre, marca(nombre)), color(nombre), persona(nombre, apellido)').eq('organizacion_id', orgId).order('created_at', { ascending: false }),
+        supabase.from('marca').select('*').order('nombre'),
+        supabase.from('color').select('*').order('nombre')
+      ]);
+
+      const idLibre = ESTADO_PLAZA.LIBRE;
+      setPlazasLibres((plazasRaw || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa'));
+
+      const stMap = {}; (stCat || []).forEach(s => { stMap[s.id_estado] = s.nombre; });
       const pMap = {}; (allP || []).forEach(p => { pMap[p.id_persona] = p; });
       const vMap = {}; (allV || []).forEach(v => { vMap[v.id_visitante] = { ...v, persona: pMap[v.id_persona] }; });
 
-      // 4. Tickets de hoy
-      const hoy = new Date(); hoy.setHours(0,0,0,0);
-      const { data: tks } = await supabase
-        .from('ticket')
-        .select('*, plaza:id_plaza_asignada(numero_plaza)')
-        .gte('fecha_hora_emision', hoy.toISOString())
-        .order('fecha_hora_emision', { ascending: false });
-
-      const enrichedTickets = (tks || []).map(t => {
-        const visitor = vMap[t.id_visitante];
-        return {
+      setTickets((tks || []).map(t => ({
           ...t,
           _statusName: stMap[t.id_estado] || '—',
-          _personaNombre: visitor?.persona ? `${visitor.persona.nombre} ${visitor.persona.apellido}` : (t.placa_capturada || '—')
-        };
-      });
+          _personaNombre: vMap[t.id_visitante]?.persona ? `${vMap[t.id_visitante].persona.nombre} ${vMap[t.id_visitante].persona.apellido}` : (t.placa_capturada || '—')
+      })));
 
-      // 5. Vehículos
-      const { data: vhs } = await supabase.from('vehiculo').select('*, marca(nombre), color(nombre), persona(nombre, apellido)').order('created_at', { ascending: false });
-
-      // 6. Catálogos
-      const { data: marcas }  = await supabase.from('marca').select('*').order('nombre');
-      const { data: colores } = await supabase.from('color').select('*').order('nombre');
-
-      setPlazasLibres(plazas || []);
-      setTickets(enrichedTickets);
-      setTicketsActivos(enrichedTickets.filter(t => t._statusName?.toLowerCase() === 'activo').length);
+      setTicketsActivos((tks || []).filter(t => stMap[t.id_estado]?.toLowerCase() === 'activo').length);
       setVehiculos(vhs || []);
       setVisitantesReg(Object.values(vMap));
       setPersonasSistema(allP || []);
       setMarcasCat(marcas || []);
       setColoresCat(colores || []);
-    } catch (err) { console.error('Error cargando datos:', err); } finally { setIsRefreshing(false); }
+
+    } catch (err) { console.error('Error loadData VehiculosTickets:', err); } finally { setIsRefreshing(false); }
   };
 
-  const registrarLog = async (tipo, descripcion, idPlaza = null) => {
-    if (!currentPersonaId) return;
+  const handleRegistrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
+    if (!orgId) return;
     try {
-      // evento: id_tipo (FK)
-      // Buscar id del tipo de evento
-      const { data: tipoData } = await supabase
-        .from('tipo').select('id').eq('contexto', 'evento').ilike('nombre', tipo).maybeSingle();
-      await supabase.from('evento').insert([{
-        fecha_hora:      new Date().toISOString(),
-        id_tipo:         tipoData?.id || null,
-        descripcion:     descripcion,
-        id_plaza:        idPlaza,
-        id_persona:      currentPersonaId,
-        id_origen_evento: (await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Vehículos y Tickets').single()).data?.id_origen || null
-      }]);
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: uData } = await supabase.from('usuario').select('id_persona').eq('id', user?.id).maybeSingle();
+
+      await registrarLog({
+        tipo_nombre,
+        descripcion,
+        id_persona: uData?.id_persona || null,
+        organizacion_id: orgId,
+        id_plaza: idPlaza,
+        origen: 'Panel Web - Vehiculos y Tickets'
+      });
     } catch (e) { console.warn('Log error:', e.message); }
   };
 
   const checkExpiredTickets = async () => {
     try {
-      const { data: epLibre } = await supabase
-        .from('estado').select('id').eq('contexto', 'plaza').ilike('nombre', 'Libre').maybeSingle();
-      const idLibre = epLibre?.id ?? 1;
+      const idLibre = ESTADO_PLAZA.LIBRE;
+      const stActivo = ESTADO_TICKET.ACTIVO;
+      const stVencido = ESTADO_TICKET.VENCIDO;
+
       const { data: vencidos } = await supabase
-        .from('ticket').select('id_ticket, id_plaza')
-        .eq('estado', 'Activo')
-        .not('fecha_vencimiento', 'is', null)
-        .lt('fecha_vencimiento', new Date().toISOString());
+        .from('ticket').select('id_ticket, id_plaza_asignada')
+        .eq('id_estado', stActivo)
+        .not('fecha_hora_vencimiento', 'is', null)
+        .lt('fecha_hora_vencimiento', new Date().toISOString());
       if (!vencidos || vencidos.length === 0) return;
       for (const t of vencidos) {
-        await supabase.from('ticket').update({ estado: 'Vencido' }).eq('id_ticket', t.id_ticket);
-        await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', t.id_plaza);
+        await supabase.from('ticket').update({ id_estado: stVencido }).eq('id_ticket', t.id_ticket);
+        await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', t.id_plaza_asignada);
       }
       if (vencidos.length > 0) loadData();
     } catch (e) { console.warn('checkExpiredTickets:', e.message); }
@@ -223,6 +207,9 @@ export default function VehiculosTickets() {
 
   const handleEmitirTicket = async (e) => {
     e.preventDefault();
+    if (!currentOrgId) {
+      return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+    }
     if (!visitanteForm.placa.trim()) return Swal.fire('Atención','La placa es obligatoria.','warning');
     if (!visitanteForm.id_plaza)     return Swal.fire('Atención','Seleccione una plaza.','warning');
     setLoading(true);
@@ -261,13 +248,10 @@ export default function VehiculosTickets() {
       const minutos   = parseInt(visitanteForm.duracion) || 0;
       const vencimiento = minutos > 0 ? new Date(Date.now() + minutos*60000).toISOString() : null;
 
-      const { data: epOcupada } = await supabase
-        .from('estado').select('id').eq('contexto', 'plaza').ilike('nombre', 'Ocupada').maybeSingle();
-      const idOcupada = epOcupada?.id;
+      const vencimiento = minutos > 0 ? new Date(Date.now() + minutos*60000).toISOString() : null;
 
-      const { data: stActivo } = await supabase
-        .from('estado').select('id').eq('contexto', 'ticket').ilike('nombre', 'Activo').maybeSingle();
-      const idEstadoActivo = stActivo?.id;
+      const idOcupada = ESTADO_PLAZA.RESERVADA; // Usually Occupied/Reserved
+      const idEstadoActivo = ESTADO_TICKET.ACTIVO;
 
       const { data: nuevoTicket, error: tErr } = await supabase
         .from('ticket')
@@ -280,9 +264,9 @@ export default function VehiculosTickets() {
           fecha_hora_emision:     ahora,
           fecha_hora_vencimiento: vencimiento,
           descripcion:            visitanteForm.descripcion || '',
-          ...(currentOrgId ? { organizacion_id: currentOrgId } : {})
+          organizacion_id:        currentOrgId
         }])
-        .select('*, plaza:id_plaza_asignada(numero_plaza), estado:id_estado(nombre)')
+        .select('*, plaza:id_plaza_asignada(numero_plaza), estado_ticket(nombre)')
         .single();
       if (tErr) {
         console.error('DEBUG: handleEmitirTicket tErr:', tErr);
@@ -293,7 +277,7 @@ export default function VehiculosTickets() {
         .update({ id_estado: idOcupada })
         .eq('id_plaza', visitanteForm.id_plaza);
 
-      await registrarLog('TICKET_EMITIDO',
+      await handleRegistrarLog(EVENT_TYPES.TICKET_EMITIDO,
         `Ticket emitido: ${visitanteForm.placa.toUpperCase()} — Plaza ${nuevoTicket?.plaza?.numero_plaza}.`,
         parseInt(visitanteForm.id_plaza));
 
@@ -323,13 +307,8 @@ export default function VehiculosTickets() {
     if (!result.isConfirmed) return;
     try {
       const ahora = new Date().toISOString();
-      const { data: epLibre } = await supabase
-        .from('estado').select('id').eq('contexto', 'plaza').ilike('nombre', 'Libre').maybeSingle();
-      const idLibre = epLibre?.id;
-
-      const { data: stUsado } = await supabase
-        .from('estado').select('id').eq('contexto', 'ticket').ilike('nombre', 'Usado').maybeSingle();
-      const idUsado = stUsado?.id;
+      const idLibre = ESTADO_PLAZA.LIBRE;
+      const idUsado = ESTADO_TICKET.CERRADO;
 
       const { error, count } = await supabase
         .from('ticket').update({ id_estado: idUsado })
@@ -340,7 +319,7 @@ export default function VehiculosTickets() {
       const idPlaza = ticket.id_plaza_asignada;
       await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', idPlaza);
       
-      await registrarLog('SALIDA_VEHICULO',
+      await handleRegistrarLog(EVENT_TYPES.TICKET_CERRADO,
         `Salida: ${ticket.placa_capturada} — Plaza ${ticket.plaza?.numero_plaza}. Tiempo: ${calcTiempo(ticket.fecha_hora_emision, ahora)}.`,
         idPlaza);
 
@@ -358,13 +337,8 @@ export default function VehiculosTickets() {
     });
     if (!result.isConfirmed) return;
     try {
-      const { data: epLibre } = await supabase
-        .from('estado').select('id').eq('contexto', 'plaza').ilike('nombre', 'Libre').maybeSingle();
-      const idLibre = epLibre?.id;
-
-      const { data: stAnulado } = await supabase
-        .from('estado').select('id').eq('contexto', 'ticket').ilike('nombre', 'Anulado').maybeSingle();
-      const idAnulado = stAnulado?.id;
+      const idLibre = ESTADO_PLAZA.LIBRE;
+      const idAnulado = ESTADO_TICKET.ANULADO;
 
       const { error, count } = await supabase
         .from('ticket').update({ id_estado: idAnulado })
@@ -374,7 +348,7 @@ export default function VehiculosTickets() {
 
       const idPlaza = ticket.id_plaza_asignada;
       await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', idPlaza);
-      await registrarLog('TICKET_ANULADO',
+      await handleRegistrarLog(EVENT_TYPES.TICKET_CERRADO || 'Ticket Anulado',
         `Ticket anulado: ${ticket.placa_capturada} — Plaza ${ticket.plaza?.numero_plaza}.`,
         idPlaza);
 
@@ -384,9 +358,10 @@ export default function VehiculosTickets() {
   };
 
   const handleEliminarVehiculo = async (vehiculo) => {
+    const tkEstActivo = ESTADO_TICKET.ACTIVO;
     const { data: tActivos } = await supabase
       .from('ticket').select('id_ticket')
-      .eq('id_vehiculo', vehiculo.id_vehiculo).eq('estado', 'Activo');
+      .eq('id_vehiculo', vehiculo.id_vehiculo).eq('id_estado', tkEstActivo);
     if (tActivos && tActivos.length > 0)
       return Swal.fire('No se puede eliminar',`Tiene ${tActivos.length} ticket(s) activo(s). Registre la salida primero.`,'warning');
 
@@ -398,7 +373,7 @@ export default function VehiculosTickets() {
     if (!r.isConfirmed) return;
     try {
       await supabase.from('acceso').delete().eq('id_vehiculo', vehiculo.id_vehiculo);
-      await supabase.from('ticket').delete().eq('id_vehiculo', vehiculo.id_vehiculo).neq('estado','Activo');
+      await supabase.from('ticket').delete().eq('id_vehiculo', vehiculo.id_vehiculo).neq('id_estado', tkEstActivo);
       const { error, count } = await supabase
         .from('vehiculo').delete({ count: 'exact' }).eq('id_vehiculo', vehiculo.id_vehiculo);
       if (error) throw error;
@@ -415,7 +390,6 @@ export default function VehiculosTickets() {
         .from('vehiculo')
         .update({
           placa:    editVehForm.placa.toUpperCase(),
-          id_marca: editVehForm.id_marca ? parseInt(editVehForm.id_marca) : null,
           id_color: editVehForm.id_color ? parseInt(editVehForm.id_color) : null
         }, { count: 'exact' })
         .eq('id_vehiculo', editandoVehiculo.id_vehiculo);
@@ -429,11 +403,13 @@ export default function VehiculosTickets() {
 
   const handleVehPersonalSubmit = async (e) => {
     e.preventDefault();
+    if (!currentOrgId) {
+      return Swal.fire('Error', 'No se ha detectado el contexto de la organización. Por favor, recargue la página.', 'error');
+    }
     try {
       const { error } = await supabase.from('vehiculo').insert([{
         id_persona: vehPersonalForm.persona_id,
         placa:      vehPersonalForm.placa.toUpperCase(),
-        id_marca:   vehPersonalForm.id_marca ? parseInt(vehPersonalForm.id_marca) : null,
         id_color:   vehPersonalForm.id_color ? parseInt(vehPersonalForm.id_color) : null,
         organizacion_id: currentOrgId
       }]);
@@ -666,7 +642,7 @@ export default function VehiculosTickets() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[600px]">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-100/50 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">
                 <tr>
