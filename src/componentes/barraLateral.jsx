@@ -1,5 +1,3 @@
-
-
 import { Link, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useEffect, useState } from 'react';
@@ -7,14 +5,12 @@ import { useRbac } from '../contexts/RbacContext';
 import {
   FaTachometerAlt, FaCar, FaClipboardList, FaUsers,
   FaMicrochip, FaChartBar, FaWrench, FaCog, FaSignOutAlt,
-  FaParking, FaTicketAlt, FaSuitcase, FaHistory, FaBell, FaHandPaper, FaCarSide
+  FaParking, FaTicketAlt, FaSuitcase, FaHistory, FaBell
 } from 'react-icons/fa';
 
 const navItems = [
   { to: '/', icon: FaTachometerAlt, label: 'Dashboard', moduloReq: null },
-  { to: '/tickets', icon: FaTicketAlt, label: 'Tickets de Acceso', moduloReq: 'Módulo Parqueo' },
-  { to: '/vehiculos', icon: FaCarSide, label: 'Flota de Vehículos', moduloReq: 'Módulo Vehículos' },
-  { to: '/acceso-manual', icon: FaHandPaper, label: 'Acceso Manual', moduloReq: 'Acceso Manual' },
+  { to: '/vehiculos-tickets', icon: FaTicketAlt, label: 'Vehículos y Tickets', moduloReq: 'Módulo Parqueo' },
   { to: '/ocupacion', icon: FaCar, label: 'Ocupación', moduloReq: 'Ocupación' },
   { to: '/zonas-parqueo', icon: FaParking, label: 'Zonas de Parqueo', moduloReq: 'Zonas de Parqueo' },
   { to: '/reservaciones', icon: FaClipboardList, label: 'Reservaciones', moduloReq: 'Reservas' },
@@ -64,10 +60,10 @@ export default function BarraLateral() {
     <aside className="w-64 h-screen bg-white flex flex-col p-4 border-r border-gray-200 fixed left-0 top-0 z-50 overflow-hidden">
 
 
-      <Link to="/" className="flex items-center gap-2 mb-8 px-2 h-16 shrink-0 hover:opacity-80 transition-opacity">
+      <div className="flex items-center gap-2 mb-8 px-2 h-16 shrink-0">
         <FaParking className="text-green-600 text-4xl" />
         <h1 className="text-2xl font-extrabold text-green-700 tracking-wide">UCE PARKING</h1>
-      </Link>
+      </div>
 
 
       <nav className="flex-grow space-y-1 overflow-y-auto custom-scrollbar">
@@ -84,7 +80,7 @@ export default function BarraLateral() {
               <item.icon className="text-xl" />
               <span>{item.label}</span>
             </Link>
-        ))}
+          ))}
       </nav>
 
 
@@ -122,4 +118,3 @@ export default function BarraLateral() {
     </aside>
   );
 }
-

@@ -14,47 +14,11 @@ import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/lo
 import { ESTADO_PLAZA, ESTADO_RESERVA } from '../lib/constants';
 
 
-/* ── Componente SearchableSelect ── */
-function SearchableSelect({ value, onChange, options, placeholder, required }) {
-  const [search, setSearch] = useState('');
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const selectedLabel = options.find(o => String(o.value) === String(value))?.label || '';
-  const filtered = options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()));
-
+function Row({ label, value, bold }) {
   return (
-    <div className="relative" ref={ref}>
-      <input type="hidden" value={value} required={required} />
-      <input
-        type="text"
-        className="w-full border-2 border-gray-100 p-2.5 rounded-xl text-sm outline-none bg-gray-50/50"
-        placeholder={placeholder || 'Buscar...'}
-        value={open ? search : selectedLabel}
-        onFocus={() => { setOpen(true); setSearch(''); }}
-        onChange={e => setSearch(e.target.value)}
-      />
-      {open && (
-        <div className="absolute z-50 bg-white border rounded-lg shadow-lg mt-1 w-full max-h-48 overflow-y-auto">
-          {filtered.length === 0 ? (
-            <div className="p-2 text-sm text-gray-400">Sin resultados</div>
-          ) : filtered.map(o => (
-            <div
-              key={o.value}
-              className={`p-2 text-sm cursor-pointer hover:bg-blue-50 ${String(o.value) === String(value) ? 'bg-blue-100 font-bold' : ''}`}
-              onClick={() => { onChange(o.value); setSearch(''); setOpen(false); }}
-            >
-              {o.label}
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="flex justify-between py-1 border-b border-gray-50 last:border-0">
+      <span className="text-gray-500 text-xs uppercase tracking-wider">{label}</span>
+      <span className={`text-sm ${bold ? 'font-bold text-gray-900' : 'text-gray-700'}`}>{value}</span>
     </div>
   );
 }
