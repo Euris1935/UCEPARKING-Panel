@@ -7,7 +7,6 @@ import { supabase } from './supabaseClient';
 import { RbacProvider } from './contexts/RbacContext';
 import { OrgProvider } from './contexts/OrgContext';
 import { ProtectedRoute } from './componentes/ProtectedRoute';
-import { registrarLog, EVENT_TYPES } from './utils/logging';
 
 import Login from './paginas/Login';
 import Dashboard from './paginas/Dashboard';
@@ -33,39 +32,13 @@ export default function App() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      console.log('[App] 🔑 Sesión recuperada de Supabase:', session?.user?.email || 'Ninguna');
       setSession(session);
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log(`[App] 🔄 Evento de autenticación: ${event}`);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setLoading(false);
-
-      if (event === 'SIGNED_IN' && session) {
-        // Obtenemos los datos del perfil para el log
-        const { data: uData } = await supabase
-          .from('usuario')
-          .select('id_persona, organizacion_id, persona(nombre, apellido)')
-          .eq('id', session.user.id)
-          .single();
-
-        if (uData) {
-          registrarLog({
-            tipo_nombre: EVENT_TYPES.LOGIN,
-            descripcion: `Sesión iniciada correctamente por ${uData.persona?.nombre} ${uData.persona?.apellido}`,
-            id_persona: uData.id_persona,
-            organizacion_id: uData.organizacion_id
-          });
-        }
-      }
-
-      if (event === 'SIGNED_OUT') {
-        // En Logout ya no hay sesión activa, así que solemos buscar el último log activo si hiciese falta,
-        // pero por ahora grabaremos un evento general si tenemos los datos previos o simplemente marcamos el fin.
-        console.log('Sesión cerrada por el usuario');
-      }
     });
 
     return () => subscription.unsubscribe();

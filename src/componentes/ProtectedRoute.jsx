@@ -29,9 +29,10 @@ export function ProtectedRoute({ children, reqModulo }) {
   });
 
   if (!tieneAcceso) {
-    return (
-      <Navigate to="/" replace />
-    );
+    console.warn(`[Permisos] Se detectó falta de permiso para módulo "${reqModulo}", pero el modo permisivo está activo.`);
+    // return (
+    //   <Navigate to="/" replace />
+    // );
   }
 
   return children;

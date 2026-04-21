@@ -84,20 +84,35 @@ export default function Usuarios() {
       setCatEstados(estadosData || []);
 
       // 2. Obtener usuarios de la organización
-      const { data: orgUsers, error: orgErr } = await supabase.rpc('get_usuarios_org');
+      const [
+        { data: orgUsers, error: orgErr },
+        { data: estadosUsuarios }
+      ] = await Promise.all([
+        supabase.rpc('get_usuarios_org'),
+        supabase.from('usuario').select('id, id_estado, estado_u:id_estado(nombre)').eq('organizacion_id', orgId)
+      ]);
 
       if (orgErr) {
         console.error('Error get_usuarios_org:', orgErr);
         await loadUsuariosFallback(rolesData || []);
       } else {
-        const listaNormalizada = (orgUsers || []).map(u => ({
-          ...u,
-          id_usuario: u.id_usuario || u.id, 
-          id_persona: u.id_persona || u.persona_id,
-          id_rol:     u.rol_id     || u.id_rol,
-          nombre_rol: u.nombre_rol || u.rol_nombre   || 'Sin Rol',
-          nombre_estado: u.id_estado === null ? '⚠️ Sin Estado (NULL)' : (u.nombre_estado || u.estado_nombre || 'Activo')
-        })).filter(u => u.id_rol !== ROL.VISITANTE);
+        // El RPC no devuelve id_estado; lo tomamos de la consulta directa
+        const estadoMap = Object.fromEntries(
+          (estadosUsuarios || []).map(e => [e.id, { id_estado: e.id_estado, nombre_estado: e.estado_u?.nombre ?? 'Sin Estado' }])
+        );
+
+        const listaNormalizada = (orgUsers || []).map(u => {
+          const est = estadoMap[u.id_usuario] ?? {};
+          return {
+            ...u,
+            id_usuario:    u.id_usuario || u.id,
+            id_persona:    u.id_persona || u.persona_id,
+            id_rol:        u.rol_id     || u.id_rol,
+            nombre_rol:    u.nombre_rol || u.rol_nombre || 'Sin Rol',
+            id_estado:     est.id_estado   ?? null,
+            nombre_estado: est.nombre_estado ?? 'Sin Estado',
+          };
+        }).filter(u => u.id_rol !== ROL.VISITANTE);
 
         setUsuarios(listaNormalizada);
       }
@@ -179,7 +194,24 @@ export default function Usuarios() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!orgId) return;
+
+    // Resolver orgId desde el contexto; si no está listo, buscarlo directo en BD
+    let effectiveOrgId = orgId;
+    if (!effectiveOrgId) {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser) {
+        const { data: usr } = await supabase
+          .from('usuario')
+          .select('organizacion_id')
+          .eq('id', currentUser.id)
+          .single();
+        effectiveOrgId = usr?.organizacion_id ?? null;
+      }
+    }
+
+    if (!effectiveOrgId) {
+      return Swal.fire('Error', 'No se pudo determinar la organización. Recarga la página e intenta de nuevo.', 'error');
+    }
 
     const { nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, direccion, rol_id, contrasena } = formData;
 
@@ -222,10 +254,11 @@ export default function Usuarios() {
           p_fecha_nacimiento: fecha_nacimiento || null,
           p_direccion: direccion || null,
           p_rol_id:   parseInt(rol_id),
-          p_org_id:   orgId
+          p_org_id:   effectiveOrgId
         });
 
         if (rpcError) throw rpcError;
+        if (resultado?.success === false) throw new Error(resultado.error || 'Error desconocido al crear el usuario.');
 
         registrarLog({
           tipo_nombre: EVENT_TYPES.USUARIO_CREADO,
@@ -247,13 +280,16 @@ export default function Usuarios() {
   const handleConfirmarCambioEstado = async (user) => {
     try {
       setLoading(true);
-      const { error } = await supabase
+      const { data: updated, error } = await supabase
         .from('usuario')
         .update({ id_estado: parseInt(newStatusChoice) })
-        .eq('id', user.id_usuario); // Usamos 'id' que es la PK real en tu esquema
+        .eq('id', user.id_usuario)
+        .select('id');
 
       if (error) throw error;
-      
+      if (!updated || updated.length === 0)
+        throw new Error('No se pudo actualizar el estado. Es posible que no tengas permiso para modificar este usuario.');
+
       Swal.fire({ title: 'Estado Actualizado', icon: 'success', timer: 1500, showConfirmButton: false });
       setChangingStatusFor(null);
       loadData();

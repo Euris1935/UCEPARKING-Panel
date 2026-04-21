@@ -5,6 +5,7 @@ import Swal from 'sweetalert2';
 import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaHistory } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
+import { registrarLog, EVENT_TYPES } from '../utils/logging';
 
 // ─────────────────────────────────────────────────────────────
 // CAMBIOS:
@@ -201,22 +202,8 @@ export default function AccesoManual() {
     });
   };
 
-  const registrarLog = async (tipo_nombre, descripcion, idPlaza = null) => {
-    if (!currentPersonaId) return;
-    try {
-      const { data: te } = await supabase.from('tipo_evento').select('id_tipo').eq('nombre', tipo_nombre).maybeSingle();
-      const { data: oe } = await supabase.from('origen_evento').select('id_origen').eq('nombre', 'Panel Web - Acceso Manual').maybeSingle();
-      await supabase.from('evento').insert([{
-        fecha_hora:       new Date().toISOString(),
-        descripcion,
-        id_plaza:         idPlaza,
-        id_persona:       currentPersonaId,
-        id_tipo:          te?.id_tipo  || null,
-        id_origen_evento: oe?.id_origen || null,
-        organizacion_id:  orgId
-      }]);
-    } catch (e) { console.warn('Log error:', e.message); }
-  };
+  const registrarAccesoLog = (tipo_nombre, descripcion, idPlaza = null) =>
+    registrarLog({ tipo_nombre, descripcion, organizacion_id: orgId, id_plaza: idPlaza, origen: 'Panel Web' });
 
   const handleRegistrarEntrada = async (e) => {
     e.preventDefault();
@@ -249,8 +236,8 @@ export default function AccesoManual() {
       const { data: epOcupado } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Ocupad%').maybeSingle();
       await supabase.from('plaza').update({ id_estado: epOcupado?.id_estado || 2 }).eq('id_plaza', plazaSelect.id_plaza);
 
-      await registrarLog(
-        'Entrada',
+      await registrarAccesoLog(
+        EVENT_TYPES.ENTRADA,
         `Entrada manual: ${vehiculoSelect.placa} — ${vehiculoSelect.persona?.nombre || 'Desconocido'} ${vehiculoSelect.persona?.apellido || ''}.`.trim(),
         plazaSelect.id_plaza
       );
@@ -306,7 +293,7 @@ export default function AccesoManual() {
       }
 
       const nombreSalida = acc._personaNombre || 'Desconocido';
-      await registrarLog('Salida', `Salida manual: ${nombreSalida} — ${acc.vehiculo?.placa}.`, acc.id_plaza);
+      await registrarAccesoLog(EVENT_TYPES.SALIDA, `Salida manual: ${nombreSalida} — ${acc.vehiculo?.placa}.`, acc.id_plaza);
 
       // Abrir barrera
       try {

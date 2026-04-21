@@ -52,13 +52,25 @@ export default function Empleados() {
     if (!orgId) return;
     setLoading(true);
     try {
-      // 1. Catálogos
-      const { data: deptData } = await supabase.from('departamento').select('*').eq('organizacion_id', orgId);
-      setDepartamentos(deptData || []);
+      // 1. Catálogos + nombre de organización en paralelo
+      const [
+        { data: deptData },
+        { data: estData },
+        { data: orgData }
+      ] = await Promise.all([
+        supabase.from('departamento').select('*').eq('organizacion_id', orgId),
+        supabase.from('estado_usuario').select('*').order('id_estado'),
+        supabase.from('organizacion').select('id_organizacion, nombre').eq('id_organizacion', orgId).single()
+      ]);
 
-      const { data: estData } = await supabase.from('estado_usuario').select('*').order('id_estado');
+      setDepartamentos(deptData || []);
       setCatEstados(estData || []);
-      
+
+      if (orgData) {
+        setAdminOrgId(orgData.id_organizacion);
+        setAdminOrgNombre(orgData.nombre);
+      }
+
       await cargarEmpleados(deptData || []);
 
     } catch (err) {

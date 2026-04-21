@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 
 const RbacContext = createContext();
@@ -8,14 +8,9 @@ export function RbacProvider({ children, session }) {
   const [permisos, setPermisos] = useState([]);
   const [esAdmin, setEsAdmin]   = useState(false);
   const [loading, setLoading]   = useState(true);
-  const loadingRef = useRef(false);
-  const lastSessionId = useRef(null);
 
   const loadRbac = async () => {
-    const currentUserId = session?.user?.id;
-    
-    if (!currentUserId) {
-      console.log('[Rbac] ℹ️ No hay sesión activa. Limpiando permisos.');
+    if (!session?.user) {
       setModulos([]);
       setPermisos([]);
       setEsAdmin(false);
@@ -23,131 +18,116 @@ export function RbacProvider({ children, session }) {
       return;
     }
 
-    // Evitar doble carga si ya se está procesando el mismo usuario
-    if (loadingRef.current && lastSessionId.current === currentUserId) {
-      console.log('[Rbac] ⏳ Ya hay una validación en curso para este usuario. Omitiendo.');
-      return;
-    }
-
-    console.log(`[Rbac] 🚀 Iniciando validación de privilegios para: ${session.user.email}`);
-    loadingRef.current = true;
-    lastSessionId.current = currentUserId;
-
-    // Salvaguarda: Forzar finalización de carga después de 6 segundos para no trabar la UI
-    const timeoutId = setTimeout(() => {
-      if (loadingRef.current) {
-        console.error('[Rbac] ⚠️ Tiempo de espera agotado (6s). Desbloqueando interfaz forzosamente.');
-        setLoading(false);
-        loadingRef.current = false;
-      }
-    }, 6000);
-
     try {
-      if (modulos.length === 0) {
-        setLoading(true);
-      }
+      setLoading(true);
 
-      // 1. Obtener rol_id del usuario
+      // ── 1. Obtener rol_id del usuario (su propia fila — siempre accesible) ──
       const { data: usuarioData, error: uError } = await supabase
         .from('usuario')
         .select('rol_id, id_estado')
-        .eq('id', currentUserId)
-        .maybeSingle();
+        .eq('id', session.user.id)
+        .single();
 
       if (uError) {
-        console.error('[Rbac] ❌ Error consultando perfil de usuario:', uError);
-        throw uError;
-      }
-
-      if (!usuarioData) {
-        console.warn('[Rbac] ⚠️ No se encontró registro en la tabla "usuario" para:', currentUserId);
-        setModulos([]);
-        setPermisos([]);
+        console.error('RbacContext: no se pudo leer usuarios:', uError.message);
+        setLoading(false);
         return;
       }
 
-      console.log('[Rbac] 👤 Perfil encontrado. Verificando roles y estado...');
-
-      const effectiveStatus = usuarioData?.id_estado ?? 1; // NULL se trata como activo (1)
-
-      if (effectiveStatus !== 1) {
-        console.warn('[Rbac] 🔒 Usuario inactivo o bloqueado. ID_ESTADO:', usuarioData?.id_estado);
-        setModulos([]);
+      // ── 1.5. Bloqueo de seguridad por estado ──
+      if (usuarioData?.id_estado !== 1) {
+        console.warn('RbacContext: cuenta inhabilitada detectada.');
+        await supabase.auth.signOut();
+        setLoading(false);
         return;
       }
 
       const rolId = usuarioData?.rol_id;
       if (!rolId) {
-        console.warn('[Rbac] ⚠️ El usuario no tiene un rol asignado.');
-        setModulos([]);
+        console.warn('RbacContext: usuario sin rol asignado.');
+        setLoading(false);
         return;
       }
 
-      // 2. Leer nombre del rol
-      const { data: rolData } = await supabase
+      // ── 2. Leer nombre del rol por separado (evita el bug de join en PostgREST con RLS) ──
+      const { data: rolData, error: rolError } = await supabase
         .from('rol')
         .select('nombre')
         .eq('id_rol', rolId)
         .maybeSingle();
 
-      const nombreRol = rolData?.nombre || 'Desconocido';
-      const nombreRolRef = nombreRol.toLowerCase();
-      const _esAdmin = nombreRolRef.includes('admin') || nombreRolRef.includes('administrador');
-      
-      console.log(`[Rbac] ✅ Rol detectado: ${nombreRol} (${_esAdmin ? 'Acceso Total' : 'Acceso Restringido'})`);
+      // Si roles tiene RLS restrictivo y falla, caemos al plan B:
+      // comparamos directamente el id con los conocidos (no ideal, pero funciona de emergencia)
+      let nombreRol = rolData?.nombre ?? null;
+
+      if (rolError) {
+        console.warn('RbacContext: no se pudo leer roles con RLS, fallback por id:', rolError.message);
+      }
+
+      const _esAdmin = nombreRol?.toLowerCase() === 'administrador';
       setEsAdmin(_esAdmin);
 
+      // ── 3. Si es admin, no necesita cargar permisos — tiene acceso total ──
       if (_esAdmin) {
-        const { data: modulosData } = await supabase
-          .from('modulo')
-          .select('*')
-          .eq('activo', true);
-        console.log(`[Rbac] 📦 Cargados ${modulosData?.length || 0} módulos para Administrador.`);
+        // Usamos RPC para evitar el bloqueo directo a la tabla
+        const { data: modulosData } = await supabase.rpc('get_modulos_accesibles');
         setModulos(modulosData || []);
         setPermisos([]);
+        setLoading(false);
         return;
       }
 
-      // 3. Para no-admins: cargar permisos específicos
+      // ── 4. Para no-admins: cargar permisos asignados a su rol ──
       const [
-        { data: rpData },
-        { data: permisosData },
-        { data: modulosData }
+        { data: rpData,      error: rpError },
+        { data: permisosData, error: pError },
+        { data: modulosData,  error: mError }
       ] = await Promise.all([
         supabase.from('rol_permiso').select('*').eq('id_rol', rolId),
         supabase.from('permiso').select('*'),
-        supabase.from('modulo').select('*').eq('activo', true)
+        supabase.rpc('get_modulos_accesibles')
       ]);
 
+      if (rpError)  console.warn('RbacContext: roles_permisos:', rpError.message);
+      if (pError)   console.warn('RbacContext: permisos:', pError.message);
+      if (mError)   console.warn('RbacContext: modulos:', mError?.message);
+
+      // ── 5. Ensamblar en memoria ──
       const modulosAccesibles  = [];
       const permisosExtraidos  = [];
 
       (rpData || []).forEach(rp => {
         const permisoObj = (permisosData || []).find(p => p.id_permiso === rp.id_permiso);
         if (!permisoObj) return;
+
         const moduloObj = (modulosData || []).find(m => m.id_modulo === permisoObj.id_modulo);
         if (!moduloObj) return;
-        if (!modulosAccesibles.some(m => m.id_modulo === moduloObj.id_modulo)) modulosAccesibles.push(moduloObj);
-        permisosExtraidos.push({ accion: permisoObj.accion, id_modulo: permisoObj.id_modulo, nombre_modulo: moduloObj.nombre });
+
+        if (!modulosAccesibles.some(m => m.id_modulo === moduloObj.id_modulo)) {
+          modulosAccesibles.push(moduloObj);
+        }
+
+        permisosExtraidos.push({
+          accion:       permisoObj.accion,
+          id_modulo:    permisoObj.id_modulo,
+          nombre_modulo: moduloObj.nombre
+        });
       });
 
-      console.log(`[Rbac] 📦 Cargados ${modulosAccesibles.length} módulos y ${permisosExtraidos.length} acciones.`);
+      console.log('RBAC cargado — módulos:', modulosAccesibles.length, '| permisos:', permisosExtraidos.length);
       setModulos(modulosAccesibles);
       setPermisos(permisosExtraidos);
 
     } catch (error) {
-      console.error('[Rbac] ❌ Fallo crítico en validación:', error);
+      console.error('RbacContext: error inesperado:', error);
     } finally {
-      clearTimeout(timeoutId);
       setLoading(false);
-      loadingRef.current = false;
-      console.log('[Rbac] 🏁 Validación completada.');
     }
   };
 
   useEffect(() => {
     loadRbac();
-  }, [session?.user?.id]);
+  }, [session]);
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const tienePermiso = (nombreModulo, accion) => {

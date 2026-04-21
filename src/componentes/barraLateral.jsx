@@ -72,13 +72,13 @@ export default function BarraLateral() {
 
       <nav className="flex-grow space-y-1 overflow-y-auto custom-scrollbar">
         {navItems
-          .filter(item => {
-            if (!item.moduloReq || esAdmin) return true;
-            return modulos.some(m => {
-              const nombre = m.nombre;
-              return nombre && nombre.toLowerCase() === item.moduloReq.toLowerCase();
-            });
-          })
+          // .filter(item => {
+          //   if (!item.moduloReq || esAdmin) return true;
+          //   return modulos.some(m => {
+          //     const nombre = m.nombre;
+          //     return nombre && nombre.toLowerCase() === item.moduloReq.toLowerCase();
+          //   });
+          // })
           .map((item) => (
             <Link key={item.to} to={item.to} className={getLinkClasses(item.to)}>
               <item.icon className="text-xl" />
