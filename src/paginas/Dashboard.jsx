@@ -1,39 +1,54 @@
-
-
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaBell, FaUserTie, FaUsers } from 'react-icons/fa';
+import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaUserTie, FaUsers, FaTicketAlt, FaHistory, FaCheckCircle, FaDoorOpen, FaMapMarkedAlt, FaUserClock, FaChartLine } from 'react-icons/fa';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useOrg } from '../contexts/OrgContext';
-import { ESTADO_PLAZA, ESTADO_RESERVA, TIPO_NOTIF } from '../lib/constants';
+import { ESTADO_PLAZA, ESTADO_RESERVA } from '../lib/constants';
+
+function timeAgo(dateString) {
+  const date = new Date(dateString);
+  const now = new Date();
+  const seconds = Math.round((now - date) / 1000);
+  const minutes = Math.round(seconds / 60);
+  const hours = Math.round(minutes / 60);
+  const days = Math.round(hours / 24);
+
+  if (seconds < 60) return 'Hace un momento';
+  if (minutes < 60) return `Hace ${minutes} min`;
+  if (hours < 24) return `Hace ${hours} hr`;
+  if (days === 1) return 'Ayer';
+  return date.toLocaleDateString();
+}
+
+const DIAS_SEMANA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 
 export default function Dashboard() {
   const { orgId } = useOrg();
   const [stats, setStats] = useState({
-    totalPlazas: 0,
-    ocupadas: 0,
-    reservadas: 0,
-    libres: 0,
-    reservasActivas: 0,
-    mantenimiento: 0,
-    asignadas: 0,
-    personasActivas: 0
+    totalPlazas: 0, ocupadas: 0, reservadas: 0, libres: 0,
+    mantenimiento: 0, asignadas: 0, personasActivas: 0,
+    ticketsHoy: 0, accesosHoy: 0,
+    ticketsActivos: 0, accesosActivosCount: 0,
+    totalZonas: 0, totalUsuarios: 0
   });
-
+  const [eventosRecientes, setEventosRecientes] = useState([]);
+  const [historyAccesos, setHistoryAccesos] = useState([]);
+  const [chartTimeframe, setChartTimeframe] = useState('dia'); // dia, semana, mes
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (orgId) {
       loadDashboardData();
-
       const channel = supabase
         .channel('dashboard_realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, () => loadDashboardData())
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'reserva' }, () => loadDashboardData())
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, () => loadDashboardData())
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket' }, () => loadDashboardData())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'plaza' }, loadDashboardData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'reserva' }, loadDashboardData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'asignacion' }, loadDashboardData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket' }, loadDashboardData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'evento' }, loadDashboardData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'acceso' }, loadDashboardData)
         .subscribe();
-
       return () => { supabase.removeChannel(channel); };
     }
   }, [orgId]);
@@ -41,110 +56,67 @@ export default function Dashboard() {
   const loadDashboardData = async () => {
     if (!orgId) return;
     try {
-      // 1. Obtener catálogos y datos base
+      const hoyInicio = new Date();
+      hoyInicio.setHours(0, 0, 0, 0);
+      const hoyStr = hoyInicio.toISOString();
+
+      const mesInicio = new Date();
+      mesInicio.setDate(mesInicio.getDate() - 30);
+      const mesStr = mesInicio.toISOString();
+
       const [
-        { data: estadosPlaza },
-        { data: estadosReserva },
-        { data: rawPlazas },
-        { data: zonasData }
+        { data: estadosPlaza }, { data: rawPlazas }, { data: zonasData },
+        { data: asigData }, { data: ticketsActivosData },
+        { data: accesosActivosData }, { data: reservasActivasData }, { data: reservasZonasActivas },
+        { data: eventosData }, { data: ticketsHoyData }, { data: accesosHoyData }, { count: usuariosCount },
+        { data: chartAccesos }
       ] = await Promise.all([
         supabase.from('estado_plaza').select('*'),
-        supabase.from('estado_reserva').select('*'),
         supabase.from('plaza').select('*, zona:id_zona(estado_zona:id_estado(nombre))').eq('organizacion_id', orgId),
-        supabase.from('zona').select('id_zona, estado_zona:id_estado(nombre)').eq('organizacion_id', orgId)
+        supabase.from('zona').select('id_zona').eq('organizacion_id', orgId),
+        
+        supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`),
+        supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
+        supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
+        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
+        
+        supabase.from('evento').select('fecha_hora, descripcion, tipo_evento:id_tipo(nombre), persona:id_persona(nombre, apellido), plaza:id_plaza(numero_plaza)').eq('organizacion_id', orgId).order('fecha_hora', { ascending: false }).limit(6),
+        supabase.from('ticket').select('id_ticket').eq('organizacion_id', orgId).gte('fecha_hora_emision', hoyStr),
+        supabase.from('acceso').select('id_registro').eq('organizacion_id', orgId).gte('entrada_at', hoyStr),
+        supabase.from('usuario').select('*', { count: 'exact', head: true }).eq('organizacion_id', orgId),
+        
+        // Data for charts (last 30 days of entries)
+        supabase.from('acceso').select('entrada_at').eq('organizacion_id', orgId).gte('entrada_at', mesStr)
       ]);
 
-      // Filtrar plazas de zonas inactivas (asumiendo que estado_zona inactiva es un valor que ya no usaremos o manejaremos por ID)
       const plazasFiltradas = (rawPlazas || []).filter(p => p.zona?.estado_zona?.nombre !== 'Inactiva');
-
-      // 2. Obtener información de ocupación
       const mapaOcupacion = {};
 
-      // 2.1 ACCESOS (Ocupación real)
-      const { data: accesosActivos } = await supabase
-        .from('acceso')
-        .select('id_plaza')
-        .eq('organizacion_id', orgId)
-        .is('salida_at', null);
-      
-      (accesosActivos || []).forEach(acc => {
-        if (acc.id_plaza) mapaOcupacion[acc.id_plaza] = { type: 'acceso' };
-      });
-
-      // 2.2 RESERVAS (Individuales y por Zona)
-      const { data: reservasActivas } = await supabase
-        .from('reserva')
-        .select('id_plaza')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', ESTADO_RESERVA.ACTIVA);
-      
-      (reservasActivas || []).forEach(res => {
-        if (res.id_plaza) {
-          mapaOcupacion[res.id_plaza] = { type: 'reserva' };
-        }
-      });
-
-      const { data: reservasZonasActivas } = await supabase
-        .from('reserva_zona')
-        .select('id_zona')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', ESTADO_RESERVA.ACTIVA);
-      
+      (accesosActivosData || []).forEach(acc => { if (acc.id_plaza) mapaOcupacion[acc.id_plaza] = { type: 'acceso' }; });
+      (reservasActivasData || []).forEach(res => { if (res.id_plaza) mapaOcupacion[res.id_plaza] = { type: 'reserva' }; });
       if (reservasZonasActivas?.length > 0) {
         reservasZonasActivas.forEach(rz => {
           plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => {
-            if (!mapaOcupacion[p.id_plaza]) {
-              mapaOcupacion[p.id_plaza] = { type: 'reserva_zona' };
-            }
+             if (!mapaOcupacion[p.id_plaza]) mapaOcupacion[p.id_plaza] = { type: 'reserva_zona' };
           });
         });
       }
+      (asigData || []).forEach(asig => { if (asig.id_plaza) mapaOcupacion[asig.id_plaza] = { type: 'asignacion' }; });
+      (ticketsActivosData || []).forEach(tk => { if (tk.id_plaza_asignada) mapaOcupacion[tk.id_plaza_asignada] = { type: 'ticket' }; });
 
-      // 2.3 ASIGNACIONES (Solo activas - id_estado: 1)
-      const { data: asigData } = await supabase.from('asignacion')
-        .select('id_plaza')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', 1)
-        .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`);
-      
-      (asigData || []).forEach(asig => {
-        if (asig.id_plaza) {
-          mapaOcupacion[asig.id_plaza] = { type: 'asignacion' };
-        }
-      });
-
-      // 2.4 TICKETS ACTIVOS (Visitantes)
-      const { data: stActivoTk } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
-      const idTicketActivo = stActivoTk?.id_estado || 1;
-      const { data: ticketsData } = await supabase.from('ticket')
-        .select('id_plaza_asignada')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', idTicketActivo);
-      
-      (ticketsData || []).forEach(tk => {
-        if (tk.id_plaza_asignada) {
-          mapaOcupacion[tk.id_plaza_asignada] = { type: 'ticket' };
-        }
-      });
-
-      // 3. Procesar estados de plazas
       const plazasProcesadas = plazasFiltradas.map(p => {
         const estadoObj = (estadosPlaza || []).find(e => e.id_estado === p.id_estado);
-        const rawId = p.id_estado;
-        
         let finalNombre = estadoObj ? estadoObj.nombre.toUpperCase() : 'LIBRE';
         const info = mapaOcupacion[p.id_plaza];
-        
-        if (info && rawId === ESTADO_PLAZA.LIBRE) {
+        if (info && finalNombre === 'LIBRE') {
           if (info.type === 'acceso' || info.type === 'ticket') finalNombre = 'OCUPADA';
           else if (info.type === 'reserva' || info.type === 'reserva_zona') finalNombre = 'RESERVADA';
           else if (info.type === 'asignacion') finalNombre = 'ASIGNADA';
         }
-
         return { ...p, Nombre_Final: finalNombre };
       });
 
-      // 4. Calcular Estadísticas (Siguiendo exactamente los filtros de Ocupacion.jsx)
       const libres = plazasProcesadas.filter(p => p.Nombre_Final === 'LIBRE' && !mapaOcupacion[p.id_plaza]).length;
       const asignadas = plazasProcesadas.filter(p => p.Nombre_Final.startsWith('ASIGNAD') || mapaOcupacion[p.id_plaza]?.type === 'asignacion').length;
       const ocupadas = plazasProcesadas.filter(p => p.Nombre_Final === 'OCUPADA' && mapaOcupacion[p.id_plaza]?.type !== 'asignacion').length;
@@ -155,15 +127,18 @@ export default function Dashboard() {
 
       setStats({
         totalPlazas: plazasProcesadas.length,
-        ocupadas,
-        reservadas,
-        libres,
-        asignadas,
-        mantenimiento,
-        reservasActivas: reservadas, 
-        personasActivas: totalPersonas
+        ocupadas, reservadas, libres, asignadas, mantenimiento,
+        personasActivas: totalPersonas,
+        ticketsHoy: ticketsHoyData?.length || 0,
+        accesosHoy: accesosHoyData?.length || 0,
+        ticketsActivos: ticketsActivosData?.length || 0,
+        accesosActivosCount: accesosActivosData?.length || 0,
+        totalZonas: zonasData?.length || 0,
+        totalUsuarios: usuariosCount || 0
       });
 
+      setHistoryAccesos(chartAccesos || []);
+      setEventosRecientes(eventosData || []);
     } catch (error) {
       console.error("Error cargando Dashboard:", error.message);
     } finally {
@@ -171,152 +146,266 @@ export default function Dashboard() {
     }
   };
 
-  const ocupacionPorcentaje = stats.totalPlazas > 0
-    ? Math.round((stats.personasActivas / stats.totalPlazas) * 100)
-    : 0;
+  const chartData = useMemo(() => {
+    const now = new Date();
+    
+    if (chartTimeframe === 'dia') {
+      // Last 24 hours grouped by hour
+      const data = [];
+      for (let i = 23; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 60 * 60 * 1000);
+        const name = d.getHours() + ':00';
+        data.push({ name, timestamp: d.getTime(), Entradas: 0 });
+      }
+      historyAccesos.forEach(acc => {
+        const accD = new Date(acc.entrada_at);
+        if (now - accD <= 24 * 60 * 60 * 1000) {
+          const hrStr = accD.getHours() + ':00';
+          const match = data.find(d => d.name === hrStr);
+          if (match) match.Entradas++;
+        }
+      });
+      return data;
+    } 
+    else if (chartTimeframe === 'semana') {
+      // Last 7 days grouped by day of week
+      const data = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        data.push({ name: DIAS_SEMANA[d.getDay()], dateStr: d.toDateString(), Entradas: 0 });
+      }
+      historyAccesos.forEach(acc => {
+        const accD = new Date(acc.entrada_at);
+        if (now - accD <= 7 * 24 * 60 * 60 * 1000) {
+          const tsStr = accD.toDateString();
+          const match = data.find(d => d.dateStr === tsStr);
+          if (match) match.Entradas++;
+        }
+      });
+      return data;
+    }
+    else if (chartTimeframe === 'mes') {
+      // Last 30 days grouped by day of month
+      const data = [];
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        const name = d.getDate().toString().padStart(2,'0') + '/' + (d.getMonth()+1).toString().padStart(2,'0');
+        data.push({ name, dateStr: d.toDateString(), Entradas: 0 });
+      }
+      historyAccesos.forEach(acc => {
+        const accD = new Date(acc.entrada_at);
+        if (now - accD <= 30 * 24 * 60 * 60 * 1000) {
+          const tsStr = accD.toDateString();
+          const match = data.find(d => d.dateStr === tsStr);
+          if (match) match.Entradas++;
+        }
+      });
+      return data;
+    }
+    return [];
+  }, [historyAccesos, chartTimeframe]);
+
+  const usoPorcentaje = stats.totalPlazas > 0 ? Math.round((stats.personasActivas / stats.totalPlazas) * 100) : 0;
+
+  const StatCard = ({ title, value, subtext, icon, colorClass, bgClass, ringClass }) => (
+    <div className={`bg-white p-5 rounded-2xl shadow-sm border ${ringClass} flex items-center justify-between transition-transform hover:-translate-y-1 hover:shadow-md`}>
+      <div>
+        <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${colorClass} opacity-80`}>{title}</p>
+        <h3 className="text-3xl font-black text-gray-800">{value}</h3>
+        {subtext && <p className={`text-xs mt-1.5 font-medium text-gray-500`}>{subtext}</p>}
+      </div>
+      <div className={`p-4 rounded-xl shadow-inner ${bgClass} ${colorClass}`}>
+        {icon}
+      </div>
+    </div>
+  );
 
   return (
     <Layout>
-      <header className="mb-8">
-        <h2 className="text-3xl font-bold text-gray-900">Vista General</h2>
-        <p className="text-gray-500">Resumen de actividad en tiempo real.</p>
-      </header>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-8">
-
-        {/* Ocupación */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto pb-10">
+        <header className="mb-8 flex flex-col md:flex-row md:justify-between md:items-end gap-4">
           <div>
-            <p className="text-gray-500 text-sm font-semibold uppercase">Ocupación Actual</p>
-            <h3 className="text-3xl font-bold text-gray-800 mt-1">
-              {stats.personasActivas} <span className="text-sm text-gray-400 font-normal">/ {stats.totalPlazas}</span>
-            </h3>
-            <p className="text-xs text-green-600 mt-2 font-medium">{stats.libres} plazas libres</p>
+            <h2 className="text-4xl font-black text-gray-900 tracking-tight">Panel Principal</h2>
+            <p className="text-gray-500 font-medium mt-1">Visión global del sistema UCE Parking</p>
           </div>
-          <div className="bg-blue-50 p-4 rounded-full text-blue-600"><FaCar size={24} /></div>
-        </div>
+          <div className="flex gap-3">
+            <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-sm">
+                <FaCheckCircle className="text-indigo-500"/> Operativo
+            </div>
+          </div>
+        </header>
 
-        {/* Reservas Activas */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
-          <div>
-            <p className="text-gray-500 text-sm font-semibold uppercase">Reservas Activas</p>
-            <h3 className="text-3xl font-bold text-gray-800 mt-1">{stats.reservasActivas}</h3>
-            <p className="text-xs text-yellow-600 mt-2 font-medium">
-              {stats.reservadas} plazas marcadas en mapa
-            </p>
+        {loading ? (
+          <div className="flex items-center justify-center p-20">
+            <p className="text-gray-400 font-bold animate-pulse">Cargando métricas...</p>
           </div>
-          <div className="bg-yellow-50 p-4 rounded-full text-yellow-600"><FaChartPie size={24} /></div>
-        </div>
+        ) : (
+          <>
+            {/* Fila principal de métricas core */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              <StatCard 
+                title="Total Espacios en Uso" 
+                value={stats.personasActivas} 
+                subtext={`De ${stats.totalPlazas} plazas en ${stats.totalZonas} zonas`}
+                icon={<FaParking size={26} />} 
+                colorClass="text-emerald-600" bgClass="bg-emerald-50" ringClass="border-emerald-100"
+              />
+              <StatCard 
+                title="Vehículos Estacionados" 
+                value={stats.ocupadas} 
+                subtext={stats.libres > 0 ? `${stats.libres} plazas disponibles` : 'Parqueo Lleno'}
+                icon={<FaCar size={26} />} 
+                colorClass="text-indigo-600" bgClass="bg-indigo-50" ringClass="border-indigo-100"
+              />
+              <StatCard 
+                title="Plazas Asignadas" 
+                value={stats.asignadas} 
+                subtext="Para staff o uso fijo"
+                icon={<FaUserTie size={26} />} 
+                colorClass="text-purple-600" bgClass="bg-purple-50" ringClass="border-purple-100"
+              />
+              <StatCard 
+                title="Reservaciones Activas" 
+                value={stats.reservadas} 
+                subtext="Espacios bloqueados"
+                icon={<FaChartPie size={26} />} 
+                colorClass="text-amber-600" bgClass="bg-amber-50" ringClass="border-amber-100"
+              />
+            </div>
 
-        {/* Mantenimiento */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
-          <div>
-            <p className="text-gray-500 text-sm font-semibold uppercase">Mantenimiento</p>
-            <h3 className="text-3xl font-bold text-gray-800 mt-1">{stats.mantenimiento}</h3>
-            <p className="text-xs text-orange-500 mt-2 font-medium">Fuera de servicio</p>
-          </div>
-          <div className="bg-orange-50 p-4 rounded-full text-orange-500"><FaExclamationTriangle size={24} /></div>
-        </div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                {/* Panel Central Grande */}
+                <div className="lg:col-span-2 space-y-6">
+                    {/* Tarjeta de Resumen Estilizada */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden relative">
+                        <div className="bg-gradient-to-r from-gray-900 to-indigo-900 p-8 text-white relative z-10">
+                            <h3 className="text-xl font-bold opacity-90 flex items-center gap-2"><FaMapMarkedAlt /> Ocupación Actual del Campus</h3>
+                            <div className="mt-6 flex items-end gap-4">
+                                <span className="text-6xl font-black">{usoPorcentaje}%</span>
+                                <span className="text-indigo-200 font-medium pb-2 uppercase tracking-widest text-sm">Capacidad comprometida</span>
+                            </div>
+                            
+                            <div className="w-full bg-gray-800/50 rounded-full h-3 mt-6 mb-2 overflow-hidden backdrop-blur-sm p-0.5 relative">
+                                <div className={`h-full rounded-full transition-all duration-1000 relative ${usoPorcentaje > 85 ? 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)]' : usoPorcentaje > 60 ? 'bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.8)]' : 'bg-green-400 shadow-[0_0_10px_rgba(74,222,128,0.8)]'}`} style={{ width: `${usoPorcentaje}%` }}>
+                                </div>
+                            </div>
+                            <div className="flex justify-between text-xs font-bold text-indigo-300 mt-2">
+                                <span>0%</span>
+                                <span>{stats.libres} libres de {stats.totalPlazas} plazas</span>
+                                <span>100%</span>
+                            </div>
+                        </div>
 
-        {/* Plazas Asignadas */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-purple-100 flex items-center justify-between">
-          <div>
-            <p className="text-gray-500 text-sm font-semibold uppercase">Asignadas</p>
-            <h3 className="text-3xl font-bold text-gray-800 mt-1">{stats.asignadas}</h3>
-            <p className="text-xs text-purple-600 mt-2 font-medium">Empleados con plaza fija</p>
-          </div>
-          <div className="bg-purple-50 p-4 rounded-full text-purple-600"><FaUserTie size={24} /></div>
-        </div>
+                        {/* Breakdown Operativo */}
+                        <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-gray-100 bg-white border-t border-gray-100">
+                            <div className="p-4 py-5 text-center">
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaTicketAlt className="mr-1 mt-0.5"/> Tickets Activos</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.ticketsActivos} <span className="text-xs text-gray-400 font-normal ml-0.5">/ {stats.ticketsHoy} hoy</span></p>
+                            </div>
+                            <div className="p-4 py-5 text-center">
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaDoorOpen className="mr-1 mt-0.5"/> Acc. Manuales</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.accesosActivosCount} <span className="text-xs text-gray-400 font-normal ml-0.5">/ {stats.accesosHoy} hoy</span></p>
+                            </div>
+                            <div className="p-4 py-5 text-center">
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaUsers className="mr-1 mt-0.5"/> Usuarios</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.totalUsuarios}</p>
+                            </div>
+                            <div className="p-4 py-5 text-center bg-orange-50/30">
+                                <p className="text-orange-500 flex justify-center text-[10px] font-black uppercase"><FaExclamationTriangle className="mr-1 mt-0.5"/> Mantenimiento</p>
+                                <p className="text-2xl font-bold text-orange-600 mt-1">{stats.mantenimiento} <span className="text-xs text-orange-400 font-normal ml-0.5">plaz.</span></p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {/* GRÁFICA DE ACTIVIDAD */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 overflow-hidden">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><FaChartLine className="text-indigo-600"/> Tráfico de Entradas</h3>
+                            <div className="flex bg-gray-100 rounded-lg p-1 text-xs font-bold">
+                                {['dia', 'semana', 'mes'].map(t => (
+                                    <button 
+                                      key={t}
+                                      onClick={() => setChartTimeframe(t)}
+                                      className={`px-3 py-1.5 rounded-md capitalize transition-all ${chartTimeframe === t ? 'bg-white shadow text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}
+                                    >
+                                        {t === 'dia' ? 'Hoy' : t}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="h-64 w-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={chartData} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}>
+                                  <defs>
+                                    <linearGradient id="colorEntradas" x1="0" y1="0" x2="0" y2="1">
+                                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8}/>
+                                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                                    </linearGradient>
+                                  </defs>
+                                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                                  <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} tickLine={false} axisLine={false} />
+                                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                                  <Tooltip 
+                                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                     labelStyle={{ fontWeight: 'bold', color: '#374151' }}
+                                     cursor={{ stroke: '#6366f1', strokeWidth: 1, strokeDasharray: '4 4' }}
+                                  />
+                                  <Area type="monotone" dataKey="Entradas" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorEntradas)" />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                </div>
 
-        {/* Personas en Parqueo */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-indigo-100 flex items-center justify-between">
-          <div>
-            <p className="text-gray-500 text-sm font-semibold uppercase">Personas Estacionadas</p>
-            <h3 className="text-3xl font-bold text-gray-800 mt-1">{stats.personasActivas}</h3>
-            <p className="text-xs text-indigo-600 mt-2 font-medium">Total en campus</p>
-          </div>
-          <div className="bg-indigo-50 p-4 rounded-full text-indigo-600"><FaUsers size={24} /></div>
-        </div>
-
-        {/* Nivel de Uso */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between">
-          <div>
-            <p className="text-gray-500 text-sm font-semibold uppercase">Nivel de Uso</p>
-            <h3 className="text-3xl font-bold text-gray-800 mt-1">{ocupacionPorcentaje}%</h3>
-            <div className="w-24 h-2 bg-gray-200 rounded-full mt-2 overflow-hidden">
-              <div
-                className={`h-full rounded-full ${ocupacionPorcentaje > 80 ? 'bg-red-500' : 'bg-green-500'}`}
-                style={{ width: `${ocupacionPorcentaje}%` }}
-              ></div>
+                {/* Columna Lateral para Logs y Actividad */}
+                <div className="lg:col-span-1">
+                    <div className="bg-white p-0 rounded-2xl shadow-sm border border-gray-100 h-full flex flex-col">
+                        <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 rounded-t-2xl">
+                            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+                                <FaHistory className="text-indigo-500" />
+                                Últimos Eventos
+                            </h3>
+                            <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span> En Vivo
+                            </span>
+                        </div>
+                        
+                        <div className="p-5 flex-1 overflow-y-auto">
+                            {eventosRecientes.length === 0 ? (
+                                <p className="text-center text-gray-400 text-sm mt-10 italic">No hay actividad reciente.</p>
+                            ) : (
+                                <div className="space-y-6">
+                                    {eventosRecientes.map((evt, idx) => (
+                                        <div key={idx} className="relative pl-6 before:content-[''] before:absolute before:left-[7px] before:top-2 before:w-[2px] before:h-full before:bg-gray-100">
+                                            {/* Circulito en la línea del timeline */}
+                                            <div className="absolute left-0 top-1.5 w-4 h-4 rounded-full bg-white border-2 border-indigo-400 z-10"></div>
+                                            
+                                            <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 text-sm hover:border-indigo-200 transition-colors">
+                                                <div className="flex justify-between items-start mb-1">
+                                                    <span className="font-bold text-gray-800 text-[11px] uppercase tracking-wide">
+                                                        {evt.tipo_evento?.nombre || 'Evento'} {evt.plaza?.numero_plaza ? `— Plz ${evt.plaza.numero_plaza}` : ''}
+                                                    </span>
+                                                    <span className="text-[10px] font-bold text-gray-400 whitespace-nowrap ml-2">
+                                                        {timeAgo(evt.fecha_hora)}
+                                                    </span>
+                                                </div>
+                                                <p className="text-gray-600 text-[13px] leading-relaxed mt-1.5">{evt.descripcion}</p>
+                                                {evt.persona && (
+                                                    <p className="text-[10px] font-bold text-indigo-500 mt-2 uppercase tracking-wide flex items-center gap-1">
+                                                        <FaUserClock /> {evt.persona.nombre} {evt.persona.apellido}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
             </div>
-          </div>
-          <div className="bg-green-50 p-4 rounded-full text-green-600"><FaParking size={24} /></div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow border border-gray-200">
-          <h3 className="font-bold text-gray-800 mb-4 text-lg">Estado Detallado</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg border border-red-100">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                <span className="font-medium text-gray-700">Vehículos Estacionados</span>
-              </div>
-              <span className="font-bold text-red-600 text-xl">{stats.ocupadas}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-indigo-50 rounded-lg border border-indigo-100">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-indigo-600"></div>
-                <span className="font-medium text-gray-700">Total Personas en Campus</span>
-              </div>
-              <span className="font-bold text-indigo-700 text-xl">{stats.personasActivas}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-yellow-50 rounded-lg border border-yellow-100">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
-                <span className="font-medium text-gray-700">Espacios Reservados</span>
-              </div>
-              <span className="font-bold text-yellow-600 text-xl">{stats.reservadas}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-purple-50 rounded-lg border border-purple-100">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-purple-600"></div>
-                <span className="font-medium text-gray-700">Plazas Asignadas a Empleados</span>
-              </div>
-              <span className="font-bold text-purple-700 text-xl">{stats.asignadas}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-orange-50 rounded-lg border border-orange-100">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-orange-500"></div>
-                <span className="font-medium text-gray-700">En Mantenimiento</span>
-              </div>
-              <span className="font-bold text-orange-600 text-xl">{stats.mantenimiento}</span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg border border-green-100">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                <span className="font-medium text-gray-700">Espacios Libres</span>
-              </div>
-              <span className="font-bold text-green-600 text-xl">{stats.libres}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-gradient-to-br from-blue-700 to-blue-900 p-8 rounded-xl shadow-lg text-white flex flex-col justify-center relative overflow-hidden">
-          <div className="relative z-10">
-            <h3 className="text-2xl font-black mb-2 italic">UCE PARKING SYSTEM</h3>
-            <p className="mb-6 opacity-80 text-sm leading-relaxed">
-              Monitoreo global de {stats.totalPlazas} plazas distribuidas en el campus.
-              Sincronización en tiempo real con sensores ultrasónicos activa.
-            </p>
-            <div className="flex gap-4">
-              <button className="bg-white text-blue-900 px-5 py-2 rounded-lg font-black text-xs uppercase tracking-widest hover:bg-blue-50 transition">Mapa</button>
-              <button className="bg-blue-500/20 border border-blue-400 text-white px-5 py-2 rounded-lg font-black text-xs uppercase tracking-widest hover:bg-blue-500/40 transition">Reportes</button>
-            </div>
-          </div>
-          <FaParking className="absolute -right-4 -bottom-4 text-white/10 text-9xl rotate-12" />
-        </div>
+          </>
+        )}
       </div>
     </Layout>
   );

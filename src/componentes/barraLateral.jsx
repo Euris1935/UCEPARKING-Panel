@@ -12,18 +12,18 @@ import {
 
 const navItems = [
   { to: '/', icon: FaTachometerAlt, label: 'Dashboard', moduloReq: null },
-  { to: '/tickets', icon: FaTicketAlt, label: 'Tickets de Acceso', moduloReq: 'Módulo Parqueo' },
-  { to: '/vehiculos', icon: FaCarSide, label: 'Flota de Vehículos', moduloReq: 'Módulo Vehículos' },
+  { to: '/tickets', icon: FaTicketAlt, label: 'Tickets de Acceso', moduloReq: 'Tickets de Acceso' },
+  { to: '/vehiculos', icon: FaCarSide, label: 'Flota de Vehículos', moduloReq: 'Flota de Vehiculos' },
   { to: '/acceso-manual', icon: FaHandPaper, label: 'Acceso Manual', moduloReq: 'Acceso Manual' },
-  { to: '/ocupacion', icon: FaCar, label: 'Ocupación', moduloReq: 'Ocupación' },
-  { to: '/zonas-parqueo', icon: FaParking, label: 'Zonas de Parqueo', moduloReq: 'Zonas de Parqueo' },
-  { to: '/reservaciones', icon: FaClipboardList, label: 'Reservaciones', moduloReq: 'Reservas' },
-  { to: '/asignaciones', icon: FaSuitcase, label: 'Asignaciones', moduloReq: 'Asignaciones' },
-  { to: '/usuarios', icon: FaUsers, label: 'Usuarios', moduloReq: 'Módulo Usuarios' },
-  { to: '/sensores', icon: FaMicrochip, label: 'Dispositivos', moduloReq: 'Dispositivos' },
+  { to: '/ocupacion', icon: FaCar, label: 'Ocupación', moduloReq: 'Ocupacion' },
+  { to: '/zonas-parqueo', icon: FaParking, label: 'Zonas de Parqueo', moduloReq: 'Zonas y Plazas' },
+  { to: '/reservaciones', icon: FaClipboardList, label: 'Reservaciones', moduloReq: 'Reservaciones' },
+  { to: '/asignaciones', icon: FaSuitcase, label: 'Asignaciones', moduloReq: 'Asignaciones Fijas' },
+  { to: '/usuarios', icon: FaUsers, label: 'Usuarios', moduloReq: 'Usuarios del Panel' },
+  { to: '/sensores', icon: FaMicrochip, label: 'Dispositivos', moduloReq: 'Mantenimiento' },
   { to: '/reportes', icon: FaChartBar, label: 'Reportes', moduloReq: 'Reportes' },
   { to: '/mantenimiento', icon: FaWrench, label: 'Mantenimiento', moduloReq: 'Mantenimiento' },
-  { to: '/logs', icon: FaHistory, label: 'Logs de Eventos', moduloReq: 'Logs' },
+  { to: '/logs', icon: FaHistory, label: 'Logs de Eventos', moduloReq: 'Logs y Eventos' },
 ];
 
 export default function BarraLateral() {

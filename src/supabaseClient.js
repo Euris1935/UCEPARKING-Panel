@@ -5,14 +5,4 @@ const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 
 // export const supabase = createClient(supabaseUrl, supabaseKey)
 
-export const supabase = createClient(supabaseUrl, supabaseKey, {
-  auth: {
-    // ESTO ES LO IMPORTANTE:
-    // Cambiamos de localStorage (por defecto) a sessionStorage.
-    // sessionStorage se borra automáticamente al cerrar la pestaña/navegador.
-    storage: sessionStorage, 
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: true
-  }
-});
+export const supabase = createClient(supabaseUrl, supabaseKey);
