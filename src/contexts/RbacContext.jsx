@@ -15,12 +15,11 @@ export function RbacProvider({ children, session }) {
     const currentUserId = session?.user?.id;
     
     if (!currentUserId) {
-      console.log('[Rbac] ℹ️ No hay sesión activa. Manteniendo estado de carga.');
+      console.log('[Rbac] ℹ️ No hay sesión activa. Limpiando permisos.');
       setModulos([]);
       setPermisos([]);
       setEsAdmin(false);
-      // NO setLoading(false) aquí — App.js ya redirige a /login si no hay sesión,
-      // y si la sesión se está restaurando, esto evita que ProtectedRoute redirija prematuramente.
+      setLoading(false);
       return;
     }
 
@@ -99,7 +98,10 @@ export function RbacProvider({ children, session }) {
       setEsAdmin(_esAdmin);
 
       if (_esAdmin) {
-        const { data: modulosData } = await supabase.rpc('get_modulos_accesibles');
+        const { data: modulosData } = await supabase
+          .from('modulo')
+          .select('*')
+          .eq('activo', true);
         console.log(`[Rbac] 📦 Cargados ${modulosData?.length || 0} módulos para Administrador.`);
         setModulos(modulosData || []);
         setPermisos([]);
@@ -114,7 +116,7 @@ export function RbacProvider({ children, session }) {
       ] = await Promise.all([
         supabase.from('rol_permiso').select('*').eq('id_rol', rolId),
         supabase.from('permiso').select('*'),
-        supabase.rpc('get_modulos_accesibles')
+        supabase.from('modulo').select('*').eq('activo', true)
       ]);
 
       const modulosAccesibles  = [];
