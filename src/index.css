@@ -1,4 +1,6 @@
 /* src/index.css */
+@import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
+@import url('https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css');
 
 @tailwind base;
 @tailwind components;

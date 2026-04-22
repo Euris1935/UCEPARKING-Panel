@@ -60,7 +60,7 @@ export default function Sensores() {
           *,
           tipo:tipo_dispositivo!id_tipo(id_tipo, nombre),
           modelo:modelo!id_modelo(id_modelo, nombre, id_marca, marca!modelo_marca_fk(id_marca, nombre)),
-          plaza:plaza!id_plaza(id_plaza, numero_plaza),
+          plaza:plaza!id_plaza(id_plaza, numero_plaza, zona:id_zona(id_zona, nombre, nivel_piso)),
           estado:estado_dispositivo!dispositivo_estado_fk(id_estado, nombre)
         `)
         .eq('organizacion_id', orgId)
@@ -349,9 +349,14 @@ export default function Sensores() {
                       </td>
                       <td className="px-6 py-4">
                         {disp.plaza && (
-                          <div className="inline-flex items-center gap-1.5 bg-[#2eb17b]/10 border border-[#2eb17b] px-2.5 py-0.5 rounded-md shadow-sm">
-                            <span className="text-[9px] font-black text-[#2eb17b] uppercase tracking-tighter">Plaza</span>
-                            <span className="text-sm font-black text-[#2eb17b]">{disp.plaza.numero_plaza}</span>
+                          <div className="flex flex-col gap-1">
+                            <div className="inline-flex items-center gap-1.5 bg-[#2eb17b]/10 border border-[#2eb17b] px-2.5 py-0.5 rounded-md shadow-sm w-fit">
+                              <span className="text-[9px] font-black text-[#2eb17b] uppercase tracking-tighter">Plaza</span>
+                              <span className="text-sm font-black text-[#2eb17b]">{disp.plaza.numero_plaza}</span>
+                            </div>
+                            <div className="text-[10px] text-gray-500 font-bold uppercase tracking-tight">
+                                {disp.plaza.zona?.nombre} • {disp.plaza.zona?.nivel_piso === 0 ? 'P. Baja' : (disp.plaza.zona?.nivel_piso < 0 ? `Sótano ${Math.abs(disp.plaza.zona?.nivel_piso)}` : `Piso ${disp.plaza.zona?.nivel_piso}`)}
+                            </div>
                           </div>
                         )}
                       </td>

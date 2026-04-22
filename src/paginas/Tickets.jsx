@@ -118,7 +118,7 @@ export default function Tickets() {
 
   const [loading,              setLoading]              = useState(false);
   const [isRefreshing,         setIsRefreshing]         = useState(false);
-  const [activeTab,            setActiveTab]            = useState(canCreate ? 'entrada' : 'activos');
+  const [activeTab,            setActiveTab]            = useState('entrada');
   const [tickets,              setTickets]              = useState([]);
   const [searchTerm,           setSearchTerm]           = useState('');
   const [ticketsActivos,       setTicketsActivos]       = useState(0);
@@ -537,13 +537,13 @@ export default function Tickets() {
       </header>
 
       <div className="flex gap-2 border-b border-gray-200 mb-8">
-        {canCreate && tabBtn('entrada', 'Nueva Entrada', <FaTicketAlt />)}
+        {tabBtn('entrada', 'Nueva Entrada', <FaTicketAlt />)}
         {tabBtn('activos', 'Tickets Activos', <FaClipboardCheck />)}
         {tabBtn('historial', 'Historial', <FaHistory />)}
       </div>
 
       {/* ── TAB ENTRADA ── */}
-      {canCreate && activeTab === 'entrada' && (
+      {activeTab === 'entrada' && (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
           <section className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
             <h3 className="text-lg font-bold mb-5 flex items-center gap-2">

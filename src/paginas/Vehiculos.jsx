@@ -224,7 +224,6 @@ export default function Vehiculos() {
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
         {/* Formulario */}
-        {canCreate && (
         <section className="lg:col-span-1 bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
           <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-gray-800">
             <FaCar className="text-purple-600" /> Vincular Vehículo Personal
@@ -283,10 +282,9 @@ export default function Vehiculos() {
             </button>
           </form>
         </section>
-        )}
 
         {/* Tabla flota */}
-        <section className={`${canCreate ? 'lg:col-span-4' : 'lg:col-span-5'} bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden flex flex-col`}>
+        <section className="lg:col-span-4 bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden flex flex-col">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between p-5 border-b gap-4">
             <h3 className="font-bold text-gray-800 flex items-center gap-2">
               <FaCar className="text-purple-600" /> Flota Registrada
@@ -397,19 +395,17 @@ export default function Vehiculos() {
 
                       <td className="px-5 py-4 text-center">
                         <div className="flex gap-1 justify-center">
-                          {canEdit && (
-                            <button 
-                                onClick={() => { 
-                                    setEditandoVehiculo(v); 
-                                    const idMarca = v.id_modelo ? listaModelos.find(m => m.id_modelo === v.id_modelo)?.id_marca : '';
-                                    setEditVehiculoForm({ placa: v.placa, id_marca: idMarca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' }); 
-                                }} 
-                                className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-lg transition" 
-                                title="Editar"
-                            >
-                                <FaEdit size={14} />
-                            </button>
-                          )}
+                          <button
+                              onClick={() => {
+                                  setEditandoVehiculo(v);
+                                  const idMarca = v.id_modelo ? listaModelos.find(m => m.id_modelo === v.id_modelo)?.id_marca : '';
+                                  setEditVehiculoForm({ placa: v.placa, id_marca: idMarca || '', id_modelo: v.id_modelo || '', id_color: v.id_color || '' });
+                              }}
+                              className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-2 rounded-lg transition"
+                              title="Editar"
+                          >
+                              <FaEdit size={14} />
+                          </button>
                           <button 
                             onClick={() => {
                                 setChangingStatusFor(v.id_vehiculo);

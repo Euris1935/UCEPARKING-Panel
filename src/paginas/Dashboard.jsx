@@ -1,10 +1,10 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaUserTie, FaUsers, FaTicketAlt, FaHistory, FaCheckCircle, FaDoorOpen, FaMapMarkedAlt, FaUserClock, FaChartLine } from 'react-icons/fa';
+import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaUserTie, FaUsers, FaTicketAlt, FaHistory, FaCheckCircle, FaDoorOpen, FaMapMarkedAlt, FaUserClock, FaChartLine, FaMobileAlt, FaBuilding, FaSignOutAlt, FaSignInAlt } from 'react-icons/fa';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useOrg } from '../contexts/OrgContext';
-import { ESTADO_PLAZA, ESTADO_RESERVA } from '../lib/constants';
+import { ESTADO_PLAZA, ESTADO_RESERVA, ROL } from '../lib/constants';
 
 function timeAgo(dateString) {
   const date = new Date(dateString);
@@ -30,7 +30,8 @@ export default function Dashboard() {
     mantenimiento: 0, asignadas: 0, personasActivas: 0,
     ticketsHoy: 0, accesosHoy: 0,
     ticketsActivos: 0, accesosActivosCount: 0,
-    totalZonas: 0, totalUsuarios: 0
+    totalZonas: 0, totalUsuarios: 0,
+    totalVehiculos: 0, totalEmpleados: 0, usuariosMoviles: 0, salidasHoy: 0
   });
   const [eventosRecientes, setEventosRecientes] = useState([]);
   const [historyAccesos, setHistoryAccesos] = useState([]);
@@ -69,10 +70,11 @@ export default function Dashboard() {
         { data: asigData }, { data: ticketsActivosData },
         { data: accesosActivosData }, { data: reservasActivasData }, { data: reservasZonasActivas },
         { data: eventosData }, { data: ticketsHoyData }, { data: accesosHoyData }, { count: usuariosCount },
-        { data: chartAccesos }
+        { data: chartAccesos },
+        { count: vehiculosCount }, { count: empleadosCount }, { count: usuariosMovilesCount }, { count: salidasHoyCount }
       ] = await Promise.all([
         supabase.from('estado_plaza').select('*'),
-        supabase.from('plaza').select('*, zona:id_zona(estado_zona:id_estado(nombre))').eq('organizacion_id', orgId),
+        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, nivel_piso, estado_zona:id_estado(nombre))').eq('organizacion_id', orgId),
         supabase.from('zona').select('id_zona').eq('organizacion_id', orgId),
         
         supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`),
@@ -87,7 +89,13 @@ export default function Dashboard() {
         supabase.from('usuario').select('*', { count: 'exact', head: true }).eq('organizacion_id', orgId),
         
         // Data for charts (last 30 days of entries)
-        supabase.from('acceso').select('entrada_at').eq('organizacion_id', orgId).gte('entrada_at', mesStr)
+        supabase.from('acceso').select('entrada_at').eq('organizacion_id', orgId).gte('entrada_at', mesStr),
+
+        // New dashboard components
+        supabase.from('vehiculo').select('*', { count: 'exact', head: true }).eq('organizacion_id', orgId),
+        supabase.from('empleado').select('*', { count: 'exact', head: true }).eq('organizacion_id', orgId),
+        supabase.from('usuario').select('*', { count: 'exact', head: true }).eq('organizacion_id', orgId).eq('rol_id', ROL.MOVIL),
+        supabase.from('acceso').select('id_registro', { count: 'exact', head: true }).eq('organizacion_id', orgId).gte('salida_at', hoyStr)
       ]);
 
       const plazasFiltradas = (rawPlazas || []).filter(p => p.zona?.estado_zona?.nombre !== 'Inactiva');
@@ -134,7 +142,12 @@ export default function Dashboard() {
         ticketsActivos: ticketsActivosData?.length || 0,
         accesosActivosCount: accesosActivosData?.length || 0,
         totalZonas: zonasData?.length || 0,
-        totalUsuarios: usuariosCount || 0
+        totalUsuarios: usuariosCount || 0,
+        totalVehiculos: vehiculosCount || 0,
+        totalEmpleados: empleadosCount || 0,
+        usuariosMoviles: usuariosMovilesCount || 0,
+        salidasHoy: salidasHoyCount || 0,
+        _plazasRaw: plazasProcesadas // Para cálculos internos en el render
       });
 
       setHistoryAccesos(chartAccesos || []);
@@ -298,22 +311,83 @@ export default function Dashboard() {
 
                         {/* Breakdown Operativo */}
                         <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-gray-100 bg-white border-t border-gray-100">
+                            {/* Fila 1 */}
                             <div className="p-4 py-5 text-center">
-                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaTicketAlt className="mr-1 mt-0.5"/> Tickets Activos</p>
-                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.ticketsActivos} <span className="text-xs text-gray-400 font-normal ml-0.5">/ {stats.ticketsHoy} hoy</span></p>
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaDoorOpen className="mr-1 mt-0.5"/> Accesos Hoy</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.accesosHoy} <span className="text-xs text-green-500 font-bold ml-0.5"><FaSignInAlt className="inline mb-0.5"/></span></p>
                             </div>
                             <div className="p-4 py-5 text-center">
-                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaDoorOpen className="mr-1 mt-0.5"/> Acc. Manuales</p>
-                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.accesosActivosCount} <span className="text-xs text-gray-400 font-normal ml-0.5">/ {stats.accesosHoy} hoy</span></p>
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaSignOutAlt className="mr-1 mt-0.5"/> Salidas Hoy</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.salidasHoy} <span className="text-xs text-red-400 font-bold ml-0.5"><FaSignOutAlt className="inline mb-0.5"/></span></p>
                             </div>
                             <div className="p-4 py-5 text-center">
-                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaUsers className="mr-1 mt-0.5"/> Usuarios</p>
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaTicketAlt className="mr-1 mt-0.5"/> Tickets (Act / Hoy)</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.ticketsActivos} <span className="text-xs text-gray-400 font-normal ml-0.5">/ {stats.ticketsHoy}</span></p>
+                            </div>
+                            <div className="p-4 py-5 text-center">
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaUsers className="mr-1 mt-0.5"/> Usuarios Totales</p>
                                 <p className="text-2xl font-bold text-gray-800 mt-1">{stats.totalUsuarios}</p>
                             </div>
-                            <div className="p-4 py-5 text-center bg-orange-50/30">
+                            
+                            {/* Fila 2 (Añadida mediante border-t y sin bordes laterales lg para que mantenga el grid de 4 cols) */}
+                            <div className="p-4 py-5 text-center lg:border-t">
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaCar className="mr-1 mt-0.5"/> Vehículos Reg.</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.totalVehiculos}</p>
+                            </div>
+                            <div className="p-4 py-5 text-center lg:border-t">
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaBuilding className="mr-1 mt-0.5"/> Empleados</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.totalEmpleados}</p>
+                            </div>
+                            <div className="p-4 py-5 text-center lg:border-t">
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaMobileAlt className="mr-1 mt-0.5"/> Usu. Móviles</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.usuariosMoviles}</p>
+                            </div>
+                            <div className="p-4 py-5 text-center bg-orange-50/30 lg:border-t">
                                 <p className="text-orange-500 flex justify-center text-[10px] font-black uppercase"><FaExclamationTriangle className="mr-1 mt-0.5"/> Mantenimiento</p>
                                 <p className="text-2xl font-bold text-orange-600 mt-1">{stats.mantenimiento} <span className="text-xs text-orange-400 font-normal ml-0.5">plaz.</span></p>
                             </div>
+                        </div>
+                    </div>
+
+                    {/* NUEVA SECCIÓN: OCUPACIÓN POR NIVELES */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+                             <FaBuilding className="text-emerald-500" /> Ocupación por Niveles
+                        </h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                            {(() => {
+                                // Agrupar plazas por nivel del piso de la zona
+                                const niveles = {};
+                                stats._plazasRaw?.forEach(p => {
+                                    const niv = p.zona?.nivel_piso ?? 0;
+                                    if (!niveles[niv]) niveles[niv] = { total: 0, ocupadas: 0, nombre: '' };
+                                    niveles[niv].total++;
+                                    if (['OCUPADA', 'RESERVADA', 'ASIGNADA'].includes(p.Nombre_Final)) {
+                                        niveles[niv].ocupadas++;
+                                    }
+                                    if (!niveles[niv].nombre) {
+                                        niveles[niv].nombre = niv === 0 ? 'P. Baja' : (niv < 0 ? `Sótano ${Math.abs(niv)}` : `Piso ${niv}`);
+                                    }
+                                });
+
+                                return Object.keys(niveles).sort((a, b) => parseInt(a) - parseInt(b)).map(niv => {
+                                    const n = niveles[niv];
+                                    const porc = n.total > 0 ? Math.round((n.ocupadas / n.total) * 100) : 0;
+                                    return (
+                                        <div key={niv} className="bg-gray-50 rounded-xl p-4 border border-gray-100 flex flex-col items-center">
+                                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{n.nombre}</span>
+                                            <div className="mt-2 text-2xl font-black text-gray-800">{porc}%</div>
+                                            <div className="w-full bg-gray-200 h-1.5 rounded-full mt-2 overflow-hidden">
+                                                <div 
+                                                    className={`h-full rounded-full ${porc > 85 ? 'bg-red-500' : porc > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                                    style={{ width: `${porc}%` }}
+                                                ></div>
+                                            </div>
+                                            <span className="text-[9px] font-bold text-gray-400 mt-2">{n.ocupadas}/{n.total} PLAZAS</span>
+                                        </div>
+                                    );
+                                });
+                            })()}
                         </div>
                     </div>
                     

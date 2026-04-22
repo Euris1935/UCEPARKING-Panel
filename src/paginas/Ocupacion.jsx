@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaSearch, FaMapMarkerAlt, FaSync, FaWheelchair } from 'react-icons/fa';
+import { FaSearch, FaMapMarkerAlt, FaSync, FaWheelchair, FaCar, FaLock, FaUserTie, FaExclamationTriangle } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import { registrarLog, EVENT_TYPES } from '../utils/logging';
 import { ESTADO_PLAZA, ESTADO_RESERVA, ESTADO_TICKET } from '../lib/constants';
@@ -24,6 +24,7 @@ export default function Ocupacion() {
   const [isRefreshing,     setIsRefreshing]     = useState(false);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
   const [ocupacionInfo,    setOcupacionInfo]    = useState({});
+  const [nivelFilter,      setNivelFilter]      = useState('all');
 
   useEffect(() => {
     if (orgId) {
@@ -297,48 +298,30 @@ export default function Ocupacion() {
     }
   };
 
-  const getCardColor = (estado, idPlaza, forcingStatus = null, idTipo = null) => {
+  const getSlotStyle = (estado, idPlaza, forcingStatus = null, idTipo = null) => {
     const statusToUse = (forcingStatus || estado)?.toUpperCase();
-    const info = ocupacionInfo[idPlaza];
-    if (idTipo === 3) {
-      if (statusToUse === 'OCUPADA') return 'bg-blue-600 border-blue-700 shadow-md text-white';
-      if (statusToUse === 'RESERVADA' || statusToUse === 'RESERVADO') return 'bg-blue-100 border-blue-300 shadow-sm';
-      return 'bg-blue-50 border-blue-200 hover:border-blue-400 shadow-sm';
-    }
-    if (!forcingStatus && info?.type === 'asignacion') return 'bg-purple-50 border-purple-300 shadow-sm cursor-not-allowed';
-    switch (statusToUse) {
-      case 'LIBRE':        return 'bg-green-50 border-green-200 hover:border-green-400 shadow-sm';
-      case 'OCUPADA':      return 'bg-red-50 border-red-200 hover:border-red-400 shadow-sm';
-      case 'RESERVADA':    return 'bg-yellow-50 border-yellow-200 hover:border-yellow-400 shadow-sm';
-      case 'ASIGNADA':
-      case 'ASIGNADO':     return 'bg-purple-50 border-purple-300 shadow-sm cursor-not-allowed';
-      case 'MANTENIMIENTO':
-      case 'EN MANTENIMIENTO':
-      case 'FUERA DE SERVICIO': return 'bg-orange-50 border-orange-200 hover:border-orange-400 shadow-sm';
-      case 'CERRADA':      return 'bg-gray-100 border-gray-200 shadow-sm';
-      default:             return 'bg-gray-50 border-gray-200';
-    }
-  };
+    
+    // Pintura del asfalto suave: azul pálido si es discapacitado, gris suave por defecto
+    let borderColor = idTipo === 3 ? 'border-blue-300' : 'border-gray-300';
+    let base = `relative flex flex-col items-center justify-end text-center w-full max-w-[130px] mx-auto aspect-[1/1.6] border-x-[3px] border-t-[3px] border-b-0 ${borderColor} transition-all cursor-pointer overflow-hidden pb-2 rounded-t shadow-sm group `;
 
-  const getBadgeColor = (estado, idPlaza, forcingStatus = null, idTipo = null) => {
-    const statusToUse = (forcingStatus || estado)?.toUpperCase();
     if (idTipo === 3) {
-      if (statusToUse === 'OCUPADA') return 'text-blue-100 bg-blue-800/50';
-      return 'text-blue-700 bg-blue-100';
+      base += "bg-blue-50/50 hover:bg-blue-100/50 ";
+    } else {
+      base += "bg-white/60 hover:bg-white/90 ";
     }
-    const info = ocupacionInfo[idPlaza];
-    if (!forcingStatus && info?.type === 'asignacion') return 'text-purple-800 bg-purple-200';
+
     switch (statusToUse) {
-      case 'LIBRE':        return 'text-green-700 bg-green-200';
-      case 'OCUPADA':      return 'text-red-700 bg-red-200';
-      case 'RESERVADA':    return 'text-yellow-800 bg-yellow-200';
+      case 'LIBRE':        return base; 
+      case 'OCUPADA':      return base + "bg-red-50/40";
+      case 'RESERVADA':    return base + "bg-yellow-50/40";
       case 'ASIGNADA':
-      case 'ASIGNADO':     return 'text-purple-800 bg-purple-200';
+      case 'ASIGNADO':     return base + "bg-purple-50/40";
       case 'MANTENIMIENTO':
       case 'EN MANTENIMIENTO':
-      case 'FUERA DE SERVICIO': return 'text-orange-800 bg-orange-200';
-      case 'CERRADA':      return 'text-gray-600 bg-gray-200';
-      default:             return 'text-gray-700 bg-gray-200';
+      case 'FUERA DE SERVICIO': return base + "opacity-80 bg-[repeating-linear-gradient(45deg,transparent,transparent_10px,rgba(249,115,22,0.05)_10px,rgba(249,115,22,0.05)_20px)] border-orange-300 rounded-b border-b-[3px]";
+      case 'CERRADA':      return base + "opacity-40 grayscale";
+      default:             return base;
     }
   };
 
@@ -359,13 +342,27 @@ export default function Ocupacion() {
 
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-8 flex flex-col xl:flex-row gap-4 items-center justify-between sticky top-0 z-10">
         <div className="relative w-full xl:w-96">
-          <input
-            type="text" placeholder="Buscar plaza..."
-            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-primary"
-            value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-          />
           <FaSearch className="absolute left-3 top-3 text-gray-400" />
         </div>
+
+        <div className="flex items-center gap-2 w-full xl:w-auto">
+          <label className="text-xs font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">Nivel:</label>
+          <select 
+            className="flex-1 xl:w-48 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-primary outline-none font-semibold text-gray-700 transition-all"
+            value={nivelFilter}
+            onChange={(e) => setNivelFilter(e.target.value)}
+          >
+            <option value="all">Todos los niveles</option>
+            <option value="-2">Sótano 2</option>
+            <option value="-1">Sótano 1</option>
+            <option value="0">Planta baja</option>
+            <option value="1">Piso 1</option>
+            <option value="2">Piso 2</option>
+            <option value="3">Piso 3</option>
+            <option value="4">Piso 4</option>
+          </select>
+        </div>
+
         <div className="flex flex-wrap gap-4 text-sm font-semibold justify-center">
           <span className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-green-500"></div> Libres: {stats.libres}</span>
           <span className="flex items-center gap-1"><div className="w-3 h-3 rounded-full bg-red-500"></div> Ocupadas: {stats.ocupadas}</span>
@@ -380,7 +377,9 @@ export default function Ocupacion() {
 
       {loading ? <p className="text-center py-10">Cargando...</p> : (
         <div className="space-y-8">
-          {zonas.map(zona => {
+          {zonas
+            .filter(z => nivelFilter === 'all' || z.nivel_piso === parseInt(nivelFilter))
+            .map(zona => {
             const plazasDeZona = plazas.filter(p =>
               p.id_zona === zona.id_zona &&
               p.numero_plaza.toLowerCase().includes(searchTerm.toLowerCase())
@@ -396,7 +395,13 @@ export default function Ocupacion() {
                 <div className="flex items-center justify-between mb-6 border-b pb-2">
                   <div className="flex items-center gap-2">
                     <FaMapMarkerAlt className="text-primary text-xl" />
-                    <h3 className="text-xl font-bold text-gray-800">{zona.nombre}</h3>
+                    <div>
+                      <h3 className="text-xl font-bold text-gray-800 leading-none">{zona.nombre}</h3>
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-tighter">
+                        {zona.nivel_piso === 0 ? 'Planta baja' : (zona.nivel_piso < 0 ? `Sótano ${Math.abs(zona.nivel_piso)}` : `Piso ${zona.nivel_piso}`)}
+                        {zona.direccion && ` • ${zona.direccion}`}
+                      </span>
+                    </div>
                   </div>
                   {isForcedState && (
                     <span className={`px-3 py-1 rounded-full text-xs font-black uppercase tracking-widest shadow-sm ${estZona.includes('Mante') ? 'bg-orange-500 text-white' : 'bg-gray-500 text-white'}`}>
@@ -405,51 +410,79 @@ export default function Ocupacion() {
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4">
-                  {plazasDeZona.map(plaza => (
-                    <div
-                      key={plaza.id_plaza}
-                      className={`relative group p-4 rounded-lg border-2 cursor-pointer transition-all h-32 flex flex-col items-center justify-center text-center ${getCardColor(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus, plaza.id_tipo)}`}
-                      onClick={() => {
-                        if (isForcedState) {
-                          Swal.fire({ title: 'Zona Bloqueada', text: `Esta plaza pertenece a una zona en estado "${estZona}".`, icon: 'info' });
-                          return;
-                        }
-                        toggleOccupancy(plaza);
-                      }}
-                    >
-                      {plaza.id_tipo === 3 && (
-                        <FaWheelchair className={`absolute top-2 right-2 text-lg ${plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-blue-100' : 'text-blue-500'}`} />
-                      )}
+                <div className="bg-gray-100 p-8 pt-10 rounded-2xl shadow-inner relative border border-gray-200 overflow-hidden">
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-x-4 gap-y-12 place-items-center relative z-10 w-full">
+                  {plazasDeZona.map(plaza => {
+                    const isOcupada = plaza.Nombre_Estado_Rel === 'OCUPADA';
+                    const isReservada = plaza.Nombre_Estado_Rel === 'RESERVADA' || plaza.Nombre_Estado_Rel === 'RESERVADO';
+                    const isAsignada = plaza.Nombre_Estado_Rel.startsWith('ASIGNAD') || ocupacionInfo[plaza.id_plaza]?.type === 'asignacion';
+                    const isMantenimiento = ['MANTENIMIENTO', 'FUERA DE SERVICIO', 'EN MANTENIMIENTO'].includes(plaza.Nombre_Estado_Rel);
+                    const info = ocupacionInfo[plaza.id_plaza];
 
-                      <h4 className={`font-bold text-xl ${plaza.id_tipo === 3 && plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-white' : 'text-gray-800'}`}>
-                        {plaza.numero_plaza}
-                      </h4>
-                      <span className={`mt-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getBadgeColor(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus, plaza.id_tipo)}`}>
-                        {forcingStatus || (ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' ? 'ASIGNADA' : plaza.Nombre_Estado_Rel)}
-                      </span>
+                    return (
+                      <div
+                        key={plaza.id_plaza}
+                        className={getSlotStyle(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus, plaza.id_tipo)}
+                        onClick={() => {
+                          if (isForcedState) {
+                            Swal.fire({ title: 'Zona Bloqueada', text: `Esta plaza pertenece a una zona en estado "${estZona}".`, icon: 'info' });
+                            return;
+                          }
+                          toggleOccupancy(plaza);
+                        }}
+                      >
+                        {/* Número pintado en el asfalto (fondo) */}
+                        <span className="absolute top-3 font-bold text-[2rem] text-gray-300 select-none pointer-events-none group-hover:text-gray-400 transition-colors">{plaza.numero_plaza}</span>
 
-                      {/* Mostrar info del ocupante */}
-                      {!isForcedState &&
-                        ['OCUPADA', 'RESERVADA', 'RESERVADO', 'ASIGNADA', 'ASIGNADO'].includes(plaza.Nombre_Estado_Rel) &&
-                        ocupacionInfo[plaza.id_plaza] && (
-                          <div className={`mt-1 text-[9px] leading-tight ${
-                            ocupacionInfo[plaza.id_plaza]?.type === 'asignacion' || plaza.Nombre_Estado_Rel.startsWith('ASIGNAD') ? 'text-purple-800' :
-                            plaza.id_tipo === 3 && plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-blue-50' :
-                            plaza.Nombre_Estado_Rel === 'OCUPADA' ? 'text-red-700' :
-                            (plaza.Nombre_Estado_Rel === 'RESERVADA' || plaza.Nombre_Estado_Rel === 'RESERVADO') ? 'text-yellow-800' : 'text-purple-800'
-                          }`}>
-                            {plaza.Nombre_Estado_Rel === 'OCUPADA' && ocupacionInfo[plaza.id_plaza].placa && (
-                              <div className="font-mono font-bold">{ocupacionInfo[plaza.id_plaza].placa}</div>
-                            )}
-                            <div className="text-[8px] opacity-80 truncate max-w-[90px]">
-                              {ocupacionInfo[plaza.id_plaza].nombre}
-                            </div>
+                        {/* Icono de Discapacitado en el suelo */}
+                        {plaza.id_tipo === 3 && (
+                          <FaWheelchair className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-6xl text-blue-200 pointer-events-none" />
+                        )}
+
+                        {/* Elementos 3D / Superpuestos */}
+                        {isOcupada && (
+                          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-[20%] text-5xl md:text-6xl text-red-500 drop-shadow-md z-10 group-hover:scale-105 transition-transform">
+                             <FaCar />
                           </div>
-                        )
-                      }
-                    </div>
-                  ))}
+                        )}
+                        
+                        {isReservada && !isOcupada && (
+                          <FaLock className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl text-yellow-500 drop-shadow-sm z-10 group-hover:scale-110 transition-transform" />
+                        )}
+
+                        {isAsignada && !isOcupada && !isReservada && (
+                          <FaUserTie className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl text-purple-400 drop-shadow-sm z-10 opacity-80" />
+                        )}
+
+                        {isMantenimiento && (
+                          <FaExclamationTriangle className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl text-orange-400 drop-shadow-sm z-10 opacity-70" />
+                        )}
+
+                        {/* Información flotante (Placa / Nombre) */}
+                        <div className="relative z-20 w-full mt-auto mb-1 flex flex-col justify-end min-h-[30px]">
+                          {!isForcedState && info && (
+                            <div className={`mt-2 text-center text-[10px] md:text-xs uppercase font-bold tracking-tight rounded-[6px] px-1.5 py-0.5 w-[90%] mx-auto shadow-sm border ${
+                              isOcupada ? 'bg-white text-red-600 border-red-200' :
+                              isReservada ? 'bg-white text-yellow-700 border-yellow-200' :
+                              'bg-white text-purple-600 border-purple-200'
+                            }`}>
+                              {isOcupada && info.placa ? (
+                                <span className="block truncate font-mono tracking-widest">{info.placa}</span>
+                              ) : (
+                                <span className="block truncate text-[9px] leading-tight py-0.5 text-gray-700">{info.nombre}</span>
+                              )}
+                            </div>
+                          )}
+                          {!info && !isForcedState && !isMantenimiento && (
+                            <div className="mt-2 text-center text-[9px] uppercase font-bold tracking-widest rounded px-1 text-gray-400 pointer-events-none group-hover:text-gray-500 transition-colors">
+                              LIBRE
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  </div>
                 </div>
               </section>
             );

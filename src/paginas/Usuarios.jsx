@@ -8,7 +8,7 @@ import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import {
   FaSearch, FaEdit, FaSync, FaUserTie, FaUsers,
-  FaShieldAlt, FaKey, FaCheck, FaTimes, FaUserCircle
+  FaShieldAlt, FaKey, FaCheck, FaTimes, FaUserCircle, FaPlus
 } from 'react-icons/fa';
 import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 import { ROL } from '../lib/constants';
@@ -47,9 +47,10 @@ export default function Usuarios() {
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading]       = useState(false);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
+  const [showForm, setShowForm] = useState(false);
 
   // Estado para edición completa (formulario lateral)
-  const [editingUser, setEditingUser] = useState(null); 
+  const [editingUser, setEditingUser] = useState(null);
   const initialForm = { 
     nombre: '', apellido: '', email: '', contrasena: '', 
     telefono: '', cedula: '', sexo: '', fecha_nacimiento: '', 
@@ -172,6 +173,7 @@ export default function Usuarios() {
 
   const handleEdit = (user) => {
     setEditingUser(user);
+    setShowForm(true);
     setFormData({
       nombre: user.nombre,
       apellido: user.apellido,
@@ -189,6 +191,7 @@ export default function Usuarios() {
 
   const handleCancel = () => {
     setEditingUser(null);
+    setShowForm(false);
     setFormData(initialForm);
   };
 
@@ -352,12 +355,22 @@ export default function Usuarios() {
             <h2 className="text-3xl font-bold text-gray-900">Gestión de Usuarios</h2>
             <p className="text-sm text-gray-500 mt-1">Administra cuentas, roles y permisos del sistema.</p>
           </div>
-          <button
-            onClick={() => navigate('/empleados')}
-            className="flex items-center gap-2 bg-purple-100 text-purple-700 hover:bg-purple-200 py-2.5 px-5 rounded-lg font-semibold transition text-sm"
-          >
-            <FaUserTie /> Empleados
-          </button>
+          <div className="flex items-center gap-3">
+            {activeTab === 'usuarios' && (
+              <button
+                onClick={() => { setShowForm(true); setEditingUser(null); setFormData(initialForm); }}
+                className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2.5 px-5 rounded-lg font-bold shadow transition text-sm active:scale-95"
+              >
+                <FaPlus size={12} /> Nuevo Usuario
+              </button>
+            )}
+            <button
+              onClick={() => navigate('/empleados')}
+              className="flex items-center gap-2 bg-purple-100 text-purple-700 hover:bg-purple-200 py-2.5 px-5 rounded-lg font-semibold transition text-sm"
+            >
+              <FaUserTie /> Empleados
+            </button>
+          </div>
         </div>
 
         <div className="flex border-b border-gray-200 mt-5">
@@ -371,7 +384,7 @@ export default function Usuarios() {
       </header>
 
       {activeTab === 'usuarios' && (
-        <div className={`grid gap-8 ${(canCreate || isUpdating) ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1'}`}>
+        <div className={`grid gap-8 ${(showForm || isUpdating) ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1'}`}>
           <section className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-5 border-b border-gray-100 flex items-center gap-3">
               <div className="relative flex-1">
@@ -446,22 +459,30 @@ export default function Usuarios() {
                             </span>
                           )}
                         </td>
-                        <td className="px-5 py-3.5 text-right flex justify-end gap-1.5">
-                          {canEdit && (
-                            <button onClick={() => { setChangingRolFor(u.id_usuario); setNewRolId(u.id_rol.toString()); }} title="Cambiar Rol" className="flex items-center gap-1 px-2 py-1 text-[10px] bg-purple-50 text-purple-700 font-bold rounded border border-purple-200 hover:bg-purple-100 transition">
+                        <td className="px-5 py-3.5 text-right">
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              onClick={() => { setChangingRolFor(u.id_usuario); setNewRolId(u.id_rol.toString()); }}
+                              title="Cambiar Rol"
+                              className="flex items-center gap-1 px-2 py-1 text-[10px] bg-purple-50 text-purple-700 font-bold rounded border border-purple-200 hover:bg-purple-100 transition"
+                            >
                               <FaShieldAlt size={10} /> Rol
                             </button>
-                          )}
-                          {canEdit && (
-                            <button onClick={() => { setChangingStatusFor(u.id_usuario); setNewStatusChoice(u.id_estado?.toString() || ''); }} title="Cambiar Estado" className="flex items-center gap-1 px-2 py-1 text-[10px] bg-green-50 text-green-700 font-bold rounded border border-green-200 hover:bg-green-100 transition">
+                            <button
+                              onClick={() => { setChangingStatusFor(u.id_usuario); setNewStatusChoice(u.id_estado?.toString() || ''); }}
+                              title="Cambiar Estado"
+                              className="flex items-center gap-1 px-2 py-1 text-[10px] bg-green-50 text-green-700 font-bold rounded border border-green-200 hover:bg-green-100 transition"
+                            >
                               <FaSync size={10} /> Estado
                             </button>
-                          )}
-                          {canEdit && (
-                            <button onClick={() => handleEdit(u)} title="Editar Usuario" className="flex items-center gap-1 px-2 py-1 text-[10px] bg-blue-50 text-blue-700 font-bold rounded border border-blue-200 hover:bg-blue-100 transition">
+                            <button
+                              onClick={() => handleEdit(u)}
+                              title="Editar Usuario"
+                              className="flex items-center gap-1 px-2 py-1 text-[10px] bg-blue-50 text-blue-700 font-bold rounded border border-blue-200 hover:bg-blue-100 transition"
+                            >
                               <FaEdit size={10} /> Editar
                             </button>
-                          )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -471,7 +492,7 @@ export default function Usuarios() {
             )}
           </section>
 
-          {(canCreate || isUpdating) && (
+          {(showForm || isUpdating) && (
             <section className="lg:col-span-1 bg-white border border-gray-100 rounded-xl shadow-sm p-6 h-fit sticky top-6">
               <h3 className="text-lg font-bold text-gray-900 mb-5 flex items-center gap-2">
                 <FaUserCircle className="text-green-600" /> {isUpdating ? 'Editar Usuario' : 'Nuevo Usuario'}
@@ -536,8 +557,8 @@ export default function Usuarios() {
                   </select>
                 </div>
                 <div className="pt-3 flex justify-end gap-2 border-t mt-2">
-                  {isUpdating && <button type="button" onClick={handleCancel} className="px-4 py-2 text-sm bg-gray-100 rounded font-medium">Cancelar</button>}
-                  <button type="submit" className="px-5 py-2 text-sm bg-green-600 text-white rounded font-bold shadow">{isUpdating ? 'Guardar' : 'Crear'}</button>
+                  <button type="button" onClick={handleCancel} className="px-4 py-2 text-sm bg-gray-100 rounded font-medium hover:bg-gray-200 transition">Cancelar</button>
+                  <button type="submit" className="px-5 py-2 text-sm bg-green-600 text-white rounded font-bold shadow hover:bg-green-700 transition">{isUpdating ? 'Guardar Cambios' : 'Crear Usuario'}</button>
                 </div>
               </form>
             </section>

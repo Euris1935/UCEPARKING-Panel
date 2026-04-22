@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaHistory } from 'react-icons/fa';
+import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaHistory, FaSignInAlt, FaStar } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
 import { registrarLog, EVENT_TYPES } from '../utils/logging';
@@ -358,10 +358,22 @@ export default function AccesoManual() {
           <h2 className="text-3xl font-bold text-gray-900">Acceso Manual</h2>
           <p className="text-gray-500 mt-1">Dar acceso manual a clientes registrados sin LPR.</p>
         </div>
-        <div className="flex gap-3">
-          <button onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')} className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2">PUERTA PRINCIPAL</button>
-          <button onClick={() => apiControlBarrera('open-vip',  '¿Abrir Barrera VIP?')}       className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2">PUERTA VIP</button>
-          <button onClick={() => apiControlBarrera('open-exit', '¿Abrir Barrera de Salida?')} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 font-bold rounded-lg shadow transition flex items-center gap-2">PUERTA SALIDA</button>
+        <div className="flex flex-col md:flex-row items-center gap-4">
+          <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
+            <button onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')} className="bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2.5 font-bold rounded-lg shadow-sm transition-all flex items-center gap-2 active:scale-95">
+              <FaSignInAlt size={16} /> 
+              <span>ENTRADA PRINCIPAL</span>
+            </button>
+            <button onClick={() => apiControlBarrera('open-exit', '¿Abrir Barrera de Salida?')} className="bg-rose-500 hover:bg-rose-600 text-white px-5 py-2.5 font-bold rounded-lg shadow-sm transition-all flex items-center gap-2 active:scale-95">
+              <FaSignOutAlt size={16} />
+              <span>SALIDA PRINCIPAL</span>
+            </button>
+          </div>
+          <div className="h-8 w-px bg-gray-300 hidden md:block"></div>
+          <button onClick={() => apiControlBarrera('open-vip',  '¿Abrir Barrera VIP?')} className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white px-6 py-2.5 font-block rounded-xl shadow-md transition-all flex items-center gap-2 active:scale-95 border border-indigo-400">
+            <FaStar className="text-yellow-300" size={16} />
+            <span className="font-bold tracking-wide">ACCESO VIP</span>
+          </button>
         </div>
       </header>
 

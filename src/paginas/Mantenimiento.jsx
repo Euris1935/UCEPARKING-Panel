@@ -85,8 +85,8 @@ export default function Mantenimiento() {
                 supabase.from('dispositivo').select('id_dispositivo, id_plaza, id_estado, tipo:tipo_dispositivo!id_tipo(nombre), modelo:id_modelo(nombre, marca:id_marca(nombre)), plaza:id_plaza(numero_plaza)').eq('organizacion_id', orgId),
                 supabase.rpc('get_usuarios_org'),
                 supabase.from('empleado').select('id_empleado, id_persona').eq('organizacion_id', orgId),
-                supabase.from('zona').select('id_zona, nombre, id_estado, estado:estado_zona!id_estado(nombre)').eq('organizacion_id', orgId),
-                supabase.from('plaza').select('id_plaza, numero_plaza, id_zona, id_estado, estado:estado_plaza!id_estado(nombre)').eq('organizacion_id', orgId),
+                supabase.from('zona').select('id_zona, nombre, nivel_piso, id_estado, estado:estado_zona!id_estado(nombre)').eq('organizacion_id', orgId),
+                supabase.from('plaza').select('id_plaza, numero_plaza, id_zona, id_estado, estado:estado_plaza!id_estado(nombre), zona:id_zona(id_zona, nombre, nivel_piso)').eq('organizacion_id', orgId),
                 supabase.from('tipo_mantenimiento').select('*').order('nombre'),
                 supabase.from('estado_mantenimiento').select('*').order('nombre')
             ]);
@@ -441,12 +441,23 @@ export default function Mantenimiento() {
                                                              })()}
                                                         </div>
                                                         <div className="text-[10px] text-gray-500 italic mt-0.5">
-                                                            {item.id_zona ? 'Mantenimiento de área completa' :
-                                                             item.id_plaza ? `Zona: ${allPlazas.find(p => p.id_plaza === item.id_plaza)?.id_zona ? (allZonas.find(z => z.id_zona === allPlazas.find(xp => xp.id_plaza === item.id_plaza)?.id_zona)?.nombre || 'General') : 'General'}` :
-                                                             (() => {
-                                                                 const dispRef = allDispositivos.find(d => d.id_dispositivo === item.id_dispositivo);
-                                                                 return dispRef?.tipo?.nombre ? `Equipo: ${dispRef.tipo.nombre}` : 'Sin datos técnicos';
-                                                             })()}
+                                                            {(() => {
+                                                                if (item.id_zona) {
+                                                                    const z = allZonas.find(zv => zv.id_zona === item.id_zona);
+                                                                    return z ? (z.nivel_piso === 0 ? 'Planta Baja' : (z.nivel_piso < 0 ? `Sótano ${Math.abs(z.nivel_piso)}` : `Piso ${z.nivel_piso}`)) : 'Área completa';
+                                                                }
+                                                                if (item.id_plaza) {
+                                                                    const p = allPlazas.find(pv => pv.id_plaza === item.id_plaza);
+                                                                    const z = p?.zona;
+                                                                    return z ? `${z.nombre} • ${z.nivel_piso === 0 ? 'P. Baja' : (z.nivel_piso < 0 ? `Sótano ${Math.abs(z.nivel_piso)}` : `Piso ${z.nivel_piso}`)}` : 'General';
+                                                                }
+                                                                const dispRef = allDispositivos.find(d => d.id_dispositivo === item.id_dispositivo);
+                                                                if (dispRef?.plaza?.zona) {
+                                                                    const z = dispRef.plaza.zona;
+                                                                    return `${dispRef.tipo?.nombre || 'Equipo'} • ${z.nivel_piso === 0 ? 'P. Baja' : (z.nivel_piso < 0 ? `Sótano ${Math.abs(z.nivel_piso)}` : `Piso ${z.nivel_piso}`)}`;
+                                                                }
+                                                                return dispRef?.tipo?.nombre ? `Equipo: ${dispRef.tipo.nombre}` : 'Sin datos técnicos';
+                                                            })()}
                                                         </div>
                                                     </td>
                                                     <td className="px-6 py-4 text-xs font-medium text-gray-600 max-w-xs truncate" title={item.descripcion}>

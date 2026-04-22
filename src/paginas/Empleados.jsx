@@ -264,14 +264,12 @@ export default function Empleados() {
           >
             <FaArrowLeft /> Usuarios
           </button>
-          {canCreate && (
-            <button
-              onClick={abrirCrear}
-              className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg shadow transition font-semibold"
-            >
-              <FaPlus /> Agregar Empleado
-            </button>
-          )}
+          <button
+            onClick={abrirCrear}
+            className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 active:scale-95 text-white py-2 px-4 rounded-lg shadow transition font-semibold"
+          >
+            <FaPlus /> Nuevo Empleado
+          </button>
         </div>
       </header>
 
@@ -317,11 +315,9 @@ export default function Empleados() {
               <div className="text-center py-16 text-gray-400">
                 <FaUserTie className="mx-auto text-4xl mb-3 opacity-20" />
                 <p className="text-sm">No hay empleados registrados.</p>
-                {canCreate && (
-                  <button onClick={abrirCrear} className="mt-4 text-purple-600 text-sm font-semibold hover:underline">
-                    + Agregar el primer empleado
-                  </button>
-                )}
+                <button onClick={abrirCrear} className="mt-4 text-purple-600 text-sm font-semibold hover:underline">
+                  + Agregar el primer empleado
+                </button>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -340,7 +336,7 @@ export default function Empleados() {
                       <tr
                         key={emp.id_empleado}
                         className={`hover:bg-purple-50 transition-all cursor-pointer ${editingEmp?.id_empleado === emp.id_empleado ? 'bg-purple-50 ring-1 ring-inset ring-purple-300' : ''} ${emp.nombre_estado.toLowerCase() !== 'activo' ? 'opacity-60 grayscale-[0.3]' : ''}`}
-                        onClick={() => canEdit && abrirEditar(emp)}
+                        onClick={() => abrirEditar(emp)}
                       >
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
@@ -404,27 +400,23 @@ export default function Empleados() {
                         </td>
                         <td className="px-5 py-4 text-center" onClick={ev => ev.stopPropagation()}>
                           <div className="flex gap-1.5 justify-center">
-                            {canEdit && (
-                              <button
-                                onClick={() => abrirEditar(emp)}
-                                className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition"
-                                title="Editar asignación"
-                              >
-                                <FaEdit size={13} />
-                              </button>
-                            )}
-                            {canEdit && (
-                              <button
-                                onClick={() => {
-                                  setChangingStatusFor(emp.id_empleado);
-                                  setNewStatusChoice(emp.id_estado.toString());
-                                }}
-                                className="px-3 py-2 rounded-lg border border-purple-200 text-purple-600 hover:bg-purple-50 text-xs font-bold transition flex items-center gap-2"
-                                title="Cambiar Estado"
-                              >
-                                <FaSync size={12} /> <span>Estado</span>
-                              </button>
-                            )}
+                            <button
+                              onClick={() => abrirEditar(emp)}
+                              className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition"
+                              title="Editar asignación"
+                            >
+                              <FaEdit size={13} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setChangingStatusFor(emp.id_empleado);
+                                setNewStatusChoice(emp.id_estado.toString());
+                              }}
+                              className="px-3 py-2 rounded-lg border border-purple-200 text-purple-600 hover:bg-purple-50 text-xs font-bold transition flex items-center gap-2"
+                              title="Cambiar Estado"
+                            >
+                              <FaSync size={12} /> <span>Estado</span>
+                            </button>
                           </div>
                         </td>
                       </tr>

@@ -6,13 +6,14 @@ import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { 
   FaSearch, FaEdit, FaTrash, FaParking, FaMapMarkerAlt, FaPlus, FaSave, 
-  FaArrowsAltH, FaArrowsAltV, FaSync, FaSyncAlt, FaCar 
+  FaArrowsAltH, FaArrowsAltV, FaSync, FaSyncAlt, FaCar, FaWheelchair, FaMapMarkedAlt
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
 import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 import { ESTADO_ZONA, ESTADO_PLAZA } from '../lib/constants';
+import MapaZona from '../componentes/MapaZona';
 
 export default function ZonasParqueo() {
   const { tienePermiso } = useRbac();
@@ -24,7 +25,19 @@ export default function ZonasParqueo() {
   const [zonas, setZonas] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingZone, setEditingZone] = useState(null);
-  const initialZoneState = { Nombre_Zona: '', Capacidad_Total: '', id_tipo: '', id_estado: '', descripcion: '' };
+  const [showMapModal, setShowMapModal] = useState(false);
+  const initialZoneState = { 
+    Nombre_Zona: '', 
+    Capacidad_Total: '', 
+    id_tipo: '', 
+    id_estado: '', 
+    descripcion: '',
+    latitud: '',
+    longitud: '',
+    direccion: '',
+    nivel_piso: 0,
+    area_geografica: ''
+  };
   const [zoneForm, setZoneForm] = useState(initialZoneState);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
   const [currentEmpleadoId, setCurrentEmpleadoId] = useState(null);
@@ -189,7 +202,12 @@ export default function ZonasParqueo() {
       id_tipo: zoneForm.id_tipo ? parseInt(zoneForm.id_tipo) : null,
       id_estado: finalIdEstado,
       descripcion: zoneForm.descripcion ? zoneForm.descripcion.trim() : null,
-      organizacion_id: activeOrgId
+      organizacion_id: activeOrgId,
+      latitud: zoneForm.latitud ? parseFloat(zoneForm.latitud) : null,
+      longitud: zoneForm.longitud ? parseFloat(zoneForm.longitud) : null,
+      direccion: zoneForm.direccion ? zoneForm.direccion.trim() : null,
+      nivel_piso: parseInt(zoneForm.nivel_piso),
+      area_geografica: zoneForm.area_geografica ? zoneForm.area_geografica.trim() : null
     };
 
     if (estaCreando) {
@@ -389,7 +407,12 @@ export default function ZonasParqueo() {
       Capacidad_Total: zone.capacidad_total?.toString() || '',
       id_tipo: zone.id_tipo?.toString() || '',
       id_estado: zone.id_estado?.toString() || '',
-      descripcion: zone.descripcion || ''
+      descripcion: zone.descripcion || '',
+      latitud: zone.latitud?.toString() || '',
+      longitud: zone.longitud?.toString() || '',
+      direccion: zone.direccion || '',
+      nivel_piso: zone.nivel_piso ?? 0,
+      area_geografica: zone.area_geografica || ''
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -536,6 +559,21 @@ export default function ZonasParqueo() {
         organizacion_id: orgId
       };
 
+      // ── VALIDACIÓN: Coordenadas (Amplitud/Longitud) Únicas ──
+      const coordEnUso = plazas.find(p => 
+        parseFloat(p.amplitud) === payload.amplitud && 
+        parseFloat(p.longitud) === payload.longitud &&
+        (!editingPlaza || p.id_plaza !== editingPlaza.id_plaza)
+      );
+
+      if (coordEnUso) {
+        return Swal.fire(
+          'Coordenadas Duplicadas', 
+          `Las coordenadas (Amplitud: ${payload.amplitud}, Longitud: ${payload.longitud}) ya están registradas en la plaza <b>${coordEnUso.numero_plaza}</b>.<br><br>Ninguna plaza puede compartir exactamente la misma ubicación física.`, 
+          'warning'
+        );
+      }
+
       if (editingPlaza) {
         const { error } = await supabase.from('plaza')
           .update(payload)
@@ -603,22 +641,19 @@ export default function ZonasParqueo() {
           <p className="text-gray-500 mt-1">Gestión estructural y mapa de plazas.</p>
         </div>
         <div className="flex gap-3">
-          {canCreate && (
-            <button
+          <button
               onClick={() => openPlazaModal(null)}
               className="bg-primary hover:bg-opacity-90 text-white px-6 py-2.5 rounded-xl font-bold shadow-lg flex items-center gap-2 transition-all active:scale-95"
             >
               <FaPlus /> NUEVA PLAZA
             </button>
-          )}
         </div>
       </header>
 
       <div className="grid grid-cols-1 xl:grid-cols-5 gap-8 items-start">
         {/* --- FORMULARIO DE GESTIÓN (A LA IZQUIERDA - Estilo Foto - Verde) --- */}
         <div className="xl:col-span-2">
-          {(canCreate || editingZone) && (
-            <div className="bg-white rounded-3xl shadow-xl shadow-gray-200/50 border border-gray-100 p-8">
+          <div className="bg-white rounded-3xl shadow-xl shadow-gray-200/50 border border-gray-100 p-8">
               <h3 className="text-xl font-bold mb-6 flex items-center gap-3 text-gray-800 uppercase tracking-tighter">
                 <FaParking className="text-emerald-500" /> 
                 {editingZone ? 'Editar Zona' : 'Registrar Nueva Zona'}
@@ -676,6 +711,80 @@ export default function ZonasParqueo() {
                   )}
                 </div>
 
+                <div className="grid grid-cols-2 gap-5">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Latitud</label>
+                    <input 
+                      type="number" step="0.0000001"
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 outline-none transition-all text-gray-700" 
+                      placeholder="Ej: 18.4861"
+                      value={zoneForm.latitud} 
+                      onChange={(e) => setZoneForm({ ...zoneForm, latitud: e.target.value })} 
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Longitud</label>
+                    <input 
+                      type="number" step="0.0000001"
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 outline-none transition-all text-gray-700" 
+                      placeholder="Ej: -69.9312"
+                      value={zoneForm.longitud} 
+                      onChange={(e) => setZoneForm({ ...zoneForm, longitud: e.target.value })} 
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Nivel / Piso</label>
+                    <select 
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 outline-none transition-all text-gray-700 font-medium"
+                      value={zoneForm.nivel_piso} 
+                      onChange={(e) => setZoneForm({ ...zoneForm, nivel_piso: e.target.value })}
+                    >
+                      <option value={-2}>Sótano 2</option>
+                      <option value={-1}>Sótano 1</option>
+                      <option value={0}>Planta baja</option>
+                      <option value={1}>Piso 1</option>
+                      <option value={2}>Piso 2</option>
+                      <option value={3}>Piso 3</option>
+                      <option value={4}>Piso 4</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Dirección / Referencia</label>
+                    <input 
+                      type="text" 
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 outline-none transition-all text-gray-700" 
+                      placeholder="Ej: Edificio A, entrada sur"
+                      value={zoneForm.direccion} 
+                      onChange={(e) => setZoneForm({ ...zoneForm, direccion: e.target.value })} 
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowMapModal(true)}
+                    className="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-3 rounded-xl font-bold text-xs uppercase tracking-widest border border-indigo-200 transition-all flex items-center justify-center gap-2"
+                  >
+                    <FaMapMarkedAlt /> Ubicación Geospacial (Mapa)
+                  </button>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Perímetro Geográfico (WKT Polygon)</label>
+                  <textarea 
+                    rows={2}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-xs focus:border-emerald-300 focus:ring-4 focus:ring-emerald-50 outline-none transition-all text-gray-600 resize-none font-mono" 
+                    placeholder="Ej: POLYGON((-69.9 18.4, -69.8 18.4, ...))"
+                    value={zoneForm.area_geografica} 
+                    onChange={(e) => setZoneForm({ ...zoneForm, area_geografica: e.target.value })} 
+                  />
+                  <p className="text-[9px] text-gray-400 mt-1 italic">Próximamente: Integración con Leaflet.draw para dibujo sobre mapa.</p>
+                </div>
+
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1.5">Descripción de la Zona</label>
                   <textarea 
@@ -703,7 +812,6 @@ export default function ZonasParqueo() {
                 </div>
               </form>
             </div>
-          )}
         </div>
 
         {/* --- LISTA DE ZONAS (A LA DERECHA - Ocupa 3 columnas) --- */}
@@ -730,6 +838,7 @@ export default function ZonasParqueo() {
               <thead className="bg-gray-50 text-[10px] font-black uppercase text-gray-400 tracking-wider">
                 <tr>
                   <th className="px-6 py-4">Zona</th>
+                  <th className="px-6 py-4">Ubicación / Nivel</th>
                   <th className="px-6 py-4">Detalles</th>
                   <th className="px-6 py-4">Capacidad</th>
                   <th className="px-6 py-4">Registro</th>
@@ -740,6 +849,14 @@ export default function ZonasParqueo() {
                 {filteredZonas.map(z => (
                   <tr key={z.id_zona} className="hover:bg-emerald-50/10 transition-colors">
                     <td className="px-6 py-4 font-bold text-gray-900">{z.nombre}</td>
+                    <td className="px-6 py-4">
+                      <div className="text-xs font-black text-emerald-600 uppercase tracking-tighter">
+                        {z.nivel_piso === 0 ? 'Planta Baja' : (z.nivel_piso < 0 ? `Sótano ${Math.abs(z.nivel_piso)}` : `Piso ${z.nivel_piso}`)}
+                      </div>
+                      <div className="text-[10px] text-gray-400 font-medium truncate w-32" title={z.direccion}>
+                        {z.direccion || 'Sin dirección'}
+                      </div>
+                    </td>
                     <td className="px-6 py-4">
                       <div className="text-xs text-gray-600">{z.tipo?.nombre || 'General'}</div>
                       <div className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full inline-block mt-1 ${
@@ -761,9 +878,9 @@ export default function ZonasParqueo() {
                     </td>
                     <td className="px-6 py-4 text-center">
                       <div className="flex justify-center items-center gap-2">
-                        {canEdit && <button onClick={() => handleEditZone(z)} className="text-blue-500 hover:bg-blue-50 p-2.5 rounded-xl transition-all" title="Editar"><FaEdit /></button>}
+                        <button onClick={() => handleEditZone(z)} className="text-blue-500 hover:bg-blue-50 p-2.5 rounded-xl transition-all" title="Editar"><FaEdit /></button>
                         <button onClick={() => handleGenerarPlazasExistente(z)} className="text-emerald-500 hover:bg-emerald-50 p-2.5 rounded-xl transition-all" title="Generar Plazas"><FaSyncAlt /></button>
-                        {canDelete && <button onClick={() => handleDeleteZone(z.id_zona)} className="text-red-500 hover:bg-red-50 p-2.5 rounded-xl transition-all" title="Eliminar"><FaTrash /></button>}
+                        <button onClick={() => handleDeleteZone(z.id_zona)} className="text-red-500 hover:bg-red-50 p-2.5 rounded-xl transition-all" title="Eliminar"><FaTrash /></button>
                       </div>
                     </td>
                   </tr>
@@ -800,39 +917,49 @@ export default function ZonasParqueo() {
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-4">
-                {plazasZona.map(p => (
-                  <div key={p.id_plaza} className="group relative aspect-square bg-gray-50 border-2 border-gray-100 rounded-2xl flex flex-col items-center justify-center hover:border-primary/40 hover:bg-white hover:shadow-xl transition-all duration-300 cursor-default">
-                    <span className="text-lg font-black text-gray-800 tracking-tighter">{p.numero_plaza}</span>
-                    <span className="text-[9px] font-bold text-gray-400 uppercase">{p.amplitud}x{p.longitud}</span>
-                    
-                    <div className="mt-2 h-1.5 w-8 rounded-full bg-gray-200 overflow-hidden">
-                       <div className={`h-full w-full ${p.estado_plaza?.nombre === 'Libre' ? 'bg-green-500' : 'bg-amber-500'}`}></div>
-                    </div>
+              <div className="bg-gray-50 p-6 sm:p-8 rounded-2xl shadow-inner relative border border-gray-100 overflow-hidden">
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-x-2 gap-y-10 place-items-center relative z-10 w-full">
+                  {plazasZona.map(p => {
+                     const isLibre = p.estado_plaza?.nombre === 'Libre';
+                     const bgPlaza = p.id_tipo === 3 ? 'bg-blue-50/50 hover:bg-blue-100/50' : 'bg-white/60 hover:bg-white/90';
+                     const bColor = p.id_tipo === 3 ? 'border-blue-300' : 'border-gray-300';
+                     
+                     return (
+                      <div key={p.id_plaza} className={`relative flex flex-col items-center justify-end text-center w-full max-w-[90px] mx-auto aspect-[1/1.6] border-x-[3px] border-t-[3px] border-b-0 ${bColor} transition-all overflow-hidden pb-1 rounded-t shadow-sm group ${bgPlaza}`}>
+                        <span className="absolute top-2 font-bold text-xl text-gray-300 select-none pointer-events-none group-hover:text-gray-400 transition-colors">{p.numero_plaza}</span>
 
-                    {/* Acciones Hover */}
-                    <div className="absolute inset-0 bg-white/95 rounded-2xl opacity-0 group-hover:opacity-100 flex items-center justify-center gap-3 transition-opacity duration-200">
-                        {canEdit && (
-                          <button onClick={() => openPlazaModal(p)} className="p-2.5 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors" title="Editar">
-                            <FaEdit size={16} />
-                          </button>
+                        {p.id_tipo === 3 && (
+                          <FaWheelchair className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl text-blue-200 pointer-events-none" />
                         )}
-                        {canDelete && (
-                          <button onClick={() => handleDeletePlaza(p)} className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors" title="Borrar">
-                            <FaTrash size={16} />
-                          </button>
-                        )}
-                    </div>
-                  </div>
-                ))}
-                {plazasZona.length === 0 && (
-                   <div className="col-span-full py-12 flex flex-col items-center justify-center border-2 border-dashed border-gray-100 rounded-3xl bg-gray-50/30">
-                      <p className="text-sm text-gray-400 font-bold uppercase tracking-widest italic">Aún no se han generado plazas para esta zona</p>
-                      <button onClick={() => handleGenerarPlazasExistente(zona)} className="mt-4 text-primary font-bold text-xs hover:underline flex items-center gap-2">
-                        <FaSyncAlt /> GENERAR PLAZAS AHORA
-                      </button>
-                   </div>
-                )}
+
+                        <span className="relative z-10 text-[8px] font-bold text-gray-500 uppercase mt-auto mb-1 bg-white/80 px-1 rounded-sm shadow-sm">{p.amplitud}x{p.longitud}m</span>
+                        
+                        <div className="relative z-10 mb-1 h-1 w-8 rounded-full bg-gray-200 overflow-hidden">
+                          <div className={`h-full w-full ${isLibre ? 'bg-green-400' : 'bg-red-400'}`}></div>
+                        </div>
+
+                        {/* Acciones Hover */}
+                        <div className="absolute inset-0 bg-white/95 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-2 transition-opacity duration-200 z-20">
+                            <button onClick={() => openPlazaModal(p)} className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors" title="Editar">
+                              <FaEdit size={14} />
+                            </button>
+                            <button onClick={() => handleDeletePlaza(p)} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Borrar">
+                              <FaTrash size={14} />
+                              </button>
+                            )}
+                        </div>
+                      </div>
+                     );
+                  })}
+                  {plazasZona.length === 0 && (
+                     <div className="col-span-full py-12 flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-3xl bg-white/50 w-full">
+                        <p className="text-sm text-gray-400 font-bold uppercase tracking-widest italic">Aún no se han generado plazas para esta zona</p>
+                        <button onClick={() => handleGenerarPlazasExistente(zona)} className="mt-4 text-emerald-500 font-bold text-xs hover:underline flex items-center gap-2">
+                          <FaSyncAlt /> GENERAR PLAZAS AHORA
+                        </button>
+                     </div>
+                  )}
+                </div>
               </div>
             </section>
           );
@@ -924,6 +1051,33 @@ export default function ZonasParqueo() {
             </form>
           </div>
         </div>
+      )}
+      {/* Modal de Mapa Interactivo */}
+      {showMapModal && (
+        <MapaZona
+          latitud={parseFloat(zoneForm.latitud) || null}
+          longitud={parseFloat(zoneForm.longitud) || null}
+          wkt={zoneForm.area_geografica}
+          onClose={() => setShowMapModal(false)}
+          onSave={(data) => {
+            setZoneForm({
+              ...zoneForm,
+              latitud: data.latitud.toFixed(8),
+              longitud: data.longitud.toFixed(8),
+              area_geografica: data.wkt
+            });
+            setShowMapModal(false);
+            Swal.fire({
+              title: 'Ubicación Capturada',
+              text: 'Las coordenadas y el área se han sincronizado.',
+              icon: 'success',
+              timer: 2000,
+              showConfirmButton: false,
+              toast: true,
+              position: 'top-end'
+            });
+          }}
+        />
       )}
     </Layout>
   );
