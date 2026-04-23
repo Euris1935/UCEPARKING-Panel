@@ -6,6 +6,7 @@ import { playBeep } from '../utils/audio';
 import { useOrg } from '../contexts/OrgContext';
 import { FaBell } from 'react-icons/fa';
 import BarraLateral from './barraLateral';
+import ScheduleGuard from './ScheduleGuard';
 
 export default function Layout({ children }) {
   const { orgId } = useOrg();
@@ -128,7 +129,9 @@ export default function Layout({ children }) {
           </div>
         )}
 
-        {children}
+        <ScheduleGuard>
+          {children}
+        </ScheduleGuard>
       </main>
     </div>
   );

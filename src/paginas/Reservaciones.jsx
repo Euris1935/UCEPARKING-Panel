@@ -15,6 +15,8 @@ import SearchableSelect from '../componentes/SearchableSelect';
 import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 import { ESTADO_PLAZA, ESTADO_RESERVA } from '../lib/constants';
 
+const TERMINAL_STATES = ['Cancelada', 'Completada', 'Rechazada', 'Vencida'];
+
 export default function Reservaciones() {
   const { tienePermiso } = useRbac();
   const { orgId, loadingOrg } = useOrg();
@@ -42,6 +44,11 @@ export default function Reservaciones() {
   const [tiposReservaZona, setTiposReservaZona] = useState([]);
   const [zonasDisponibles, setZonasDisponibles] = useState([]);
   const [aprobacionesPendientes, setAprobacionesPendientes] = useState([]);
+  
+  const [estadosReservaList, setEstadosReservaList] = useState([]);
+  const [changingStatusFor, setChangingStatusFor] = useState(null);
+  const [changingStatusType, setChangingStatusType] = useState(null);
+  const [newStatusChoice, setNewStatusChoice] = useState('');
   
   const initialForm = {
     id_persona: '',
@@ -97,7 +104,8 @@ export default function Reservaciones() {
             { data: erActivo },
             { data: asigsActivas },
             { data: zonas },
-            { data: tiposRZ }
+            { data: tiposRZ },
+            { data: catEst }
         ] = await Promise.all([
             supabase.from('reserva').select('*, persona:id_persona(id_persona, nombre, apellido), plaza:id_plaza(id_plaza, numero_plaza), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
             supabase.from('reserva_zona').select('*, zona:id_zona(id_zona, nombre), tipo:tipo_reserva_zona!id_tipo(nombre), persona:id_persona(id_persona, nombre, apellido), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
@@ -106,12 +114,14 @@ export default function Reservaciones() {
             supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle(),
             supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1),
             supabase.from('zona').select('*, estado:estado_zona!id_estado(nombre)').eq('organizacion_id', orgId).order('nombre'),
-            supabase.from('tipo_reserva_zona').select('*').order('nombre')
+            supabase.from('tipo_reserva_zona').select('*').order('nombre'),
+            supabase.from('estado_reserva').select('*').order('id_estado')
         ]);
 
+        setEstadosReservaList(catEst || []);
         setReservas(resData || []);
         setReservasZona(resZonaData || []);
-        setAprobacionesPendientes((resZonaData || []).filter(rz => rz.id_estado === 5));
+        setAprobacionesPendientes(resZonaData || []);
         
         const idLibre = ESTADO_PLAZA.LIBRE;
         const idResActiva = ESTADO_RESERVA.ACTIVA;
@@ -126,7 +136,11 @@ export default function Reservaciones() {
             ...p,
             _ocupada: resActivasIds.has(p.id_persona),
             _razon: resActivasIds.has(p.id_persona) ? 'Reserva activa' : null
-        })));
+        })).sort((a, b) => {
+            const na = `${a.nombre || ''} ${a.apellido || ''}`.toLowerCase();
+            const nb = `${b.nombre || ''} ${b.apellido || ''}`.toLowerCase();
+            return na.localeCompare(nb);
+        }));
 
         // 2. Procesar Zonas y Plazas
         const zonasActivas = (zonas || []).filter(z => (z.estado?.nombre || 'Activa') !== 'Inactiva');
@@ -567,7 +581,7 @@ export default function Reservaciones() {
               id_zona: parseInt(formData.id_zona),
               id_tipo: parseInt(formData.id_tipo_reserva),
               id_persona: formData.id_persona,
-              id_estado: requiresApproval ? 5 : idEstActivaRes, // 5 = En Espera
+              id_estado: 5, // Siempre nace en En Espera (5)
               fecha_hora_inicio: new Date(formData.Fecha_Hora_Inicio).toISOString(),
               fecha_hora_fin: new Date(formData.Fecha_Hora_Fin).toISOString(),
               descripcion: formData.descripcion,
@@ -663,6 +677,56 @@ export default function Reservaciones() {
       });
   };
 
+  const handleConfirmarCambioEstado = async (reserva, tipo) => {
+    if (!orgId) return;
+    const oldStatus = reserva.id_estado;
+    const nextStatus = parseInt(newStatusChoice);
+
+    if (oldStatus === nextStatus) {
+        setChangingStatusFor(null);
+        setChangingStatusType(null);
+        return;
+    }
+
+    try {
+        setLoading(true);
+        const tabla = tipo === 'plaza' ? 'reserva' : 'reserva_zona';
+        const idCampo = tipo === 'plaza' ? 'id_reserva' : 'id_reserva_zona';
+        const idValor = reserva[idCampo];
+
+        const { error: upErr } = await supabase.from(tabla).update({ id_estado: nextStatus }).eq(idCampo, idValor);
+        if (upErr) throw upErr;
+
+        Swal.fire({ title: 'Actualizado', text: 'Estado de reserva actualizado.', icon: 'success', timer: 1500, showConfirmButton: false });
+        
+        const estViejo = estadosReservaList.find(e => e.id_estado === oldStatus)?.nombre || oldStatus;
+        const estNuevo = estadosReservaList.find(e => e.id_estado === nextStatus)?.nombre || nextStatus;
+        
+        registrarLog({
+            tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
+            descripcion: `Estado modificado de "${estViejo}" a "${estNuevo}" (Reserva ${idValor})`,
+            id_persona: currentPersonaId,
+            organizacion_id: orgId,
+            origen: 'Panel Web - Reservas'
+        });
+
+        setChangingStatusFor(null);
+        setChangingStatusType(null);
+        loadAllData();
+    } catch (error) {
+        Swal.fire('Error', error.message, 'error');
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const getMinDateTime = (offsetDays = 0) => {
+    const d = new Date();
+    d.setDate(d.getDate() + offsetDays);
+    const offset = d.getTimezoneOffset() * 60000;
+    return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+  };
+
   if (loadingOrg) {
     return (
       <Layout>
@@ -724,9 +788,9 @@ export default function Reservaciones() {
           >
             <div className="relative inline-block mr-2 mb-0.5">
               <FaUserCheck size={14} />
-              {aprobacionesPendientes.length > 0 && (
+              {aprobacionesPendientes.filter(x => x.id_estado === 5).length > 0 && (
                 <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[8px] font-black px-1 rounded-full animate-bounce">
-                  {aprobacionesPendientes.length}
+                  {aprobacionesPendientes.filter(x => x.id_estado === 5).length}
                 </span>
               )}
             </div>
@@ -751,22 +815,6 @@ export default function Reservaciones() {
                 <FaSearch className="absolute left-3 top-2.5 text-gray-400 text-xs" />
               </div>
               <div className="flex items-center gap-2">
-                {activeTab === 'personas' && (
-                  <button
-                    onClick={() => handleOpenCreate('plaza')}
-                    className="bg-blue-600 hover:bg-blue-700 active:scale-95 text-white py-2 px-4 rounded-xl font-bold shadow flex items-center gap-2 text-sm transition-all"
-                  >
-                    <FaPlus size={12} /> Nueva Reserva de Plaza
-                  </button>
-                )}
-                {activeTab === 'zonas' && (
-                  <button
-                    onClick={() => handleOpenCreate('zona')}
-                    className="bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white py-2 px-4 rounded-xl font-bold shadow flex items-center gap-2 text-sm transition-all"
-                  >
-                    <FaLayerGroup size={12} /> Nueva Reserva de Zona
-                  </button>
-                )}
                 <button
                   onClick={loadAllData}
                   disabled={isRefreshing}
@@ -778,7 +826,7 @@ export default function Reservaciones() {
               </div>
             </div>
 
-            {activeTab === 'personas' ? (
+            {activeTab === 'personas' && (
               <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                 <table className="min-w-full divide-y divide-gray-100">
                   <thead className="bg-gray-50/50 sticky top-0 z-10 shadow-sm">
@@ -810,15 +858,31 @@ export default function Reservaciones() {
                                   {nombreEstado || 'Activa'}
                               </span>
                           </td>
-                          <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
-                            {isActive ? (
-                               <>
-                                {canEdit && <button onClick={() => handleMarkCompleted(r.id_reserva, r.id_plaza)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>}
-                                {canEdit && <button onClick={() => handleCancelReserva(r.id_reserva, r.id_plaza)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>}
-                                {canEdit && <button onClick={() => handleEdit(r)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>}
-                               </>
+                          <td className="px-6 py-4">
+                            {TERMINAL_STATES.includes(nombreEstado) ? (
+                                <div className="text-gray-400 italic text-[10px] flex justify-end items-center gap-1 font-bold"><FaLock size={10} /> {nombreEstado.toUpperCase()}</div>
+                            ) : changingStatusFor === r.id_reserva && changingStatusType === 'plaza' ? (
+                                <div className="flex items-center justify-end gap-1 animate-fadeIn">
+                                    <select 
+                                        className="border border-blue-300 rounded-lg px-2 py-1 text-[10px] focus:ring-2 focus:ring-blue-200 outline-none pointer-events-auto"
+                                        value={newStatusChoice}
+                                        onChange={e => setNewStatusChoice(e.target.value)}
+                                    >
+                                        {estadosReservaList.map(e => <option key={e.id_estado} value={e.id_estado}>{e.nombre}</option>)}
+                                    </select>
+                                    <button onClick={() => handleConfirmarCambioEstado(r, 'plaza')} className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm pointer-events-auto"><FaCheckCircle size={12} /></button>
+                                    <button onClick={() => { setChangingStatusFor(null); setChangingStatusType(null); }} className="p-1.5 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition pointer-events-auto"><FaTimesCircle size={12} /></button>
+                                </div>
                             ) : (
-                               <div className="text-gray-400 italic text-[10px] flex items-center gap-1 font-bold"><FaLock size={10} /> FINALIZADA</div>
+                                <div className="flex gap-2 justify-end items-center">
+                                  {canEdit && <button onClick={() => handleEdit(r)} className="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg transition" title="Editar"><FaEdit size={14} /></button>}
+                                  {canEdit && (
+                                     <button 
+                                        onClick={() => { setChangingStatusType('plaza'); setChangingStatusFor(r.id_reserva); setNewStatusChoice(r.id_estado.toString()); }}
+                                        className="text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 text-[10px] font-bold rounded-lg transition flex items-center gap-1 border border-gray-200"
+                                     ><FaSync size={10} /> Estado</button>
+                                  )}
+                                </div>
                             )}
                           </td>
                         </tr>
@@ -827,7 +891,9 @@ export default function Reservaciones() {
                   </tbody>
                 </table>
               </div>
-            ) : (
+            )}
+            
+            {activeTab === 'zonas' && (
               <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                  <table className="min-w-full divide-y divide-gray-100">
                   <thead className="bg-gray-50/50 sticky top-0 z-10 shadow-sm">
@@ -838,7 +904,6 @@ export default function Reservaciones() {
                       <th className="px-6 py-4 text-left">Fin</th>
                       <th className="px-6 py-4 text-left">Días</th>
                       <th className="px-6 py-4 text-left">Estado</th>
-                      <th className="px-6 py-4 text-left">Placa</th>
                       <th className="px-6 py-4 text-right">Acciones</th>
                     </tr>
                   </thead>
@@ -877,19 +942,30 @@ export default function Reservaciones() {
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                             <span className="font-mono font-black text-gray-700 bg-gray-100 px-2 py-1 rounded-md border border-gray-200">{rz.placa || 'N/A'}</span>
-                          </td>
-                          <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
-                            {isActive ? (
-                               <>
-                                {canEdit && <button onClick={() => handleMarkCompletedZona(rz.id_reserva_zona)} className="text-green-500 hover:scale-110 transition-transform" title="Completar"><FaCheckCircle size={20}/></button>}
-                                {canEdit && <button onClick={() => handleCancelReservaZona(rz.id_reserva_zona)} className="text-orange-500 hover:scale-110 transition-transform" title="Cancelar"><FaTimesCircle size={20}/></button>}
-                                {canEdit && <button onClick={() => handleEditZona(rz)} className="text-blue-500 hover:scale-110 transition-transform" title="Editar"><FaEdit size={20}/></button>}
-                               </>
+                            {TERMINAL_STATES.includes(nombreEstado) ? (
+                                <div className="text-gray-400 italic text-[10px] flex justify-end items-center gap-1 font-bold"><FaLock size={10} /> {nombreEstado.toUpperCase()}</div>
+                            ) : changingStatusFor === rz.id_reserva_zona && changingStatusType === 'zona' ? (
+                                <div className="flex items-center justify-end gap-1 animate-fadeIn">
+                                    <select 
+                                        className="border border-emerald-300 rounded-lg px-2 py-1 text-[10px] focus:ring-2 focus:ring-emerald-200 outline-none pointer-events-auto"
+                                        value={newStatusChoice}
+                                        onChange={e => setNewStatusChoice(e.target.value)}
+                                    >
+                                        {estadosReservaList.map(e => <option key={e.id_estado} value={e.id_estado}>{e.nombre}</option>)}
+                                    </select>
+                                    <button onClick={() => handleConfirmarCambioEstado(rz, 'zona')} className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm pointer-events-auto"><FaCheckCircle size={12} /></button>
+                                    <button onClick={() => { setChangingStatusFor(null); setChangingStatusType(null); }} className="p-1.5 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition pointer-events-auto"><FaTimesCircle size={12} /></button>
+                                </div>
                             ) : (
-                               <div className="text-gray-400 italic text-[10px] flex items-center gap-1 font-bold">
-                                 {rz.id_estado === 5 ? <><FaSync className="animate-spin" size={10}/> PENDIENTE</> : <><FaLock size={10}/> FINALIZADA</>}
-                               </div>
+                                <div className="flex gap-2 justify-end items-center">
+                                  {canEdit && <button onClick={() => handleEditZona(rz)} className="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg transition" title="Editar"><FaEdit size={14} /></button>}
+                                  {canEdit && (
+                                     <button 
+                                        onClick={() => { setChangingStatusType('zona'); setChangingStatusFor(rz.id_reserva_zona); setNewStatusChoice(rz.id_estado.toString()); }}
+                                        className="text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 text-[10px] font-bold rounded-lg transition flex items-center gap-1 border border-gray-200"
+                                     ><FaSync size={10} /> Estado</button>
+                                  )}
+                                </div>
                             )}
                           </td>
                         </tr>
@@ -901,64 +977,141 @@ export default function Reservaciones() {
             )}
 
             {activeTab === 'aprobaciones' && (
-              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                 <table className="min-w-full divide-y divide-gray-100">
-                  <thead className="bg-gray-50/50 sticky top-0 z-10 shadow-sm">
-                    <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                      <th className="px-6 py-4 text-left">Solicitante</th>
-                      <th className="px-6 py-4 text-left">Zona</th>
-                      <th className="px-6 py-4 text-left">Fechas</th>
-                      <th className="px-6 py-4 text-left">Placa</th>
-                      <th className="px-6 py-4 text-left">Descripción / Motivo</th>
-                      <th className="px-6 py-4 text-right">Decisión</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-50">
-                    {aprobacionesPendientes.filter(rz => `${rz.zona?.nombre} ${rz.persona?.nombre} ${rz.placa}`.toLowerCase().includes(searchTerm.toLowerCase())).map(rz => (
-                        <tr key={rz.id_reserva_zona} className="transition-all text-sm hover:bg-orange-50/30">
-                          <td className="px-6 py-4 font-bold text-gray-700">{rz.persona?.nombre} {rz.persona?.apellido}</td>
-                          <td className="px-6 py-4 text-blue-600 font-black">{rz.zona?.nombre}</td>
-                          <td className="px-6 py-4">
-                             <div className="text-[10px] space-y-0.5">
-                                <p className="font-bold text-gray-600">INICIO: {formatDisplayDate(rz.fecha_hora_inicio)}</p>
-                                <p className="font-bold text-orange-600">FIN: {formatDisplayDate(rz.fecha_hora_fin)}</p>
-                             </div>
-                          </td>
-                          <td className="px-6 py-4"><span className="bg-gray-100 px-2 py-1 rounded font-mono font-black">{rz.placa}</span></td>
-                          <td className="px-6 py-4">
-                             <div className="max-w-xs overflow-hidden">
-                                <p className="text-[10px] font-black text-gray-400 uppercase mb-0.5">{rz.tipo?.nombre}</p>
-                                <p className="text-xs text-gray-600 italic">"{rz.descripcion}"</p>
-                             </div>
-                          </td>
-                          <td className="px-6 py-4 text-right flex gap-3 justify-end items-center">
-                             <button 
-                                onClick={() => handleApproveRequest(rz)} 
-                                className="bg-green-100 hover:bg-green-600 text-green-700 hover:text-white px-3 py-1.5 rounded-lg font-black text-[10px] transition-all flex items-center gap-1"
-                             >
-                               <FaCheckCircle size={14}/> APROBAR
-                             </button>
-                             <button 
-                                onClick={() => handleRejectRequest(rz)} 
-                                className="bg-red-50 text-red-600 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-lg font-black text-[10px] transition-all flex items-center gap-1"
-                             >
-                               <FaTimesCircle size={14}/> RECHAZAR
-                             </button>
-                          </td>
-                        </tr>
-                    ))}
-                    {aprobacionesPendientes.length === 0 && (
-                      <tr>
-                        <td colSpan="6" className="px-6 py-20 text-center">
-                           <div className="flex flex-col items-center gap-2 opacity-30 text-gray-400">
-                             <FaUserCheck size={48} />
-                             <p className="font-black uppercase tracking-tighter">No hay aprobaciones pendientes</p>
-                           </div>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                 </table>
+              <div className="flex flex-col gap-8">
+                 {/* 1. APROBACIONES GESTIONADAS */}
+                 <div>
+                    <div className="overflow-x-auto max-h-[300px] overflow-y-auto mb-4 border rounded-xl">
+                    <table className="min-w-full divide-y divide-gray-100">
+                        <thead className="bg-gray-50/50 sticky top-0 z-10 shadow-sm">
+                            <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                            <th className="px-6 py-3 text-left">Solicitante</th>
+                            <th className="px-6 py-3 text-left">Zona</th>
+                            <th className="px-6 py-3 text-left">Fechas</th>
+                            <th className="px-6 py-3 text-left">Descripción / Motivo</th>
+                            <th className="px-6 py-3 text-center">Estado</th>
+                            <th className="px-6 py-3 text-right">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-50">
+                            {aprobacionesPendientes.filter(rz => rz.id_estado !== 5 && `${rz.zona?.nombre} ${rz.persona?.nombre}`.toLowerCase().includes(searchTerm.toLowerCase())).map(rz => (
+                                <tr key={rz.id_reserva_zona} className="transition-all text-sm bg-gray-50/50 opacity-80 grayscale-[0.2]">
+                                <td className="px-6 py-3 font-bold text-gray-700">{rz.persona?.nombre} {rz.persona?.apellido}</td>
+                                <td className="px-6 py-3 text-blue-600 font-black">{rz.zona?.nombre}</td>
+                                <td className="px-6 py-3">
+                                    <div className="text-[10px] space-y-0.5">
+                                        <p className="font-bold text-gray-600">INICIO: {formatDisplayDate(rz.fecha_hora_inicio)}</p>
+                                        <p className="font-bold text-orange-600">FIN: {formatDisplayDate(rz.fecha_hora_fin)}</p>
+                                    </div>
+                                </td>
+                                <td className="px-6 py-3">
+                                    <div className="max-w-xs overflow-hidden">
+                                        <p className="text-[10px] font-black text-gray-400 uppercase mb-0.5">{rz.tipo?.nombre}</p>
+                                        <p className="text-[10px] text-gray-500 italic truncate" title={rz.descripcion}>"{rz.descripcion}"</p>
+                                    </div>
+                                </td>
+                                <td className="px-6 py-3 text-center">
+                                    <span className={`px-2.5 py-1 text-[9px] font-bold uppercase rounded-md ${rz.id_estado === 1 ? 'bg-green-100 text-green-800' : 'bg-gray-200 text-gray-600'}`}>{rz.estado?.nombre}</span>
+                                </td>
+                                <td className="px-6 py-3 text-right">
+                                    {TERMINAL_STATES.includes(rz.estado?.nombre || '') ? (
+                                        <div className="text-gray-400 italic text-[10px] flex justify-end items-center gap-1 font-bold"><FaLock size={10} /> FINALIZADA</div>
+                                    ) : changingStatusFor === rz.id_reserva_zona && changingStatusType === 'aprob' ? (
+                                        <div className="flex items-center justify-end gap-1 animate-fadeIn">
+                                            <select 
+                                                className="border border-blue-300 rounded-lg px-2 py-1 text-[10px] focus:ring-2 focus:ring-blue-200 outline-none pointer-events-auto"
+                                                value={newStatusChoice}
+                                                onChange={e => setNewStatusChoice(e.target.value)}
+                                            >
+                                                {estadosReservaList.map(e => <option key={e.id_estado} value={e.id_estado}>{e.nombre}</option>)}
+                                            </select>
+                                            <button onClick={() => handleConfirmarCambioEstado(rz, 'zona')} className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm pointer-events-auto"><FaCheckCircle size={10} /></button>
+                                            <button onClick={() => { setChangingStatusFor(null); setChangingStatusType(null); }} className="p-1.5 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition pointer-events-auto"><FaTimesCircle size={10} /></button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex gap-2 justify-end items-center">
+                                            {canEdit && <button onClick={() => handleEditZona(rz)} className="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-md transition" title="Editar"><FaEdit size={12} /></button>}
+                                            {canEdit && <button onClick={() => { setChangingStatusType('aprob'); setChangingStatusFor(rz.id_reserva_zona); setNewStatusChoice(rz.id_estado.toString()); }} className="text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 text-[10px] font-bold rounded-md transition flex items-center gap-1 border border-gray-200"><FaSync size={10} /> Estado</button>}
+                                        </div>
+                                    )}
+                                </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    </div>
+                 </div>
+
+                 {/* 2. EN ESPERA */}
+                 <div>
+                    <h4 className="text-sm font-black text-orange-500 uppercase tracking-widest mb-3 flex items-center gap-2 animate-pulse"><FaSync className="animate-spin" /> Solicitudes En Espera</h4>
+                    <div className="overflow-x-auto max-h-[300px] overflow-y-auto border border-orange-100 rounded-xl">
+                    <table className="min-w-full divide-y divide-orange-100">
+                        <thead className="bg-orange-50/50 sticky top-0 z-10 shadow-sm">
+                            <tr className="text-[10px] font-black text-orange-400 uppercase tracking-widest">
+                            <th className="px-6 py-3 text-left">Solicitante</th>
+                            <th className="px-6 py-3 text-left">Zona</th>
+                            <th className="px-6 py-3 text-left">Fechas</th>
+                            <th className="px-6 py-3 text-left">Descripción / Motivo</th>
+                            <th className="px-6 py-3 text-center">Estado</th>
+                            <th className="px-6 py-3 text-right">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-50">
+                            {aprobacionesPendientes.filter(rz => rz.id_estado === 5 && `${rz.zona?.nombre} ${rz.persona?.nombre}`.toLowerCase().includes(searchTerm.toLowerCase())).map(rz => (
+                                <tr key={rz.id_reserva_zona} className="transition-all text-sm hover:bg-orange-50/30">
+                                <td className="px-6 py-4 font-bold text-gray-700">{rz.persona?.nombre} {rz.persona?.apellido}</td>
+                                <td className="px-6 py-4 text-blue-600 font-black">{rz.zona?.nombre}</td>
+                                <td className="px-6 py-4">
+                                    <div className="text-[10px] space-y-0.5">
+                                        <p className="font-bold text-gray-600">INICIO: {formatDisplayDate(rz.fecha_hora_inicio)}</p>
+                                        <p className="font-bold text-orange-600">FIN: {formatDisplayDate(rz.fecha_hora_fin)}</p>
+                                    </div>
+                                </td>
+                                <td className="px-6 py-4">
+                                    <div className="max-w-xs overflow-hidden">
+                                        <p className="text-[10px] font-black text-gray-400 uppercase mb-0.5">{rz.tipo?.nombre}</p>
+                                        <p className="text-[10px] text-gray-600 italic">"{rz.descripcion}"</p>
+                                    </div>
+                                </td>
+                                <td className="px-6 py-4 text-center">
+                                    <span className="px-2.5 py-1 text-[9px] font-bold uppercase rounded-md bg-orange-100 text-orange-800">{rz.estado?.nombre || 'En Espera'}</span>
+                                </td>
+                                <td className="px-6 py-4 text-right">
+                                    {changingStatusFor === rz.id_reserva_zona && changingStatusType === 'aprob_pend' ? (
+                                        <div className="flex items-center justify-end gap-1 animate-fadeIn">
+                                            <select 
+                                                className="border border-orange-300 rounded-lg px-2 py-1 text-[10px] focus:ring-2 focus:ring-orange-200 outline-none pointer-events-auto"
+                                                value={newStatusChoice}
+                                                onChange={e => setNewStatusChoice(e.target.value)}
+                                            >
+                                                {estadosReservaList.map(e => <option key={e.id_estado} value={e.id_estado}>{e.nombre}</option>)}
+                                            </select>
+                                            <button onClick={() => handleConfirmarCambioEstado(rz, 'zona')} className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm pointer-events-auto"><FaCheckCircle size={10} /></button>
+                                            <button onClick={() => { setChangingStatusFor(null); setChangingStatusType(null); }} className="p-1.5 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition pointer-events-auto"><FaTimesCircle size={10} /></button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex gap-2 justify-end items-center">
+                                            {canEdit && <button onClick={() => handleEditZona(rz)} className="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-md transition" title="Editar"><FaEdit size={12} /></button>}
+                                            {canEdit && <button onClick={() => { setChangingStatusType('aprob_pend'); setChangingStatusFor(rz.id_reserva_zona); setNewStatusChoice(rz.id_estado.toString()); }} className="text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 text-[10px] font-bold rounded-md transition flex items-center gap-1 border border-gray-200"><FaSync size={10} /> Estado</button>}
+                                        </div>
+                                    )}
+                                </td>
+                                </tr>
+                            ))}
+                            {aprobacionesPendientes.filter(rz => rz.id_estado === 5).length === 0 && (
+                                <tr>
+                                <td colSpan="6" className="px-6 py-12 text-center">
+                                    <div className="flex flex-col items-center gap-2 opacity-30 text-gray-400">
+                                        <FaUserCheck size={32} />
+                                        <p className="font-black uppercase tracking-tighter text-xs">No hay reservas por zona en espera</p>
+                                    </div>
+                                </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                    </div>
+                 </div>
               </div>
             )}
           </div>
@@ -1113,28 +1266,53 @@ export default function Reservaciones() {
                     </>
                   )}
 
-                 <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Inicio *</label>
-                      <input
-                        type="datetime-local"
-                        className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none"
-                        value={formData.Fecha_Hora_Inicio}
-                        onChange={(e) => setFormData({...formData, Fecha_Hora_Inicio: e.target.value})}
-                        required
-                      />
-                    </div>
-                    <div>
-                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Fin *</label>
-                       <input
-                        type="datetime-local"
-                        className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none"
-                        value={formData.Fecha_Hora_Fin}
-                        onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})}
-                        required
-                      />
-                    </div>
-                  </div>
+                 {(() => {
+                    const getLocalDatetimePattern = (dateObj) => {
+                      const tzOffset = dateObj.getTimezoneOffset() * 60000;
+                      return (new Date(dateObj - tzOffset)).toISOString().slice(0, 16);
+                    };
+
+                    const minDateInicio = (() => {
+                      const minDate = new Date();
+                      if (formData.tipo_reserva === 'zona') {
+                        minDate.setDate(minDate.getDate() + 1);
+                        minDate.setHours(0, 0, 0, 0);
+                      }
+                      return getLocalDatetimePattern(minDate);
+                    })();
+
+                    const minDateFin = formData.Fecha_Hora_Inicio || getLocalDatetimePattern(new Date());
+
+                    return (
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Inicio *</label>
+                                <input
+                                    type="datetime-local"
+                                    className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none"
+                                    value={formData.Fecha_Hora_Inicio}
+                                    min={minDateInicio}
+                                    onChange={(e) => {
+                                      const newVal = e.target.value;
+                                      setFormData({...formData, Fecha_Hora_Inicio: newVal});
+                                    }}
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Fin *</label>
+                                <input
+                                    type="datetime-local"
+                                    className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none"
+                                    value={formData.Fecha_Hora_Fin}
+                                    min={minDateFin}
+                                    onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})}
+                                    required
+                                />
+                            </div>
+                        </div>
+                    );
+                 })()}
                  <div className="pt-2">
                    <button
                      type="submit"

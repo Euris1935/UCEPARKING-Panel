@@ -39,6 +39,15 @@ export default function Sensores() {
   const [localOrgId, setLocalOrgId] = useState(null);
 
   useEffect(() => {
+    const fetchUser = async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+            const { data: ud } = await supabase.from('usuario').select('id_persona').eq('id', user.id).maybeSingle();
+            if (ud) setCurrentPersonaId(ud.id_persona);
+        }
+    };
+    fetchUser();
+
     if (orgId) {
       loadData();
       // Sincronización en tiempo real
@@ -121,7 +130,6 @@ export default function Sensores() {
   };
 
   const handleRegistrarLog = async (tipo_nombre, descripcion, idPlaza = null, idDisp = null) => {
-    if (!currentPersonaId) return;
     await registrarLog({
       tipo_nombre,
       descripcion,

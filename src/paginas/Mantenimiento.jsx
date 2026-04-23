@@ -49,6 +49,15 @@ export default function Mantenimiento() {
     const [changingStatusFor,   setChangingStatusFor]   = useState(null);
     const [newStatusChoice,     setNewStatusChoice]     = useState('');
     useEffect(() => {
+        const fetchUser = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: ud } = await supabase.from('usuario').select('id_persona').eq('id', user.id).maybeSingle();
+                if (ud) setCurrentPersonaId(ud.id_persona);
+            }
+        };
+        fetchUser();
+
         if (orgId) {
             loadData();
             // Suscripción en tiempo real
@@ -115,12 +124,23 @@ export default function Mantenimiento() {
             });
 
             setTecnicos(tecnicosFiltrados.sort((a,b) => a.nombre_label.localeCompare(b.nombre_label)));
-            setAllDispositivos(dispData || []);
-            setDispositivos((dispData || []).filter(d => d.id_estado === 1));
-            setAllPlazas(fullPlazas || []);
-            setPlazasList((fullPlazas || []).filter(p => p.estado?.nombre === 'Libre' && (fullZonas || []).some(z => z.id_zona === p.id_zona && z.estado?.nombre === 'Activa')));
-            setAllZonas(fullZonas || []);
-            setZonas((fullZonas || []).filter(z => z.estado?.nombre === 'Activa'));
+            
+            const sortedDispositivos = (dispData || []).sort((a,b) => {
+                const na = `${a.tipo?.nombre || ''} - ${a.modelo?.nombre || ''}`.toLowerCase();
+                const nb = `${b.tipo?.nombre || ''} - ${b.modelo?.nombre || ''}`.toLowerCase();
+                return na.localeCompare(nb);
+            });
+            setAllDispositivos(sortedDispositivos);
+            setDispositivos(sortedDispositivos.filter(d => d.id_estado === 1));
+
+            const sortedPlazas = (fullPlazas || []).sort((a,b) => (a.numero_plaza || '').localeCompare(b.numero_plaza || '', undefined, {numeric: true}));
+            setAllPlazas(sortedPlazas);
+            setPlazasList(sortedPlazas.filter(p => p.estado?.nombre === 'Libre' && (fullZonas || []).some(z => z.id_zona === p.id_zona && z.estado?.nombre === 'Activa')));
+
+            const sortedZonas = (fullZonas || []).sort((a,b) => (a.nombre || '').localeCompare(b.nombre || ''));
+            setAllZonas(sortedZonas);
+            setZonas(sortedZonas.filter(z => z.estado?.nombre === 'Activa'));
+            
             setTiposMantenimiento(tipoData || []);
             setEstadosMantenimiento(estData || []);
 
@@ -133,7 +153,6 @@ export default function Mantenimiento() {
     };
 
     const handleRegistrarLog = async (tipo_nombre, descripcion, idDispositivo = null, idPlaza = null) => {
-        if (!currentPersonaId) return;
         await registrarLog({
             tipo_nombre,
             descripcion,
@@ -526,25 +545,29 @@ export default function Mantenimiento() {
                                                         )}
                                                     </td>
                                                     <td className="px-6 py-4 text-center">
-                                                        <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                                                            <button
-                                                                onClick={() => {
-                                                                    setNewStatusChoice(item.id_estado);
-                                                                    setChangingStatusFor(item.id_mantenimiento);
-                                                                }}
-                                                                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold transition shadow-sm"
-                                                                title="Cambiar Estado Rápido"
-                                                            >
-                                                                <FaSync size={10} /> Estado
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleEdit(item)}
-                                                                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200 font-bold transition shadow-sm"
-                                                                title="Editar Detalles Completos"
-                                                            >
-                                                                <FaEdit size={10} /> Editar
-                                                            </button>
-                                                        </div>
+                                                        {!isResuelto ? (
+                                                            <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                                                <button
+                                                                    onClick={() => {
+                                                                        setNewStatusChoice(item.id_estado);
+                                                                        setChangingStatusFor(item.id_mantenimiento);
+                                                                    }}
+                                                                    className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-bold transition shadow-sm"
+                                                                    title="Cambiar Estado Rápido"
+                                                                >
+                                                                    <FaSync size={10} /> Estado
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleEdit(item)}
+                                                                    className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200 font-bold transition shadow-sm"
+                                                                    title="Editar Detalles Completos"
+                                                                >
+                                                                    <FaEdit size={10} /> Editar
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-[10px] font-bold text-gray-300 uppercase italic">Finalizado</span>
+                                                        )}
                                                     </td>
                                                 </tr>
                                             );

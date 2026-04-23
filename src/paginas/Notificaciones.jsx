@@ -40,6 +40,15 @@ export default function Notificaciones() {
 
   /* ── Init ── */
   useEffect(() => {
+    const fetchUser = async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+            const { data: ud } = await supabase.from('usuario').select('id_persona').eq('id', user.id).maybeSingle();
+            if (ud) setCurrentPersonaId(ud.id_persona);
+        }
+    };
+    fetchUser();
+
     if (orgId) {
       loadAll();
       const channel = supabase
@@ -102,7 +111,6 @@ export default function Notificaciones() {
   };
 
   const handleRegistrarLog = async (tipo_nombre, descripcion) => {
-    if (!currentPersonaId) return;
     await registrarLog({
       tipo_nombre,
       descripcion,

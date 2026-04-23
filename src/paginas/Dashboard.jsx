@@ -255,13 +255,20 @@ export default function Dashboard() {
         ) : (
           <>
             {/* Fila principal de métricas core */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-8">
               <StatCard 
                 title="Total Espacios en Uso" 
                 value={stats.personasActivas} 
                 subtext={`De ${stats.totalPlazas} plazas en ${stats.totalZonas} zonas`}
                 icon={<FaParking size={26} />} 
                 colorClass="text-emerald-600" bgClass="bg-emerald-50" ringClass="border-emerald-100"
+              />
+              <StatCard 
+                title="Total Espacios Libres" 
+                value={stats.libres} 
+                subtext={`Disponibles para uso`}
+                icon={<FaCheckCircle size={26} />} 
+                colorClass="text-blue-600" bgClass="bg-blue-50" ringClass="border-blue-100"
               />
               <StatCard 
                 title="Vehículos Estacionados" 

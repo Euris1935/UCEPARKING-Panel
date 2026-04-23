@@ -113,7 +113,12 @@ export default function Usuarios() {
             id_estado:     est.id_estado   ?? null,
             nombre_estado: est.nombre_estado ?? 'Sin Estado',
           };
-        }).filter(u => u.id_rol !== ROL.VISITANTE);
+        }).filter(u => u.id_rol !== ROL.VISITANTE)
+          .sort((a,b) => {
+            const na = `${a.nombre} ${a.apellido}`.toLowerCase();
+            const nb = `${b.nombre} ${b.apellido}`.toLowerCase();
+            return na.localeCompare(nb);
+          });
 
         setUsuarios(listaNormalizada);
       }
@@ -353,7 +358,13 @@ export default function Usuarios() {
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-3xl font-bold text-gray-900">Gestión de Usuarios</h2>
-            <p className="text-sm text-gray-500 mt-1">Administra cuentas, roles y permisos del sistema.</p>
+            <div className="flex items-center gap-3 mt-1">
+              <p className="text-sm text-gray-500">Administra cuentas, roles y permisos del sistema.</p>
+              <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                {usuarios.filter(u => u.nombre_estado?.toLowerCase() === 'activo').length} activos
+              </span>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             {activeTab === 'usuarios' && (
@@ -415,8 +426,11 @@ export default function Usuarios() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-50">
-                    {filteredUsers.map(u => (
-                      <tr key={u.id_usuario}>
+                    {filteredUsers.map(u => {
+                      const isInactive = u.nombre_estado?.toLowerCase() !== 'activo';
+                      return (
+                        <tr key={u.id_usuario} className={`transition-all ${isInactive ? 'bg-gray-50/50 grayscale-[0.8] opacity-60' : 'hover:bg-gray-50/30'}`}>
+
                         <td className="px-5 py-3.5">
                           <div className="flex items-center gap-3">
                             <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 font-bold text-sm">
@@ -485,7 +499,8 @@ export default function Usuarios() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                        );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -511,12 +526,12 @@ export default function Usuarios() {
                 
                 <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Email *</label>
-                  <input type="email" name="email" value={formData.email} onChange={handleChange} required className="w-full border p-2 rounded text-sm"/>
+                  <input type="email" name="email" value={formData.email} onChange={handleChange} required autoComplete="off" className="w-full border p-2 rounded text-sm"/>
                 </div>
                 
                 {!isUpdating && <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Contraseña *</label>
-                  <input type="password" name="contrasena" value={formData.contrasena} onChange={handleChange} required className="w-full border p-2 rounded text-sm"/>
+                  <input type="password" name="contrasena" value={formData.contrasena} onChange={handleChange} required autoComplete="new-password" placeholder="••••••••" className="w-full border p-2 rounded text-sm"/>
                 </div>}
 
                 <div className="grid grid-cols-2 gap-2">

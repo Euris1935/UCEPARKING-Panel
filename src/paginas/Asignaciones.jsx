@@ -52,6 +52,19 @@ export default function Asignaciones() {
     const [formData, setFormData] = useState(initialForm);
 
     useEffect(() => {
+        const fetchUser = async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+                const { data: ud } = await supabase
+                    .from('usuario')
+                    .select('id_persona')
+                    .eq('id', user.id)
+                    .maybeSingle();
+                if (ud) setCurrentPersonaId(ud.id_persona);
+            }
+        };
+        fetchUser();
+
         if (orgId) {
             loadData();
             checkExpiredAssignments(); 
@@ -191,7 +204,6 @@ export default function Asignaciones() {
     };
 
     const handleRegistrarLog = async (tipo_nombre, descripcion) => {
-        if (!currentPersonaId) return;
         await registrarLog({
             tipo_nombre,
             descripcion,

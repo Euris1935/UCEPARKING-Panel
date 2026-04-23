@@ -945,8 +945,7 @@ export default function ZonasParqueo() {
                             </button>
                             <button onClick={() => handleDeletePlaza(p)} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Borrar">
                               <FaTrash size={14} />
-                              </button>
-                            )}
+                            </button>
                         </div>
                       </div>
                      );

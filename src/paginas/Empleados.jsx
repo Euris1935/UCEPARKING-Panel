@@ -58,7 +58,7 @@ export default function Empleados() {
         { data: estData },
         { data: orgData }
       ] = await Promise.all([
-        supabase.from('departamento').select('*').eq('organizacion_id', orgId),
+        supabase.from('departamento').select('*').eq('organizacion_id', orgId).order('nombre'),
         supabase.from('estado_usuario').select('*').order('id_estado'),
         supabase.from('organizacion').select('id_organizacion, nombre').eq('id_organizacion', orgId).single()
       ]);
@@ -104,6 +104,10 @@ export default function Empleados() {
         email:           uRow?.email    || '',
         nombre_depto:    depto?.nombre || 'Sin Depto',
       };
+    }).sort((a,b) => {
+      const na = `${a.nombre} ${a.apellido}`.toLowerCase();
+      const nb = `${b.nombre} ${b.apellido}`.toLowerCase();
+      return na.localeCompare(nb);
     });
     setEmpleados(lista);
 
@@ -111,11 +115,10 @@ export default function Empleados() {
     const disponibles = todosLosUsuarios
       .filter(u => u.id_persona && !empPersonaIds.has(u.id_persona))
       .map(u => ({
-        id_persona:     u.id_persona,
-        nombreCompleto: `${u.nombre || ''} ${u.apellido || ''}`.trim(),
         email:          u.email || '',
       }))
-      .filter(u => u.nombreCompleto);
+      .filter(u => u.nombreCompleto)
+      .sort((a,b) => a.nombreCompleto.localeCompare(b.nombreCompleto));
     setUsuariosSinEmpleo(disponibles);
   };
 

@@ -78,11 +78,15 @@ export default function Ocupacion() {
         supabase.from('reserva')
           .select('id_plaza, persona:id_persona(nombre, apellido)')
           .eq('organizacion_id', orgId)
-          .eq('id_estado', ESTADO_RESERVA.ACTIVA),
+          .eq('id_estado', ESTADO_RESERVA.ACTIVA)
+          .lte('fecha_hora_inicio', new Date().toISOString())
+          .gte('fecha_hora_fin', new Date().toISOString()),
         supabase.from('reserva_zona')
           .select('*, tipo:tipo_reserva_zona!id_tipo(nombre), persona:id_persona(nombre, apellido)')
           .eq('organizacion_id', orgId)
-          .eq('id_estado', ESTADO_RESERVA.ACTIVA),
+          .eq('id_estado', ESTADO_RESERVA.ACTIVA)
+          .lte('fecha_hora_inicio', new Date().toISOString())
+          .gte('fecha_hora_fin', new Date().toISOString()),
         // CAMBIO: ticket no tiene id_persona ni id_visitante
         // Usamos visitante_nombre y visitante_apellido directamente
         supabase.from('ticket')
@@ -343,6 +347,13 @@ export default function Ocupacion() {
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-8 flex flex-col xl:flex-row gap-4 items-center justify-between sticky top-0 z-10">
         <div className="relative w-full xl:w-96">
           <FaSearch className="absolute left-3 top-3 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Buscar por plaza, placa, persona o zona..."
+            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
         </div>
 
         <div className="flex items-center gap-2 w-full xl:w-auto">
@@ -380,11 +391,23 @@ export default function Ocupacion() {
           {zonas
             .filter(z => nivelFilter === 'all' || z.nivel_piso === parseInt(nivelFilter))
             .map(zona => {
-            const plazasDeZona = plazas.filter(p =>
-              p.id_zona === zona.id_zona &&
-              p.numero_plaza.toLowerCase().includes(searchTerm.toLowerCase())
-            );
-            if (searchTerm && plazasDeZona.length === 0) return null;
+            const termLower = searchTerm.toLowerCase();
+            const matchZonaBusqueda = zona.nombre.toLowerCase().includes(termLower);
+
+            const plazasDeZona = plazas.filter(p => {
+              if (p.id_zona !== zona.id_zona) return false;
+              if (!termLower) return true;
+              if (matchZonaBusqueda) return true;
+              
+              const info = ocupacionInfo[p.id_plaza];
+              const matchNum = p.numero_plaza.toLowerCase().includes(termLower);
+              const matchPlaca = info?.placa?.toLowerCase().includes(termLower);
+              const matchPersona = info?.nombre?.toLowerCase().includes(termLower);
+              
+              return matchNum || matchPlaca || matchPersona;
+            });
+
+            if (termLower && plazasDeZona.length === 0) return null;
 
             const estZona = zonas.find(z => z.id_zona === zona.id_zona)?.estado_zona?.nombre || '';
             const isForcedState = estZona === 'Cerrada Temporalmente' || estZona === 'En Mantenimiento';

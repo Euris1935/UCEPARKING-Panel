@@ -91,18 +91,22 @@ export default function AccesoManual() {
         apellido:   u.apellido,
         email:      u.email,
         telefono:   u.telefono
-      }));
+      })).sort((a,b) => {
+        const na = `${a.nombre} ${a.apellido}`.toLowerCase();
+        const nb = `${b.nombre} ${b.apellido}`.toLowerCase();
+        return na.localeCompare(nb);
+      });
       const pMap = {};
       allP.forEach(p => { pMap[p.id_persona] = p; });
       setPersonas(allP);
 
-      // 4. Vehículos habilitados de la org
+      // 4. Vehículos habilitados e inhabilitados de la org
       const { data: vhs } = await supabase
         .from('vehiculo')
-        .select('*, modelo:id_modelo(nombre, marca:id_marca(nombre)), color:id_color(nombre)')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', 1);
-      const vhsEnriquecidos = (vhs || []).map(v => ({ ...v, persona: pMap[v.id_persona] || null }));
+        .select('*, modelo:id_modelo(nombre, marca:id_marca(nombre)), color:id_color(nombre), estado:id_estado(nombre)')
+        .eq('organizacion_id', orgId);
+      const vhsEnriquecidos = (vhs || []).map(v => ({ ...v, persona: pMap[v.id_persona] || null }))
+        .sort((a,b) => (a.placa || '').localeCompare(b.placa || ''));
       setVehiculos(vhsEnriquecidos);
 
       // 5. Vehículos con acceso activo (para bloquearlos en dropdown)
@@ -168,7 +172,15 @@ export default function AccesoManual() {
 
   const generateSearchOptions = (vhsEnriquecidos, allP, vehiculosConAccesoActivo) => {
     const vhsOptions = vhsEnriquecidos.map(v => {
+      const estadoNombre = v.estado?.nombre || 'Desconocido';
+      const esActivo = estadoNombre.toLowerCase() === 'habilitado' || estadoNombre.toLowerCase() === 'activo';
       const tieneAcceso = vehiculosConAccesoActivo.has(v.id_vehiculo);
+      const isBlocked = tieneAcceso || !esActivo;
+      
+      let razonStr = null;
+      if (tieneAcceso) razonStr = 'Ya tiene acceso activo';
+      else if (!esActivo) razonStr = `Estatus: ${estadoNombre}`;
+
       return {
         id:       v.id_vehiculo,
         type:     'v',
@@ -176,8 +188,8 @@ export default function AccesoManual() {
         nombre:   `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`.trim() || 'Sin Propietario',
         marca:    v.modelo?.marca?.nombre,
         modelo:   v.modelo?.nombre,
-        disabled: tieneAcceso,
-        razon:    tieneAcceso ? 'Ya tiene acceso activo' : null
+        disabled: isBlocked,
+        razon:    razonStr
       };
     });
 
@@ -337,14 +349,14 @@ export default function AccesoManual() {
     });
   };
 
-  const tabBtn = (id, label) => (
+  const tabBtn = (id, label, icon) => (
     <button
       onClick={() => setActiveTab(id)}
       className={`flex items-center gap-2 pb-3 px-4 font-bold text-sm border-b-4 transition-all ${
         activeTab === id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-gray-400 hover:text-gray-600'
       }`}
     >
-      {label}
+      {icon} {label}
       {id === 'activos' && accesosActivos.length > 0 && (
         <span className="ml-1 bg-indigo-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">{accesosActivos.length}</span>
       )}
@@ -378,9 +390,9 @@ export default function AccesoManual() {
       </header>
 
       <div className="flex gap-2 border-b border-gray-200 mb-8">
-        {tabBtn('entrada',  'Nueva Entrada')}
-        {tabBtn('activos',  'Accesos Activos')}
-        {tabBtn('historial','Historial')}
+        {tabBtn('entrada',  'Nueva Entrada', <FaSignInAlt />)}
+        {tabBtn('activos',  'Accesos Activos', <FaList />)}
+        {tabBtn('historial','Historial', <FaHistory />)}
       </div>
 
       {/* ── TAB ENTRADA ── */}
@@ -497,8 +509,7 @@ export default function AccesoManual() {
                 <SearchableSelect
                   options={[
                     { value: 'main', label: 'Barrera Principal' },
-                    { value: 'vip',  label: 'Barrera VIP' },
-                    { value: 'exit', label: 'Barrera de Salida' }
+                    { value: 'vip',  label: 'Barrera VIP' }
                   ]}
                   value={entradaForm.puertaDestino}
                   onChange={val => setEntradaForm({ ...entradaForm, puertaDestino: val })}
