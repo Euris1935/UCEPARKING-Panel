@@ -5,6 +5,7 @@ import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaUserTie, FaUsers
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useOrg } from '../contexts/OrgContext';
 import { ESTADO_PLAZA, ESTADO_RESERVA, ROL } from '../lib/constants';
+import DashboardMap from '../componentes/DashboardMap';
 
 function timeAgo(dateString) {
   const date = new Date(dateString);
@@ -75,13 +76,13 @@ export default function Dashboard() {
       ] = await Promise.all([
         supabase.from('estado_plaza').select('*'),
         supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, nivel_piso, estado_zona:id_estado(nombre))').eq('organizacion_id', orgId),
-        supabase.from('zona').select('id_zona').eq('organizacion_id', orgId),
+        supabase.from('zona').select('id_zona, estado_zona:id_estado(nombre)').eq('organizacion_id', orgId),
         
         supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`),
         supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
         supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
-        supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
-        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
+        supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA).lte('fecha_hora_inicio', new Date().toISOString()).gte('fecha_hora_fin', new Date().toISOString()),
+        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA).lte('fecha_hora_inicio', new Date().toISOString()).gte('fecha_hora_fin', new Date().toISOString()),
         
         supabase.from('evento').select('fecha_hora, descripcion, tipo_evento:id_tipo(nombre), persona:id_persona(nombre, apellido), plaza:id_plaza(numero_plaza)').eq('organizacion_id', orgId).order('fecha_hora', { ascending: false }).limit(6),
         supabase.from('ticket').select('id_ticket').eq('organizacion_id', orgId).gte('fecha_hora_emision', hoyStr),
@@ -141,7 +142,7 @@ export default function Dashboard() {
         accesosHoy: accesosHoyData?.length || 0,
         ticketsActivos: ticketsActivosData?.length || 0,
         accesosActivosCount: accesosActivosData?.length || 0,
-        totalZonas: zonasData?.length || 0,
+        totalZonas: (zonasData || []).filter(z => z.estado_zona?.nombre !== 'Inactiva').length,
         totalUsuarios: usuariosCount || 0,
         totalVehiculos: vehiculosCount || 0,
         totalEmpleados: empleadosCount || 0,
@@ -439,8 +440,13 @@ export default function Dashboard() {
                 </div>
 
                 {/* Columna Lateral para Logs y Actividad */}
-                <div className="lg:col-span-1">
-                    <div className="bg-white p-0 rounded-2xl shadow-sm border border-gray-100 h-full flex flex-col">
+                <div className="lg:col-span-1 space-y-6">
+                    {/* MAPA DE UBICACIÓN FÍSICA */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden h-[320px]">
+                        <DashboardMap />
+                    </div>
+
+                    <div className="bg-white p-0 rounded-2xl shadow-sm border border-gray-100 h-[calc(100%-344px)] min-h-[400px] flex flex-col">
                         <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 rounded-t-2xl">
                             <h3 className="font-bold text-gray-800 flex items-center gap-2">
                                 <FaHistory className="text-indigo-500" />

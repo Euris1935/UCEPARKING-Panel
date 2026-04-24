@@ -49,6 +49,7 @@ export default function Reservaciones() {
   const [changingStatusFor, setChangingStatusFor] = useState(null);
   const [changingStatusType, setChangingStatusType] = useState(null);
   const [newStatusChoice, setNewStatusChoice] = useState('');
+  const [horarios, setHorarios] = useState([]); // Horario laboral de la organización
   
   const initialForm = {
     id_persona: '',
@@ -105,7 +106,8 @@ export default function Reservaciones() {
             { data: asigsActivas },
             { data: zonas },
             { data: tiposRZ },
-            { data: catEst }
+            { data: catEst },
+            { data: horarioData }
         ] = await Promise.all([
             supabase.from('reserva').select('*, persona:id_persona(id_persona, nombre, apellido), plaza:id_plaza(id_plaza, numero_plaza), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
             supabase.from('reserva_zona').select('*, zona:id_zona(id_zona, nombre), tipo:tipo_reserva_zona!id_tipo(nombre), persona:id_persona(id_persona, nombre, apellido), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
@@ -115,8 +117,12 @@ export default function Reservaciones() {
             supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1),
             supabase.from('zona').select('*, estado:estado_zona!id_estado(nombre)').eq('organizacion_id', orgId).order('nombre'),
             supabase.from('tipo_reserva_zona').select('*').order('nombre'),
-            supabase.from('estado_reserva').select('*').order('id_estado')
+            supabase.from('estado_reserva').select('*').order('id_estado'),
+            supabase.from('horario').select('dia_semana, hora_apertura, hora_cierre, activo').eq('organizacion_id', orgId)
         ]);
+
+
+        setHorarios(horarioData || []);
 
         setEstadosReservaList(catEst || []);
         setReservas(resData || []);
@@ -211,7 +217,7 @@ export default function Reservaciones() {
       }
     }
 
-    // 2. Zonas
+    // 2. Zonas — marcar como VENCIDA cuando pasa fecha_hora_fin
     if (reservasZona.length > 0) {
       const vencidasZ = reservasZona.filter(rz => {
         const nombreEstado = rz.estado?.nombre?.trim();
@@ -223,6 +229,29 @@ export default function Reservaciones() {
       });
       for (const rz of vencidasZ) {
         await handleMarkCompletedZona(rz.id_reserva_zona, true, { ...commonIds, idEstCompletadoRes: commonIds.idEstVencidaRes });
+      }
+
+      // 3. Zonas — marcar plazas como RESERVADA cuando llega fecha_hora_inicio (y aún no están marcadas)
+      const porActivar = reservasZona.filter(rz => {
+        const esActiva = rz.estado?.nombre?.trim() === 'Activa' || rz.id_estado === ESTADO_RESERVA.ACTIVA;
+        if (!esActiva) return false;
+        if (!rz.fecha_hora_inicio || !rz.fecha_hora_fin) return false;
+        const yaInicio = ahora >= new Date(rz.fecha_hora_inicio);
+        const noVencida = ahora <= new Date(rz.fecha_hora_fin);
+        return yaInicio && noVencida;
+      });
+      for (const rz of porActivar) {
+        if (!rz.id_zona) continue;
+        // Solo marcar las plazas que aún estén LIBRES para no pisar otros estados
+        const { data: plazasDeZona } = await supabase
+          .from('plaza')
+          .select('id_plaza, id_estado')
+          .eq('id_zona', rz.id_zona)
+          .eq('id_estado', ESTADO_PLAZA.LIBRE);
+        if (plazasDeZona && plazasDeZona.length > 0) {
+          const ids = plazasDeZona.map(p => p.id_plaza);
+          await supabase.from('plaza').update({ id_estado: ESTADO_PLAZA.RESERVADA }).in('id_plaza', ids);
+        }
       }
     }
   };
@@ -425,8 +454,18 @@ export default function Reservaciones() {
     if (confirm.isConfirmed) {
       setLoading(true);
       try {
-        const { error } = await supabase.from('reserva_zona').update({ id_estado: 1 }).eq('id_reserva_zona', rz.id_reserva_zona);
+        const ahoraISO = new Date().toISOString();
+        const { error } = await supabase.from('reserva_zona').update({ id_estado: ESTADO_RESERVA.ACTIVA }).eq('id_reserva_zona', rz.id_reserva_zona);
         if (error) throw error;
+
+        // Si la fecha de inicio ya llegó, marcar las plazas de la zona como RESERVADA
+        if (rz.fecha_hora_inicio && rz.fecha_hora_inicio <= ahoraISO) {
+          const { data: plazasZona } = await supabase.from('plaza').select('id_plaza').eq('id_zona', rz.id_zona);
+          const ids = plazasZona?.map(p => p.id_plaza) || [];
+          if (ids.length > 0) {
+            await supabase.from('plaza').update({ id_estado: ESTADO_PLAZA.RESERVADA }).in('id_plaza', ids);
+          }
+        }
 
         registrarLog({
           tipo_nombre: EVENT_TYPES.PERMISO_ACTUALIZADO,
@@ -499,8 +538,61 @@ export default function Reservaciones() {
         const idEstReservPlaza = ESTADO_PLAZA.RESERVADA;
         const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
 
+        // --- VALIDACIÓN DE HORARIO LABORAL (PASO 2) - APLICA A PLAZA Y ZONA ---
+        if (formData.Fecha_Hora_Fin) {
+            if (horarios.length === 0) {
+                // Si no han cargado, intentamos forzar una carga rápida o avisar
+                console.warn("[STEP 2] Horarios no cargados aún.");
+            }
+
+            const fechaFinObj = new Date(formData.Fecha_Hora_Fin);
+            const fechaBaseStr = formData.Fecha_Hora_Inicio || formData.Fecha_Hora_Fin;
+            const fechaBaseObj = new Date(fechaBaseStr);
+            const diaSemana = fechaBaseObj.getDay(); 
+            
+            // Usamos == o Number() para ser robustos con tipos de datos de la DB
+            const horarioDia = horarios.find(h => Number(h.dia_semana) === diaSemana && h.activo);
+            
+            console.log("[STEP 2 DEBUG] Validando reserva:", {
+                tipo: formData.tipo_reserva,
+                fechaFinInput: formData.Fecha_Hora_Fin,
+                diaSemanaCalculado: diaSemana,
+                totalHorariosOrg: horarios.length,
+                horarioEncontrado: horarioDia
+            });
+
+            if (horarioDia) {
+                const [hCierre, mCierre] = horarioDia.hora_cierre.split(':').map(Number);
+                const limiteCierre = new Date(
+                    fechaBaseObj.getFullYear(),
+                    fechaBaseObj.getMonth(),
+                    fechaBaseObj.getDate(),
+                    hCierre,
+                    mCierre,
+                    0, 0
+                );
+
+                console.log("[STEP 2 DEBUG] Comparación Final:", {
+                    reservaFinMS: fechaFinObj.getTime(),
+                    limiteCierreMS: limiteCierre.getTime(),
+                    esMayor: fechaFinObj.getTime() > limiteCierre.getTime()
+                });
+
+                if (fechaFinObj.getTime() > limiteCierre.getTime()) {
+                    setLoading(false);
+                    return Swal.fire(
+                        'Fuera de Horario',
+                        `La hora de fin no puede superar el cierre del parqueo (${horarioDia.hora_cierre.substring(0, 5)}).`,
+                        'warning'
+                    );
+                }
+            } else if (horarios.length > 0) {
+                setLoading(false);
+                return Swal.fire('Día no laborable', 'El parqueo no labora en el día seleccionado.', 'warning');
+            }
+        }
+
         if (formData.tipo_reserva === 'plaza') {
-            // --- Lógica de Reserva por Persona (Existente) ---
             if (formData.Fecha_Hora_Inicio && formData.Fecha_Hora_Fin) {
                 const inicio = new Date(formData.Fecha_Hora_Inicio);
                 const fin = new Date(formData.Fecha_Hora_Fin);
@@ -597,19 +689,14 @@ export default function Reservaciones() {
               const { error } = await supabase.from('reserva_zona').insert([payloadZona]);
               if (error) throw error;
 
-              // Marcar todas las plazas de la zona como reservadas
-              const { data: plazasZona } = await supabase.from('plaza').select('id_plaza').eq('id_zona', parseInt(formData.id_zona));
-              const idsAMarcar = plazasZona?.map(p => p.id_plaza) || [];
-
-              if (idsAMarcar.length > 0) {
-                  await supabase.from('plaza').update({ id_estado: idEstReservPlaza }).in('id_plaza', idsAMarcar);
-              }
+              // NO marcamos plazas todavía — se marcan solo cuando se apruebe Y llegue la fecha
+              // El mapa de Ocupación lo toma dinámicamente (estado Activa + fecha vigente)
 
               registrarLog({
                 tipo_nombre: isUpdating ? EVENT_TYPES.CAMBIO_ESTADO : EVENT_TYPES.RESERVA_CREADA,
                 descripcion: isUpdating 
                   ? generarDescripcionCambio(editingOriginalData, payloadZona, 'Edición de reserva de zona')
-                  : `Reserva de zona creada para ${tiposReservaZona.find(t => String(t.id_tipo) === String(formData.id_tipo_reserva))?.nombre ?? 'tipo desconocido'}. Plazas involucradas: ${idsAMarcar.length}`,
+                  : `Reserva de zona creada para ${tiposReservaZona.find(t => String(t.id_tipo) === String(formData.id_tipo_reserva))?.nombre ?? 'tipo desconocido'}. Estado: En Espera de aprobación.`,
                 id_persona: currentPersonaId,
                 organizacion_id: orgId,
                 origen: 'Panel Web - Reservas'
@@ -697,6 +784,35 @@ export default function Reservaciones() {
         const { error: upErr } = await supabase.from(tabla).update({ id_estado: nextStatus }).eq(idCampo, idValor);
         if (upErr) throw upErr;
 
+        // Si es una reserva de zona, gestionar el estado de sus plazas
+        if (tipo === 'zona' || tipo === 'aprob_pend' || tipo === 'aprob') {
+          const idZona = reserva.id_zona;
+          if (idZona) {
+            const ahoraISO = new Date().toISOString();
+            const estaActiva = nextStatus === ESTADO_RESERVA.ACTIVA;
+            // Usamos IDs directos para mayor seguridad si las constantes fallan (2=RECHAZADA, 3=COMPLETADA, etc)
+            const esTerminal = [2, 3, 4, 6].includes(nextStatus) || 
+                               [ESTADO_RESERVA.CANCELADA, ESTADO_RESERVA.COMPLETADA, ESTADO_RESERVA.VENCIDA].includes(nextStatus);
+            
+            if (estaActiva && reserva.fecha_hora_inicio && reserva.fecha_hora_inicio <= ahoraISO) {
+              const { data: plazasZona } = await supabase.from('plaza').select('id_plaza').eq('id_zona', idZona);
+              const ids = plazasZona?.map(p => p.id_plaza) || [];
+              if (ids.length > 0) await supabase.from('plaza').update({ id_estado: ESTADO_PLAZA.RESERVADA }).in('id_plaza', ids);
+            } else if (esTerminal) {
+              await liberarPlazasZona(idZona);
+            }
+          }
+        }
+
+        // Si es una reserva individual (plaza), liberar si el estado es terminal
+        if (tipo === 'plaza') {
+            const esTerminal = [2, 3, 4, 6].includes(nextStatus) || 
+                               [ESTADO_RESERVA.CANCELADA, ESTADO_RESERVA.COMPLETADA, ESTADO_RESERVA.VENCIDA].includes(nextStatus);
+            if (esTerminal && reserva.id_plaza) {
+                await supabase.from('plaza').update({ id_estado: ESTADO_PLAZA.LIBRE }).eq('id_plaza', reserva.id_plaza);
+            }
+        }
+
         Swal.fire({ title: 'Actualizado', text: 'Estado de reserva actualizado.', icon: 'success', timer: 1500, showConfirmButton: false });
         
         const estViejo = estadosReservaList.find(e => e.id_estado === oldStatus)?.nombre || oldStatus;
@@ -725,6 +841,27 @@ export default function Reservaciones() {
     d.setDate(d.getDate() + offsetDays);
     const offset = d.getTimezoneOffset() * 60000;
     return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+  };
+
+  // --- LÓGICA DE RESTRICCIÓN DE CIERRE (PASO 2) ---
+  const getMaxFinParaDia = (fechaStr) => {
+    if (!fechaStr || horarios.length === 0) return undefined;
+    
+    // IMPORTANTE: Para evitar problemas de zona horaria al construir el max datetime-local
+    // usamos partes de la fecha local
+    const base = new Date(fechaStr);
+    const diaSemana = base.getDay();
+    const horarioDia = horarios.find(h => h.dia_semana === diaSemana && h.activo);
+    
+    if (!horarioDia) return undefined;
+
+    // Construimos el string YYYY-MM-DDTHH:mm basado en la fecha seleccionada y la hora de cierre
+    const yyyy = base.getFullYear();
+    const mm = String(base.getMonth() + 1).padStart(2, '0');
+    const dd = String(base.getDate()).padStart(2, '0');
+    const hhmm = horarioDia.hora_cierre.substring(0, 5);
+    
+    return `${yyyy}-${mm}-${dd}T${hhmm}`;
   };
 
   if (loadingOrg) {
@@ -908,8 +1045,12 @@ export default function Reservaciones() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-50">
-                    {reservasZona.filter(rz => `${rz.zona?.nombre} ${rz.tipo?.nombre} ${rz.persona?.nombre} ${rz.placa}`.toLowerCase().includes(searchTerm.toLowerCase())).map(rz => {
+                    {reservasZona
+                      .filter(rz => rz.id_estado !== 5) // Excluir "En Espera"; esas van a Aprobaciones
+                      .filter(rz => `${rz.zona?.nombre} ${rz.tipo?.nombre} ${rz.persona?.nombre} ${rz.placa}`.toLowerCase().includes(searchTerm.toLowerCase()))
+                      .map(rz => {
                       const nombreEstado = rz.estado?.nombre;
+                      const isTerminal = TERMINAL_STATES.includes(nombreEstado);
                       const isActive = nombreEstado === 'Activa' || rz.id_estado === 1;
                       
                       // Cálculo de días
@@ -919,7 +1060,13 @@ export default function Reservaciones() {
                       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
                       return (
-                        <tr key={rz.id_reserva_zona} className={`transition-all text-sm ${isActive ? 'hover:bg-gray-50/50' : 'bg-gray-50/30 opacity-60 grayscale-[0.4]'}`}>
+                        <tr key={rz.id_reserva_zona} className={`transition-all text-sm ${
+                          isTerminal 
+                            ? 'bg-gray-50/50 opacity-60 grayscale-[0.5]'
+                            : isActive 
+                              ? 'hover:bg-gray-50/50' 
+                              : 'bg-orange-50/20'
+                        }`}>
                           <td className="px-6 py-4 font-bold text-blue-600 uppercase text-[10px]">Por Zona</td>
                           <td className="px-6 py-4">
                             <div className="flex flex-col">
@@ -937,13 +1084,17 @@ export default function Reservaciones() {
                              <span className="bg-amber-50 text-amber-700 px-2 py-1 rounded-md font-bold text-xs">{diffDays}d</span>
                           </td>
                           <td className="px-6 py-4">
-                             <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${isActive ? 'bg-green-100 text-green-800' : rz.id_estado === 5 ? 'bg-orange-100 text-orange-800 animate-pulse' : 'bg-blue-100 text-blue-800'}`}>
+                             <span className={`px-3 py-1 text-[10px] font-bold uppercase rounded-full ${
+                               isActive ? 'bg-green-100 text-green-800' 
+                               : isTerminal ? 'bg-gray-100 text-gray-600'
+                               : 'bg-orange-100 text-orange-800'
+                             }`}>
                                 {nombreEstado || 'Activa'}
                             </span>
                           </td>
                           <td className="px-6 py-4">
-                            {TERMINAL_STATES.includes(nombreEstado) ? (
-                                <div className="text-gray-400 italic text-[10px] flex justify-end items-center gap-1 font-bold"><FaLock size={10} /> {nombreEstado.toUpperCase()}</div>
+                            {isTerminal ? (
+                                <div className="text-gray-400 italic text-[10px] flex justify-end items-center gap-1 font-bold"><FaLock size={10} /> {nombreEstado?.toUpperCase()}</div>
                             ) : changingStatusFor === rz.id_reserva_zona && changingStatusType === 'zona' ? (
                                 <div className="flex items-center justify-end gap-1 animate-fadeIn">
                                     <select 
@@ -1306,6 +1457,7 @@ export default function Reservaciones() {
                                     className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none"
                                     value={formData.Fecha_Hora_Fin}
                                     min={minDateFin}
+                                    max={getMaxFinParaDia(formData.Fecha_Hora_Inicio || formData.Fecha_Hora_Fin)}
                                     onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})}
                                     required
                                 />

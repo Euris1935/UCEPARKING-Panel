@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { playBeep } from '../utils/audio';
 import { useOrg } from '../contexts/OrgContext';
-import { FaBell } from 'react-icons/fa';
+import { FaBell, FaClock } from 'react-icons/fa';
 import BarraLateral from './barraLateral';
 import ScheduleGuard from './ScheduleGuard';
 
@@ -17,6 +17,8 @@ export default function Layout({ children }) {
   const prevReservadas = useRef(0);
   const prevAsignadas = useRef(0);
   const firstLoad = useRef(true);
+  const [alertaEstanciaLarga, setAlertaEstanciaLarga] = useState([]);
+  const estanciaAlertaEnviada = useRef(false);
 
   useEffect(() => {
     loadMonitorData();
@@ -25,14 +27,10 @@ export default function Layout({ children }) {
       .channel('global_monitor')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'plaza' }, (payload) => {
           loadMonitorData();
-          // Disparar sonido si la plaza estaba LIBRE (o null) y ahora NO lo está
-          const idLibre = 1; // Fallback común, pero se ajusta dinámicamente si es posible
+          const idLibre = 1;
           const eraLibre = !payload.old.id_estado || payload.old.id_estado === idLibre;
           const ahoraNoEsLibre = payload.new.id_estado && payload.new.id_estado !== idLibre;
-          
-          if (eraLibre && ahoraNoEsLibre) {
-              playBeep();
-          }
+          if (eraLibre && ahoraNoEsLibre) playBeep();
       })
       .subscribe();
 
@@ -81,6 +79,48 @@ export default function Layout({ children }) {
     }
   };
 
+  // ── Monitor de Estancia Larga (>16h) ──
+  const checkEstanciaLarga = async () => {
+    if (!orgId) return;
+    try {
+      const hace16h = new Date(Date.now() - 16 * 60 * 60 * 1000).toISOString();
+      const { data } = await supabase
+        .from('acceso')
+        .select('id_registro, entrada_at, id_plaza, vehiculo:id_vehiculo(placa), plaza:id_plaza(numero_plaza)')
+        .eq('organizacion_id', orgId)
+        .is('salida_at', null)
+        .lt('entrada_at', hace16h);
+
+      if (data && data.length > 0) {
+        setAlertaEstanciaLarga(data);
+        if (!estanciaAlertaEnviada.current) {
+          estanciaAlertaEnviada.current = true;
+          const placas = data.map(a => a.vehiculo?.placa || 'Desconocida').join(', ');
+          supabase.from('notificacion').insert([{
+            contenido: `ALERTA: ${data.length} vehículo(s) con más de 16h en el parqueo: ${placas}`,
+            leida: false,
+            organizacion_id: orgId
+          }]).then(({ error }) => { if (error) console.warn('Error notif estancia:', error.message); });
+        }
+      } else {
+        setAlertaEstanciaLarga([]);
+        estanciaAlertaEnviada.current = false;
+      }
+    } catch (err) {
+      console.error('Error checkEstanciaLarga:', err.message);
+    }
+  };
+
+  useEffect(() => {
+    if (orgId) {
+      checkEstanciaLarga();
+      const interval = setInterval(checkEstanciaLarga, 5 * 60 * 1000); // cada 5 min
+      return () => clearInterval(interval);
+    }
+  }, [orgId]);
+
+
+
   // Efecto reactivo para actualizar referencias
   useEffect(() => {
     prevOcupadas.current = stats.ocupadas;
@@ -117,7 +157,27 @@ export default function Layout({ children }) {
       <BarraLateral />
       
       <main className="ml-64 flex-1 p-8 overflow-y-auto relative">
-        {/* Banner de Capacidad Global */}
+        {/* Banner de Estancia Larga (azul) */}
+        {alertaEstanciaLarga.length > 0 && (
+          <div className="mb-4 flex items-start gap-4 bg-blue-600 text-white px-5 py-3 rounded-xl shadow-lg sticky top-0 z-50">
+            <FaClock className="text-2xl shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-bold text-sm">ALERTA DE ESTANCIA LARGA — {alertaEstanciaLarga.length} vehículo(s) con más de 16 horas</p>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {alertaEstanciaLarga.map(a => (
+                  <span key={a.id_registro} className="bg-white/20 text-white text-[10px] font-black px-2 py-0.5 rounded-lg">
+                    Plaza {a.plaza?.numero_plaza || a.id_plaza} — {a.vehiculo?.placa || 'Sin placa'}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <button onClick={() => setAlertaEstanciaLarga([])} className="text-white/70 hover:text-white text-lg font-bold px-2 shrink-0">✕</button>
+          </div>
+        )}
+
+
+
+        {/* Banner de Capacidad Global (rojo) */}
         {alertaBanner && (
           <div className="mb-6 flex items-center gap-4 bg-red-600 text-white px-5 py-3 rounded-xl shadow-lg animate-pulse sticky top-0 z-50">
             <FaBell className="text-2xl shrink-0" />
