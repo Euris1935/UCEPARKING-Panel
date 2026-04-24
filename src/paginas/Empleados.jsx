@@ -12,6 +12,7 @@ import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import { registrarLog, EVENT_TYPES } from '../utils/logging';
 import { ESTADO_USUARIO } from '../lib/constants';
+import SearchableSelect from '../componentes/SearchableSelect';
 
 export default function Empleados() {
   const { tienePermiso } = useRbac();
@@ -24,6 +25,7 @@ export default function Empleados() {
   // ── Datos generales ─────────────────────────────────────────────────────────
   const [empleados,           setEmpleados]           = useState([]);
   const [departamentos,       setDepartamentos]       = useState([]);
+  const [cargos,              setCargos]              = useState([]);
   const [catEstados,          setCatEstados]          = useState([]);
   const [usuariosSinEmpleo,   setUsuariosSinEmpleo]   = useState([]); // usuarios no empleados aún
   const [adminOrgId,          setAdminOrgId]          = useState(null);
@@ -37,7 +39,7 @@ export default function Empleados() {
   // ── Panel lateral ───────────────────────────────────────────────────────────
   const [panelOpen,     setPanelOpen]     = useState(false);
   const [editingEmp,    setEditingEmp]    = useState(null);
-  const [formData,      setFormData]      = useState({ id_persona: '', departamento_id: '' });
+  const [formData,      setFormData]      = useState({ id_persona: '', departamento_id: '', id_cargo: '' });
 
   const isUpdating = !!editingEmp;
 
@@ -56,15 +58,18 @@ export default function Empleados() {
       const [
         { data: deptData },
         { data: estData },
+        { data: cargoData },
         { data: orgData }
       ] = await Promise.all([
         supabase.from('departamento').select('*').eq('organizacion_id', orgId).order('nombre'),
         supabase.from('estado_usuario').select('*').order('id_estado'),
+        supabase.from('cargo').select('*').order('nombre'), // Orden alfabético
         supabase.from('organizacion').select('id_organizacion, nombre').eq('id_organizacion', orgId).single()
       ]);
 
       setDepartamentos(deptData || []);
       setCatEstados(estData || []);
+      setCargos(cargoData || []);
 
       if (orgData) {
         setAdminOrgId(orgData.id_organizacion);
@@ -83,26 +88,38 @@ export default function Empleados() {
   // ── El log usa `registrarLog` global ──
 
   const cargarEmpleados = async (deptList) => {
-    const { data: emps } = await supabase.from('empleado').select('*, estado:id_estado(nombre)').eq('organizacion_id', orgId).order('id_empleado');
+    const { data: emps } = await supabase
+      .from('empleado')
+      .select(`
+        *, 
+        estado:id_estado(nombre),
+        cargo:id_cargo(nombre, nivel_privilegio),
+        persona:id_persona(nombre, apellido, email, id_tipo_persona, tipo_persona(nombre))
+      `)
+      .eq('organizacion_id', orgId)
+      .order('id_empleado');
 
     const { data: orgUsers, error: rpcErr } = await supabase.rpc('get_usuarios_org');
     if (rpcErr) console.warn('get_usuarios_org error:', rpcErr.message);
     const todosLosUsuarios = orgUsers || [];
 
     const lista = (emps || []).map(emp => {
-      const uRow  = todosLosUsuarios.find(u => u.id_persona === emp.id_persona);
       const depto = deptList.find(d => d.id_departamento === emp.departamento_id);
       return {
         id_empleado:     emp.id_empleado,
         persona_id:      emp.id_persona,
         departamento_id: emp.departamento_id,
+        id_cargo:        emp.id_cargo,
         organizacion_id: emp.organizacion_id,
         id_estado:       emp.id_estado,
         nombre_estado:   emp.estado?.nombre || 'Desconocido',
-        nombre:          uRow?.nombre   || 'Sin Nombre',
-        apellido:        uRow?.apellido || '',
-        email:           uRow?.email    || '',
+        nombre:          emp.persona?.nombre   || 'Sin Nombre',
+        apellido:        emp.persona?.apellido || '',
+        email:           emp.persona?.email    || '',
         nombre_depto:    depto?.nombre || 'Sin Depto',
+        nombre_cargo:    emp.cargo?.nombre || 'Sin Cargo',
+        nivel_cargo:     emp.cargo?.nivel_privilegio || 1,
+        nombre_tipo:     emp.persona?.tipo_persona?.nombre || 'N/A'
       };
     }).sort((a,b) => {
       const na = `${a.nombre} ${a.apellido}`.toLowerCase();
@@ -114,10 +131,13 @@ export default function Empleados() {
     const empPersonaIds = new Set((emps || []).map(e => e.id_persona));
     const disponibles = todosLosUsuarios
       .filter(u => u.id_persona && !empPersonaIds.has(u.id_persona))
+      // Solo permitir empleados que sean Docentes (2) o Administrativos (3)
+      .filter(u => [2, 3].includes(u.id_tipo_persona))
       .map(u => ({
+        id_persona:     u.id_persona,
+        nombreCompleto: `${u.nombre} ${u.apellido}`,
         email:          u.email || '',
       }))
-      .filter(u => u.nombreCompleto)
       .sort((a,b) => a.nombreCompleto.localeCompare(b.nombreCompleto));
     setUsuariosSinEmpleo(disponibles);
   };
@@ -125,7 +145,7 @@ export default function Empleados() {
   // ── Abrir panel para crear ──
   const abrirCrear = () => {
     setEditingEmp(null);
-    setFormData({ id_persona: '', departamento_id: '' });
+    setFormData({ id_persona: '', departamento_id: '', id_cargo: '' });
     setPanelOpen(true);
   };
 
@@ -135,6 +155,7 @@ export default function Empleados() {
     setFormData({
       id_persona:      emp.persona_id,
       departamento_id: emp.departamento_id || '',
+      id_cargo:        emp.id_cargo || '',
     });
     setPanelOpen(true);
   };
@@ -148,10 +169,13 @@ export default function Empleados() {
   // ── Guardar ─────────────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const { id_persona, departamento_id } = formData;
+    const { id_persona, departamento_id, id_cargo } = formData;
 
     if (!departamento_id) {
       return Swal.fire('Atención', 'Selecciona un departamento.', 'warning');
+    }
+    if (!id_cargo) {
+      return Swal.fire('Atención', 'Selecciona un cargo.', 'warning');
     }
     if (!isUpdating && !id_persona) {
       return Swal.fire('Atención', 'Selecciona un usuario del sistema.', 'warning');
@@ -166,6 +190,7 @@ export default function Empleados() {
 
       const payload = {
         departamento_id: parseInt(departamento_id),
+        id_cargo: parseInt(id_cargo),
         organizacion_id: orgId,
       };
 
@@ -328,7 +353,7 @@ export default function Empleados() {
                   <thead className="bg-gray-50 text-sm font-bold text-gray-500 uppercase">
                     <tr>
                       <th className="px-5 py-3 text-left">Empleado</th>
-                      <th className="px-5 py-3 text-left">Contacto</th>
+                      <th className="px-5 py-3 text-left">Cargo / Nivel</th>
                       <th className="px-5 py-3 text-left">Departamento</th>
                       <th className="px-5 py-3 text-center">Estado</th>
                       <th className="px-5 py-3 text-center">Acciones</th>
@@ -347,13 +372,20 @@ export default function Empleados() {
                               {emp.nombre.charAt(0)}{emp.apellido.charAt(0)}
                             </div>
                             <div>
-                              <p className="font-bold text-gray-900 text-base">{emp.nombre} {emp.apellido}</p>
+                              <p className="font-bold text-gray-900 text-sm leading-tight">{emp.nombre} {emp.apellido}</p>
+                              <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-black uppercase">{emp.nombre_tipo}</span>
                             </div>
                           </div>
                         </td>
-                        <td className="px-5 py-4 text-gray-500 text-sm">
+                        <td className="px-5 py-4">
                           <div className="flex flex-col gap-0.5">
-                            <span>{emp.email || '—'}</span>
+                            <p className="text-sm font-bold text-gray-700">{emp.nombre_cargo}</p>
+                            <div className="flex items-center gap-1">
+                                {[...Array(5)].map((_, i) => (
+                                    <span key={i} className={`text-[10px] ${i < Math.ceil(emp.nivel_cargo / 2) ? 'text-amber-500' : 'text-gray-200'}`}>★</span>
+                                ))}
+                                <span className="text-[10px] font-bold text-gray-400 ml-1">Nv.{emp.nivel_cargo}</span>
+                            </div>
                           </div>
                         </td>
                         <td className="px-5 py-4 text-gray-600 text-sm">
@@ -461,19 +493,15 @@ export default function Empleados() {
                         Todos los usuarios ya tienen ficha de empleado, o los datos no cargaron. Verifica las políticas RLS en Supabase.
                       </p>
                     ) : (
-                      <select
-                        className="w-full border-2 border-purple-200 focus:border-purple-500 rounded-xl p-2.5 text-sm bg-white transition"
+                      <SearchableSelect
+                        options={usuariosSinEmpleo.map(u => ({
+                          value: u.id_persona,
+                          label: `${u.nombreCompleto}${u.email ? ` (${u.email})` : ''}`
+                        }))}
                         value={formData.id_persona}
-                        onChange={e => setFormData(f => ({ ...f, id_persona: e.target.value }))}
-                        required
-                      >
-                        <option value="">— Seleccionar usuario —</option>
-                        {usuariosSinEmpleo.map(u => (
-                          <option key={u.id_persona} value={u.id_persona}>
-                            {u.nombreCompleto}{u.email ? ` (${u.email})` : ''}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={val => setFormData(f => ({ ...f, id_persona: val }))}
+                        placeholder="Buscar usuario..."
+                      />
                     )}
                     <p className="text-[10px] text-gray-400 mt-1">
                       Solo se muestran usuarios que aún no están registrados como empleados.
@@ -494,24 +522,33 @@ export default function Empleados() {
 
                 <hr className="border-dashed border-purple-100" />
 
-                {/* ── Departamento ── */}
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">
-                    🏢 Departamento *
-                  </label>
-                  <select
-                    className="w-full border-2 border-gray-200 focus:border-purple-400 rounded-xl p-2.5 text-sm bg-white transition"
-                    value={formData.departamento_id}
-                    onChange={e => setFormData(f => ({ ...f, departamento_id: e.target.value }))}
-                    required
-                  >
-                    <option value="">— Seleccionar departamento —</option>
-                    {departamentos.map(d => (
-                      <option key={d.id_departamento} value={d.id_departamento}>
-                        {d.nombre}
-                      </option>
-                    ))}
-                  </select>
+                {/* ── Departamento y Cargo ── */}
+                <div className="grid grid-cols-1 gap-4">
+                  {/* Departamento */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1.5">
+                      🏢 Departamento *
+                    </label>
+                    <SearchableSelect
+                      options={departamentos.map(d => ({ value: d.id_departamento.toString(), label: d.nombre }))}
+                      value={formData.departamento_id.toString()}
+                      onChange={val => setFormData(f => ({ ...f, departamento_id: val }))}
+                      placeholder="Buscar departamento..."
+                    />
+                  </div>
+
+                  {/* Cargo */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1.5">
+                      🎖️ Cargo Universitario *
+                    </label>
+                    <SearchableSelect
+                      options={cargos.map(c => ({ value: c.id_cargo.toString(), label: `${c.nombre} (Nivel ${c.nivel_privilegio})` }))}
+                      value={formData.id_cargo.toString()}
+                      onChange={val => setFormData(f => ({ ...f, id_cargo: val }))}
+                      placeholder="Buscar cargo..."
+                    />
+                  </div>
                 </div>
 
                 {/* ── Organización (solo lectura / auto) ── */}

@@ -100,43 +100,66 @@ export default function Dashboard() {
       ]);
 
       const plazasFiltradas = (rawPlazas || []).filter(p => p.zona?.estado_zona?.nombre !== 'Inactiva');
-      const mapaOcupacion = {};
+      
+      // 1. Mapa de Ocupación Física (Solo vehículos reales)
+      const mapaVehiculosFisicos = new Set();
+      (accesosActivosData || []).forEach(acc => { if (acc.id_plaza) mapaVehiculosFisicos.add(acc.id_plaza); });
+      (ticketsActivosData || []).forEach(tk => { if (tk.id_plaza_asignada) mapaVehiculosFisicos.add(tk.id_plaza_asignada); });
 
-      (accesosActivosData || []).forEach(acc => { if (acc.id_plaza) mapaOcupacion[acc.id_plaza] = { type: 'acceso' }; });
-      (reservasActivasData || []).forEach(res => { if (res.id_plaza) mapaOcupacion[res.id_plaza] = { type: 'reserva' }; });
+      // 2. Mapas de Compromiso Separados
+      const mapaReservas = new Set();
+      const mapaAsignaciones = new Set();
+      
+      (reservasActivasData || []).forEach(res => { if (res.id_plaza) mapaReservas.add(res.id_plaza); });
+      (asigData || []).forEach(asig => { if (asig.id_plaza) mapaAsignaciones.add(asig.id_plaza); });
+      
       if (reservasZonasActivas?.length > 0) {
         reservasZonasActivas.forEach(rz => {
-          plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => {
-             if (!mapaOcupacion[p.id_plaza]) mapaOcupacion[p.id_plaza] = { type: 'reserva_zona' };
-          });
+          plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => mapaReservas.add(p.id_plaza));
         });
       }
-      (asigData || []).forEach(asig => { if (asig.id_plaza) mapaOcupacion[asig.id_plaza] = { type: 'asignacion' }; });
-      (ticketsActivosData || []).forEach(tk => { if (tk.id_plaza_asignada) mapaOcupacion[tk.id_plaza_asignada] = { type: 'ticket' }; });
 
+      // 3. Preparar plazas enriquecidas para el render (con Nombre_Final para compatibilidad)
       const plazasProcesadas = plazasFiltradas.map(p => {
-        const estadoObj = (estadosPlaza || []).find(e => e.id_estado === p.id_estado);
-        let finalNombre = estadoObj ? estadoObj.nombre.toUpperCase() : 'LIBRE';
-        const info = mapaOcupacion[p.id_plaza];
-        if (info && finalNombre === 'LIBRE') {
-          if (info.type === 'acceso' || info.type === 'ticket') finalNombre = 'OCUPADA';
-          else if (info.type === 'reserva' || info.type === 'reserva_zona') finalNombre = 'RESERVADA';
-          else if (info.type === 'asignacion') finalNombre = 'ASIGNADA';
-        }
+        let finalNombre = 'LIBRE';
+        if (mapaVehiculosFisicos.has(p.id_plaza)) finalNombre = 'OCUPADA';
+        else if (mapaReservas.has(p.id_plaza) || p.id_estado === 3) finalNombre = 'RESERVADA';
+        else if (mapaAsignaciones.has(p.id_plaza) || p.id_estado === 5) finalNombre = 'ASIGNADA';
+        else if ([4, 6].includes(p.id_estado)) finalNombre = 'MANTENIMIENTO';
+        
         return { ...p, Nombre_Final: finalNombre };
       });
 
-      const libres = plazasProcesadas.filter(p => p.Nombre_Final === 'LIBRE' && !mapaOcupacion[p.id_plaza]).length;
-      const asignadas = plazasProcesadas.filter(p => p.Nombre_Final.startsWith('ASIGNAD') || mapaOcupacion[p.id_plaza]?.type === 'asignacion').length;
-      const ocupadas = plazasProcesadas.filter(p => p.Nombre_Final === 'OCUPADA' && mapaOcupacion[p.id_plaza]?.type !== 'asignacion').length;
-      const reservadas = plazasProcesadas.filter(p => (p.Nombre_Final === 'RESERVADA' || p.Nombre_Final === 'RESERVADO') && mapaOcupacion[p.id_plaza]?.type !== 'asignacion').length;
-      const mantenimiento = plazasProcesadas.filter(p => ['MANTENIMIENTO', 'FUERA DE SERVICIO', 'EN MANTENIMIENTO'].includes(p.Nombre_Final)).length;
+      // 4. Conteo de estadísticas (No excluyentes para mantener visibilidad)
+      const ocupadasNum = plazasFiltradas.filter(p => mapaVehiculosFisicos.has(p.id_plaza)).length;
+      const reservadasNum = plazasFiltradas.filter(p => p.id_estado === 3 || mapaReservas.has(p.id_plaza)).length;
+      const asignadasNum = plazasFiltradas.filter(p => p.id_estado === 5 || mapaAsignaciones.has(p.id_plaza)).length;
+      const mantenimientoNum = plazasFiltradas.filter(p => [4, 6].includes(p.id_estado)).length;
 
-      const totalPersonas = ocupadas + asignadas + reservadas;
+      // Libres reales: Estado LIBRE en DB y SIN vehículo y SIN reserva y SIN asignación
+      const libresNum = plazasFiltradas.filter(p => 
+        p.id_estado === 1 && 
+        !mapaVehiculosFisicos.has(p.id_plaza) && 
+        !mapaReservas.has(p.id_plaza) && 
+        !mapaAsignaciones.has(p.id_plaza)
+      ).length;
+
+      // "En Uso" total: Unión de plazas con compromiso u ocupación física
+      const totalPersonas = plazasFiltradas.filter(p => 
+        mapaVehiculosFisicos.has(p.id_plaza) || 
+        mapaReservas.has(p.id_plaza) || 
+        mapaAsignaciones.has(p.id_plaza) ||
+        p.id_estado === 3 || 
+        p.id_estado === 5
+      ).length;
 
       setStats({
-        totalPlazas: plazasProcesadas.length,
-        ocupadas, reservadas, libres, asignadas, mantenimiento,
+        totalPlazas: plazasFiltradas.length,
+        ocupadas: ocupadasNum, 
+        reservadas: reservadasNum, 
+        libres: libresNum, 
+        asignadas: asignadasNum, 
+        mantenimiento: mantenimientoNum,
         personasActivas: totalPersonas,
         ticketsHoy: ticketsHoyData?.length || 0,
         accesosHoy: accesosHoyData?.length || 0,
@@ -148,7 +171,7 @@ export default function Dashboard() {
         totalEmpleados: empleadosCount || 0,
         usuariosMoviles: usuariosMovilesCount || 0,
         salidasHoy: salidasHoyCount || 0,
-        _plazasRaw: plazasProcesadas // Para cálculos internos en el render
+        _plazasRaw: plazasProcesadas // Ahora tiene Nombre_Final para el desglose por pisos
       });
 
       setHistoryAccesos(chartAccesos || []);

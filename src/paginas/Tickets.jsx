@@ -217,25 +217,45 @@ export default function Tickets() {
         _horaSalida:   (stMap[t.id_estado]?.toLowerCase() === 'cerrado' || stMap[t.id_estado]?.toLowerCase() === 'vencido') ? t.fecha_hora_vencimiento : null
       }));
 
-      // Plazas libres para el formulario
-      const { data: rawPlazas } = await supabase
-        .from('plaza')
-        .select('*, zona:id_zona(estado_zona(nombre))')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', idEstLibrePlaza)
-        .order('numero_plaza');
+      // Carga dinámica de ocupación para filtrar el selector
+      const ahoraISO = new Date().toISOString();
+      const [
+        { data: rawPlazas },
+        { data: asigsActivas },
+        { data: tksActivos },
+        { data: accActivos },
+        { data: resActivas },
+        { data: resZonas }
+      ] = await Promise.all([
+        supabase.from('plaza').select('*, zona:id_zona(nombre, estado_zona(nombre))').eq('organizacion_id', orgId),
+        supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
+        supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO),
+        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO)
+      ]);
 
-      const { data: asigsActivas } = await supabase
-        .from('asignacion')
-        .select('id_plaza')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', 1);
+      if (!rawPlazas) return;
+
+      const plazasOcupadasDinamicas = new Set();
+      (tksActivos || []).forEach(t => { if (t.id_plaza_asignada) plazasOcupadasDinamicas.add(t.id_plaza_asignada); });
+      (accActivos || []).forEach(a => { if (a.id_plaza) plazasOcupadasDinamicas.add(a.id_plaza); });
+      (resActivas || []).forEach(r => { if (r.id_plaza) plazasOcupadasDinamicas.add(r.id_plaza); });
+      if (resZonas?.length > 0) {
+        resZonas.forEach(rz => {
+          rawPlazas.filter(p => p.id_zona === rz.id_zona).forEach(p => plazasOcupadasDinamicas.add(p.id_plaza));
+        });
+      }
 
       const plazasAsignadasIds = new Set((asigsActivas || []).map(a => a.id_plaza));
 
-      const plazas = (rawPlazas || []).filter(p => {
-        const est = p.zona?.estado_zona?.nombre || 'Activa';
-        return est === 'Activa' && !plazasAsignadasIds.has(p.id_plaza);
+      const plazasFiltradas = (rawPlazas || []).filter(p => {
+        const estZona = p.zona?.estado_zona?.nombre || 'Activa';
+        const esLibreDB = p.id_estado === idEstLibrePlaza;
+        const noEstaOcupadaDinamica = !plazasOcupadasDinamicas.has(p.id_plaza);
+        const noEsAsignada = !plazasAsignadasIds.has(p.id_plaza);
+        
+        return estZona === 'Activa' && esLibreDB && noEstaOcupadaDinamica && noEsAsignada;
       });
 
       // Obtener currentPersonaId
@@ -245,7 +265,7 @@ export default function Tickets() {
         setCurrentPersonaId(ud?.id_persona);
       }
 
-      setPlazasLibres(plazas || []);
+      setPlazasLibres(plazasFiltradas || []);
       setTickets(ticketsEnriquecidos);
       setTicketsActivos(ticketsEnriquecidos.filter(t => t._statusName?.toLowerCase() === 'activo').length);
       setListaMarcas(catMarcas || []);
@@ -668,12 +688,23 @@ export default function Tickets() {
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Plaza Asignada *</label>
                 <SearchableSelect
-                  options={plazasLibres.map(p => ({ value: p.id_plaza, label: p.numero_plaza }))}
+                  options={(() => {
+                    const options = [];
+                    const zonas = [...new Set(plazasLibres.map(p => p.zona?.nombre))].sort();
+                    zonas.forEach(zName => {
+                      options.push({ label: zName || 'Sin Zona', isGroup: true });
+                      plazasLibres
+                        .filter(p => p.zona?.nombre === zName)
+                        .forEach(p => options.push({ value: p.id_plaza, label: p.numero_plaza }));
+                    });
+                    return options;
+                  })()}
                   value={visitanteForm.id_plaza}
                   onChange={val => setVisitanteForm(f => ({ ...f, id_plaza: val }))}
                   placeholder="— Seleccionar plaza libre —"
                   focusRingClass="focus:ring-green-500"
                   selectedItemClass="bg-green-100 text-green-800"
+                  groupLabelClass="text-green-600 bg-green-50"
                 />
                 {plazasLibres.length === 0 && (
                   <p className="text-red-500 text-xs mt-1">⚠️ No hay plazas libres disponibles.</p>

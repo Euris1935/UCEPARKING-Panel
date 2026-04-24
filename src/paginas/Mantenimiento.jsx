@@ -41,7 +41,7 @@ export default function Mantenimiento() {
         id_empleado: '',
         id_tipo: '',
         id_estado: '',
-        fecha_inicio: new Date().toISOString().split('T')[0],
+        fecha_inicio: new Date().toLocaleDateString('sv-SE'),
         fecha_fin: ''
     });
 
@@ -131,15 +131,19 @@ export default function Mantenimiento() {
                 return na.localeCompare(nb);
             });
             setAllDispositivos(sortedDispositivos);
-            setDispositivos(sortedDispositivos.filter(d => d.id_estado === 1));
+            // Permitir todos los dispositivos, pero mostrar su estado en el label para claridad
+            setDispositivos(sortedDispositivos.map(d => ({
+                ...d,
+                nombre_label: `${d.tipo?.nombre || 'Equipo'} - ${d.modelo?.nombre || ''} (${d.plaza?.numero_plaza ? 'Plaza ' + d.plaza.numero_plaza : 'Sin Plaza'})`
+            })));
 
             const sortedPlazas = (fullPlazas || []).sort((a,b) => (a.numero_plaza || '').localeCompare(b.numero_plaza || '', undefined, {numeric: true}));
             setAllPlazas(sortedPlazas);
-            setPlazasList(sortedPlazas.filter(p => p.estado?.nombre === 'Libre' && (fullZonas || []).some(z => z.id_zona === p.id_zona && z.estado?.nombre === 'Activa')));
+            setPlazasList(sortedPlazas);
 
             const sortedZonas = (fullZonas || []).sort((a,b) => (a.nombre || '').localeCompare(b.nombre || ''));
             setAllZonas(sortedZonas);
-            setZonas(sortedZonas.filter(z => z.estado?.nombre === 'Activa'));
+            setZonas(sortedZonas);
             
             setTiposMantenimiento(tipoData || []);
             setEstadosMantenimiento(estData || []);
@@ -179,8 +183,8 @@ export default function Mantenimiento() {
             id_empleado: item.id_empleado || '',
             id_tipo: item.id_tipo || '',
             id_estado: item.id_estado || '',
-            fecha_inicio: item.fecha_inicio ? item.fecha_inicio.split('T')[0] : '',
-            fecha_fin: item.fecha_fin ? item.fecha_fin.split('T')[0] : ''
+            fecha_inicio: item.fecha_inicio ? (item.fecha_inicio.includes('T') ? item.fecha_inicio.split('T')[0] : item.fecha_inicio) : '',
+            fecha_fin: item.fecha_fin ? (item.fecha_fin.includes('T') ? item.fecha_fin.split('T')[0] : item.fecha_fin) : ''
         });
         setShowModal(true);
     };
@@ -307,7 +311,7 @@ export default function Mantenimiento() {
             id_empleado: '',
             id_tipo: '',
             id_estado: '',
-            fecha_inicio: new Date().toISOString().split('T')[0],
+            fecha_inicio: new Date().toLocaleDateString('sv-SE'),
             fecha_fin: ''
         });
     };
@@ -497,12 +501,21 @@ export default function Mantenimiento() {
                                                         <div className="flex flex-col gap-1">
                                                             <div className="flex items-center gap-1.5 text-gray-700 font-bold">
                                                                 <FaCalendarAlt className="text-blue-500" size={10} />
-                                                                {new Date(item.fecha_inicio).toLocaleDateString()}
+                                                                {(() => {
+                                                                    if (!item.fecha_inicio) return 'N/A';
+                                                                    const dateStr = item.fecha_inicio.split('T')[0];
+                                                                    const [y, m, d] = dateStr.split('-');
+                                                                    return `${d}/${m}/${y}`;
+                                                                })()}
                                                             </div>
                                                             {item.fecha_fin && (
                                                                 <div className="flex items-center gap-1.5 text-[10px] text-green-600 italic">
                                                                     <FaCheckCircle size={10} />
-                                                                    Fin: {new Date(item.fecha_fin).toLocaleDateString()}
+                                                                    Fin: {(() => {
+                                                                        const dateStr = item.fecha_fin.split('T')[0];
+                                                                        const [y, m, d] = dateStr.split('-');
+                                                                        return `${d}/${m}/${y}`;
+                                                                    })()}
                                                                 </div>
                                                             )}
                                                         </div>
@@ -640,16 +653,29 @@ export default function Mantenimiento() {
                                 <div>
                                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Plaza de Parqueo *</label>
                                     <SearchableSelect
-                                        options={(editingId ? allPlazas : plazasList).map(p => ({
-                                            value: p.id_plaza,
-                                            label: `Plaza: ${p.numero_plaza} (${allZonas.find(z => z.id_zona === p.id_zona)?.nombre || 'N/A'})`
-                                        }))}
+                                        options={(() => {
+                                            const options = [];
+                                            const listToMap = editingId ? allPlazas : plazasList;
+                                            const zonasNombres = [...new Set(listToMap.map(p => p.zona?.nombre))].sort();
+                                            
+                                            zonasNombres.forEach(zName => {
+                                                options.push({ label: zName || 'Sin Zona', isGroup: true });
+                                                listToMap
+                                                    .filter(p => p.zona?.nombre === zName)
+                                                    .forEach(p => options.push({ 
+                                                        value: p.id_plaza, 
+                                                        label: `Plaza: ${p.numero_plaza}`
+                                                    }));
+                                            });
+                                            return options;
+                                        })()}
                                         value={formData.id_plaza}
                                         onChange={val => setFormData({ ...formData, id_plaza: val })}
                                         disabled={!!editingId}
                                         placeholder="— Seleccionar Plaza —"
                                         focusRingClass="focus:ring-blue-500"
                                         selectedItemClass="bg-blue-100 text-blue-800"
+                                        groupLabelClass="text-blue-600 bg-blue-50"
                                         className="bg-gray-50/50"
                                     />
                                 </div>

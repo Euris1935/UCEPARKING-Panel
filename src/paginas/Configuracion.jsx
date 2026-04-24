@@ -5,10 +5,9 @@ import Swal from 'sweetalert2';
 import { 
     FaClock, FaSave, FaShieldAlt, FaLock, FaBell, FaUser,
     FaEnvelope, FaIdBadge, FaKey, FaCheckCircle, FaCog,
-    FaEye, FaEyeSlash, FaVolumeUp
+    FaEye, FaEyeSlash
 } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
-import { playBeep } from '../utils/audio';
 import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 
 export default function Configuracion() {
@@ -21,10 +20,8 @@ export default function Configuracion() {
 
     // --- Tab: Sistema ---
     const [settings, setSettings] = useState({
-        notificacionesSonoras: true,
         alertaCapacidad: 90,
         tiempoMaximoReserva: 4,
-        maxPlazasPorGrupo: 3,
     });
 
     useEffect(() => {
@@ -46,10 +43,8 @@ export default function Configuracion() {
                 const parsed = JSON.parse(saved);
                 setSettings(prev => ({
                     ...prev,
-                    notificacionesSonoras: parsed.notificacionesSonoras ?? true,
                     alertaCapacidad: parsed.alertaCapacidad ?? 90,
                     tiempoMaximoReserva: parsed.tiempoMaximoReserva ?? 4,
-                    maxPlazasPorGrupo: parsed.maxPlazasPorGrupo ?? 3
                 }));
             } catch (e) {
                 console.error("Error parsing settings:", e);
@@ -332,41 +327,10 @@ export default function Configuracion() {
                             <h3 className="text-xl font-bold text-gray-800">Reglas del Parqueo</h3>
                         </div>
 
-                        {/* Sonidos */}
-                        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border">
-                            <div className="flex items-center gap-3">
-                                <FaBell className={settings.notificacionesSonoras ? 'text-blue-500' : 'text-gray-400'} size={18} />
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <p className="font-medium text-gray-800">Alertas Sonoras</p>
-                                        <button 
-                                            onClick={() => playBeep(true)}
-                                            className="text-[10px] bg-white text-blue-600 px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-50 transition flex items-center gap-1 font-bold"
-                                            title="Probar sonido"
-                                        >
-                                            <FaVolumeUp size={10} /> PROBAR
-                                        </button>
-                                    </div>
-                                    <p className="text-xs text-gray-500">Suena un beep cuando una plaza se ocupa</p>
-                                </div>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={settings.notificacionesSonoras}
-                                    onChange={e => {
-                                        const val = e.target.checked;
-                                        setSettings({ ...settings, notificacionesSonoras: val });
-                                        if (val) playBeep(true);
-                                    }}
-                                />
-                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                            </label>
-                        </div>
+
 
                         {/* Tiempo máximo reserva */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">
                                     Tiempo Máximo de Reserva
@@ -378,19 +342,6 @@ export default function Configuracion() {
                                     value={settings.tiempoMaximoReserva}
                                     onChange={e => setSettings({ ...settings, tiempoMaximoReserva: parseInt(e.target.value) || 1 })}
                                     className="w-full border p-2 rounded-lg bg-gray-50 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Límite de Plazas (Grupo)
-                                    <span className="ml-2 text-purple-600 font-bold">{settings.maxPlazasPorGrupo} plazas</span>
-                                </label>
-                                <p className="text-xs text-gray-400 mb-2">Número máximo de plazas por reserva grupal.</p>
-                                <input
-                                    type="number" min="2" max="20"
-                                    value={settings.maxPlazasPorGrupo}
-                                    onChange={e => setSettings({ ...settings, maxPlazasPorGrupo: parseInt(e.target.value) || 2 })}
-                                    className="w-full border p-2 rounded-lg bg-gray-50 focus:ring-purple-500 focus:border-purple-500 outline-none"
                                 />
                             </div>
                         </div>

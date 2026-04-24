@@ -476,7 +476,11 @@ export default function Ocupacion() {
                     )}
 
                     {isOcupada && (
-                      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-[20%] text-5xl md:text-6xl text-red-500 drop-shadow-md z-10 group-hover:scale-105 transition-transform">
+                      <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-[20%] text-5xl md:text-6xl drop-shadow-md z-10 group-hover:scale-105 transition-transform ${
+                        isAsignada ? 'text-purple-600' : 
+                        isReservada ? 'text-yellow-500' : 
+                        'text-red-500'
+                      }`}>
                          <FaCar />
                       </div>
                     )}
@@ -496,7 +500,11 @@ export default function Ocupacion() {
                     <div className="relative z-20 w-full mt-auto mb-1 flex flex-col justify-end min-h-[30px]">
                       {!isForcedState && info && (
                         <div className={`mt-2 text-center text-[10px] md:text-xs uppercase font-bold tracking-tight rounded-[6px] px-1.5 py-0.5 w-[90%] mx-auto shadow-sm border ${
-                          isOcupada ? 'bg-white text-red-600 border-red-200' :
+                          isOcupada ? (
+                            plaza.id_estado === 5 ? 'bg-white text-purple-600 border-purple-200' : 
+                            plaza.id_estado === 3 ? 'bg-white text-yellow-600 border-yellow-200' :
+                            'bg-white text-red-600 border-red-200'
+                          ) :
                           isReservada ? 'bg-white text-yellow-700 border-yellow-200' :
                           'bg-white text-purple-600 border-purple-200'
                         }`}>

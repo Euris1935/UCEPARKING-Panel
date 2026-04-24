@@ -149,15 +149,53 @@ export default function Reservaciones() {
         }));
 
         // 2. Procesar Zonas y Plazas
-        const zonasActivas = (zonas || []).filter(z => (z.estado?.nombre || 'Activa') !== 'Inactiva');
+        const zonasActivas = (zonas || []).filter(z => {
+          const est = z.estado?.nombre || 'Activa';
+          return est !== 'Inactiva' && est !== 'Inactivo';
+        });
         setZonasDisponibles(zonasActivas);
         setTiposReservaZona(tiposRZ || []);
 
         const idsZonasActivas = zonasActivas.map(z => z.id_zona);
         if (idsZonasActivas.length > 0) {
-            const { data: plazas } = await supabase.from('plaza').select('id_plaza, numero_plaza, id_zona').in('id_zona', idsZonasActivas).eq('id_estado', idLibre).order('numero_plaza');
+            // Carga dinámica de ocupación real (tickets, accesos, etc.)
+            const [
+              { data: plazasRaw },
+              { data: tksActivos },
+              { data: accActivos },
+              { data: otherResActivas },
+              { data: otherResZonas }
+            ] = await Promise.all([
+              supabase.from('plaza').select('*').in('id_zona', idsZonasActivas).eq('id_estado', idLibre).order('numero_plaza'),
+              supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
+              supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
+              supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO),
+              supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO)
+            ]);
+
+            const plazasOcupadasDinamicas = new Set();
+            (tksActivos || []).forEach(t => { if (t.id_plaza_asignada) plazasOcupadasDinamicas.add(t.id_plaza_asignada); });
+            (accActivos || []).forEach(a => { if (a.id_plaza) plazasOcupadasDinamicas.add(a.id_plaza); });
+            (otherResActivas || []).forEach(r => { if (r.id_plaza) plazasOcupadasDinamicas.add(r.id_plaza); });
+            
             const asigIds = new Set((asigsActivas || []).map(a => a.id_plaza));
-            setPlazasList((plazas || []).filter(p => !asigIds.has(p.id_plaza)));
+            
+            // Enriquecer y filtrar con inteligencia dinámica
+            const enrichedPlazas = (plazasRaw || []).map(p => {
+              const zonaRel = zonasActivas.find(z => String(z.id_zona) === String(p.id_zona));
+              return { ...p, zona: zonaRel || { nombre: 'Zona Desconocida' } };
+            }).filter(p => {
+              const noAsignada = !asigIds.has(p.id_plaza);
+              const noOcupadaDinamica = !plazasOcupadasDinamicas.has(p.id_plaza);
+              
+              // Bloqueo por reservas de zona (si la plaza pertenece a una zona actualmente reservada)
+              const enZonaReservada = (otherResZonas || []).some(rz => rz.id_zona === p.id_zona);
+              
+              const tieneZonaValida = p.zona && p.zona.nombre !== 'Zona Desconocida';
+              return noAsignada && noOcupadaDinamica && !enZonaReservada && tieneZonaValida;
+            });
+
+            setPlazasList(enrichedPlazas);
         } else {
             setPlazasList([]);
         }
@@ -591,23 +629,28 @@ export default function Reservaciones() {
                 return Swal.fire('Día no laborable', 'El parqueo no labora en el día seleccionado.', 'warning');
             }
         }
+        
+        // --- VALIDACIÓN DE TIEMPO MÁXIMO (Aplica a Plaza y Zona) ---
+        if (formData.Fecha_Hora_Inicio && formData.Fecha_Hora_Fin) {
+            const inicioVal = new Date(formData.Fecha_Hora_Inicio);
+            const finVal = new Date(formData.Fecha_Hora_Fin);
+            const duracionHoras = (finVal - inicioVal) / (1000 * 60 * 60);
+            
+            const cfg = JSON.parse(localStorage.getItem('appSettings') || '{}');
+            const maxHoras = cfg.tiempoMaximoReserva || 4;
+
+            if (duracionHoras > maxHoras) {
+                setLoading(false);
+                return Swal.fire('Duración excedida', `La reserva no puede superar las ${maxHoras} hora(s). Para cambiar esto, ve a configuración.`, 'warning');
+            }
+            if (duracionHoras <= 0) {
+                setLoading(false);
+                return Swal.fire('Fecha inválida', 'La fecha de fin debe ser posterior a la fecha de inicio.', 'error');
+            }
+        }
 
         if (formData.tipo_reserva === 'plaza') {
-            if (formData.Fecha_Hora_Inicio && formData.Fecha_Hora_Fin) {
-                const inicio = new Date(formData.Fecha_Hora_Inicio);
-                const fin = new Date(formData.Fecha_Hora_Fin);
-                const duracionHoras = (fin - inicio) / (1000 * 60 * 60);
-                const cfg = JSON.parse(localStorage.getItem('appSettings') || '{}');
-                const maxHoras = cfg.tiempoMaximoReserva || 4;
-                if (duracionHoras > maxHoras) {
-                    setLoading(false);
-                    return Swal.fire('Duración excedida', `La reserva no puede superar las ${maxHoras} hora(s). Para cambiar esto, ve a configuración.`, 'warning');
-                }
-                if (duracionHoras <= 0) {
-                    setLoading(false);
-                    return Swal.fire('Fecha inválida', 'La fecha de fin debe ser posterior a la fecha de inicio.', 'error');
-                }
-            }
+
 
             const payload = {
                 id_persona: formData.id_persona,
@@ -741,12 +784,7 @@ export default function Reservaciones() {
     const tipo = tipoForzado || (activeTab === 'personas' ? 'plaza' : 'zona');
 
     if (tipo === 'plaza') {
-      const { data: plazaData } = await supabase
-        .from('plaza').select('id_plaza, numero_plaza')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', ESTADO_PLAZA.LIBRE)
-        .order('numero_plaza');
-      setPlazasList(plazaData || []);
+      await loadAllData();
     } else {
       await loadAllData();
     }
@@ -1341,12 +1379,23 @@ export default function Reservaciones() {
                     <div className="mb-4">
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Plaza *</label>
                       <SearchableSelect
-                        options={plazasList.map(p => ({ value: p.id_plaza, label: p.numero_plaza }))}
+                        options={(() => {
+                          const options = [];
+                          const zonas = [...new Set(plazasList.map(p => p.zona?.nombre))].sort();
+                          zonas.forEach(zName => {
+                            options.push({ label: zName || 'Sin Zona', isGroup: true });
+                            plazasList
+                              .filter(p => p.zona?.nombre === zName)
+                              .forEach(p => options.push({ value: p.id_plaza, label: p.numero_plaza }));
+                          });
+                          return options;
+                        })()}
                         value={formData.Id_Plaza}
                         onChange={(val) => setFormData({...formData, Id_Plaza: val})}
                         placeholder="— Seleccionar Plaza —"
                         focusRingClass="focus:ring-blue-500"
                         selectedItemClass="bg-blue-100 text-blue-800"
+                        groupLabelClass="text-blue-600 bg-blue-50"
                         className="bg-gray-50/50 text-sm"
                       />
                     </div>

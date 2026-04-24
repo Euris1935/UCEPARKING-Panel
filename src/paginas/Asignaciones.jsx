@@ -141,7 +141,7 @@ export default function Asignaciones() {
             ] = await Promise.all([
                 supabase.from('asignacion').select('*').eq('organizacion_id', orgId).order('created_at', { ascending: false }),
                 supabase.from('empleado').select('id_empleado, persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId),
-                supabase.from('plaza').select('id_plaza, numero_plaza').eq('organizacion_id', orgId),
+                supabase.from('plaza').select('id_plaza, numero_plaza, zona:id_zona(nombre)').eq('organizacion_id', orgId),
                 supabase.from('estado_asignacion').select('*').order('id_estado')
             ]);
 
@@ -184,7 +184,7 @@ export default function Asignaciones() {
             // 4. Plazas libres (con filtro de zona activa)
             const { data: plazaData } = await supabase
                 .from('plaza')
-                .select('id_plaza, numero_plaza, zona:id_zona(estado_zona:id_estado(nombre))')
+                .select('id_plaza, numero_plaza, zona:id_zona(nombre, estado_zona:id_estado(nombre))')
                 .eq('organizacion_id', orgId)
                 .eq('id_estado', idEstLibrePlaza)
                 .order('numero_plaza');
@@ -224,7 +224,7 @@ export default function Asignaciones() {
         const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
         const { data: plazaData } = await supabase
             .from('plaza')
-            .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
+            .select('id_plaza, numero_plaza, zona:id_zona(nombre, estado_zona(nombre))')
             .eq('id_estado', idEstLibrePlaza)
             .order('numero_plaza');
         
@@ -246,7 +246,7 @@ export default function Asignaciones() {
         const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
         const { data: plazaData } = await supabase
             .from('plaza')
-            .select('id_plaza, numero_plaza, zona:id_zona(estado_zona(nombre))')
+            .select('id_plaza, numero_plaza, zona:id_zona(nombre, estado_zona(nombre))')
             .or(`id_estado.eq.${idEstLibrePlaza},id_plaza.eq.${asig.id_plaza}`)
             .order('numero_plaza');
         
@@ -698,15 +698,26 @@ export default function Asignaciones() {
                                         Plaza {editingAsignacion ? '(Disponibles + Actual)' : 'Disponible'} *
                                     </label>
                                     <SearchableSelect
-                                        options={plazasList.map(p => ({
-                                            value: p.id_plaza,
-                                            label: `${p.numero_plaza}${editingAsignacion && String(p.id_plaza) === String(editingAsignacion.id_plaza) ? ' (actual)' : ''}`
-                                        }))}
+                                        options={(() => {
+                                            const options = [];
+                                            const zonas = [...new Set(plazasList.map(p => p.zona?.nombre))].sort();
+                                            zonas.forEach(zName => {
+                                                options.push({ label: zName || 'Sin Zona', isGroup: true });
+                                                plazasList
+                                                    .filter(p => p.zona?.nombre === zName)
+                                                    .forEach(p => options.push({ 
+                                                        value: p.id_plaza, 
+                                                        label: `${p.numero_plaza}${editingAsignacion && String(p.id_plaza) === String(editingAsignacion.id_plaza) ? ' (actual)' : ''}` 
+                                                    }));
+                                            });
+                                            return options;
+                                        })()}
                                         value={formData.Id_Plaza}
                                         onChange={(val) => setFormData({ ...formData, Id_Plaza: val })}
                                         placeholder="— Seleccionar Plaza —"
                                         focusRingClass="focus:ring-purple-500"
                                         selectedItemClass="bg-purple-100 text-purple-800"
+                                        groupLabelClass="text-purple-600 bg-purple-50"
                                         className="bg-gray-50/50"
                                     />
                                 </div>

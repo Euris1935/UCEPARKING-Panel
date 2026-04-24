@@ -27,10 +27,13 @@ export default function AccesoManual() {
   const [todasPlazas,     setTodasPlazas]     = useState([]);
   const [plazasLibres,    setPlazasLibres]    = useState([]);
   const [accesosActivos,  setAccesosActivos]  = useState([]);
-  const [accesosHistorial,setAccesosHistorial]= useState([]);
+   const [accesosHistorial,setAccesosHistorial]= useState([]);
   const [currentPersonaId,setCurrentPersonaId]= useState(null);
   const [isRefreshing,    setIsRefreshing]    = useState(false);
   const [searchOptions,   setSearchOptions]   = useState([]);
+  const [asignaciones,    setAsignaciones]    = useState([]);
+  const [plazasVivas,     setPlazasVivas]     = useState([]);
+  const [selectedPersonaId, setSelectedPersonaId] = useState(null);
 
   // Formulario Entrada
   const [entradaForm, setEntradaForm] = useState({
@@ -65,25 +68,18 @@ export default function AccesoManual() {
       // 2. Plazas (filtrando zonas inactivas)
       const { data: rawPlazas } = await supabase
         .from('plaza')
-        .select('*, zona:id_zona(estado_zona:id_estado(nombre))')
+        .select('*, zona:id_zona(nombre, estado_zona:id_estado(nombre))')
         .eq('organizacion_id', orgId)
         .order('numero_plaza');
 
-      const plazasVivas = (rawPlazas || []).filter(p => {
+      const plazasVivasData = (rawPlazas || []).filter(p => {
         const est = p.zona?.estado_zona?.nombre || 'Activa';
         return est === 'Activa';
       });
-      setTodasPlazas(plazasVivas);
+      setTodasPlazas(plazasVivasData);
+      setPlazasVivas(plazasVivasData);
 
-      // Plazas libres excluyendo asignadas
-      const { data: asigsActivas } = await supabase
-        .from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1);
-      const plazasAsignadasIds = new Set(asigsActivas?.map(a => a.id_plaza) || []);
-      setPlazasLibres(plazasVivas.filter(p =>
-        p.id_estado === idEstLibrePlaza && !plazasAsignadasIds.has(p.id_plaza)
-      ));
-
-      // 3. Personas de la org via RPC — CAMBIO: sin visitante
+      // 3. Personas de la org via RPC
       const { data: orgUsers } = await supabase.rpc('get_usuarios_org');
       const allP = (orgUsers || []).map(u => ({
         id_persona: u.id_persona,
@@ -100,7 +96,6 @@ export default function AccesoManual() {
       allP.forEach(p => { pMap[p.id_persona] = p; });
       setPersonas(allP);
 
-      // 4. Vehículos habilitados e inhabilitados de la org
       const { data: vhs } = await supabase
         .from('vehiculo')
         .select('*, modelo:id_modelo(nombre, marca:id_marca(nombre)), color:id_color(nombre), estado:id_estado(nombre)')
@@ -123,6 +118,50 @@ export default function AccesoManual() {
         .eq('organizacion_id', orgId)
         .is('salida_at', null)
         .order('entrada_at', { ascending: false });
+
+      const { data: asigData } = await supabase
+        .from('asignacion')
+        .select('id_plaza, id_empleado, empleado:id_empleado(id_persona)')
+        .eq('organizacion_id', orgId)
+        .eq('id_estado', 1);
+
+      // Mapear asignaciones para que tengan id_persona directamente
+      const asigMapeadas = (asigData || []).map(a => ({
+        id_plaza: a.id_plaza,
+        id_persona: a.empleado?.id_persona
+      }));
+
+      setAsignaciones(asigMapeadas);
+      const plazasAsignadasIds = new Set(asigMapeadas.map(a => a.id_plaza));
+
+      // 7. Tickets activos (para el filtro de plazas)
+      const { data: tksActivos } = await supabase
+        .from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1);
+
+      // 8. Reservas activas (para el filtro de plazas)
+      const ahoraISO = new Date().toISOString();
+      const { data: resActivas } = await supabase
+        .from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO);
+      
+      const { data: resZonas } = await supabase
+        .from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO);
+
+      const plazasOcupadasDinamicas = new Set();
+      (activos || []).forEach(a => { if (a.id_plaza) plazasOcupadasDinamicas.add(a.id_plaza); });
+      (tksActivos || []).forEach(t => { if (t.id_plaza_asignada) plazasOcupadasDinamicas.add(t.id_plaza_asignada); });
+      (resActivas || []).forEach(r => { if (r.id_plaza) plazasOcupadasDinamicas.add(r.id_plaza); });
+      if (resZonas?.length > 0) {
+        resZonas.forEach(rz => {
+          plazasVivasData.filter(p => p.id_zona === rz.id_zona).forEach(p => plazasOcupadasDinamicas.add(p.id_plaza));
+        });
+      }
+
+      const idEstAsignadaPlaza = 5; // ID para plazas asignadas
+
+      setPlazasLibres(plazasVivasData.filter(p =>
+        (p.id_estado === idEstLibrePlaza || p.id_estado === idEstAsignadaPlaza) && 
+        !plazasOcupadasDinamicas.has(p.id_plaza)
+      ));
 
       const enrichedActivos = (activos || []).map(acc => {
         const per = pMap[acc.vehiculo?.id_persona];
@@ -183,6 +222,7 @@ export default function AccesoManual() {
 
       return {
         id:       v.id_vehiculo,
+        id_persona: v.id_persona,
         type:     'v',
         placa:    v.placa,
         nombre:   `${v.persona?.nombre || ''} ${v.persona?.apellido || ''}`.trim() || 'Sin Propietario',
@@ -199,6 +239,7 @@ export default function AccesoManual() {
       .filter(p => !idsPersonasConVehiculo.has(p.id_persona))
       .map(p => ({
         id:       p.id_persona,
+        id_persona: p.id_persona,
         type:     'p',
         placa:    'Sin placa asignada',
         nombre:   `${p.nombre || ''} ${p.apellido || ''}`.trim() || 'Sin nombre',
@@ -441,6 +482,7 @@ export default function AccesoManual() {
                             if (opt.type === 'p') {
                               // Persona sin vehículo — crear vehículo on-the-fly
                               const pid = opt.id;
+                              setSelectedPersonaId(pid);
                               Swal.fire({
                                 title: 'Vincular Placa',
                                 input: 'text',
@@ -461,11 +503,14 @@ export default function AccesoManual() {
                                       setBusquedaVehiculo(`${placa} - ${opt.nombre}`);
                                     }
                                   }
+                                } else {
+                                  setSelectedPersonaId(null);
                                 }
                               });
                             } else {
                               setEntradaForm({ ...entradaForm, vehiculo_id: opt.id });
                               setBusquedaVehiculo(`${opt.placa} - ${opt.nombre}`);
+                              setSelectedPersonaId(opt.id_persona);
                             }
                             setMostrarDropdown(false);
                           }}
@@ -496,12 +541,34 @@ export default function AccesoManual() {
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Asignar Plaza *</label>
                 <SearchableSelect
-                  options={plazasLibres.map(p => ({ value: p.id_plaza, label: `Plaza ${p.numero_plaza}` }))}
+                  options={(() => {
+                    const options = [];
+                    // Encontrar la plaza asignada a la persona seleccionada
+                    const asigUsuario = asignaciones.find(a => a.id_persona === selectedPersonaId);
+                    const idPlazaAsignada = asigUsuario?.id_plaza;
+
+                    const zonas = [...new Set(plazasLibres.map(p => p.zona?.nombre))].sort();
+                    zonas.forEach(zName => {
+                      options.push({ label: zName || 'Sin Zona', isGroup: true });
+                      plazasLibres
+                        .filter(p => p.zona?.nombre === zName)
+                        .forEach(p => {
+                          const esSuAsignada = p.id_plaza === idPlazaAsignada;
+                          options.push({ 
+                            value: p.id_plaza, 
+                            label: esSuAsignada ? `${p.numero_plaza} (SU PLAZA ASIGNADA)` : p.numero_plaza,
+                            isHighlighted: esSuAsignada
+                          });
+                        });
+                    });
+                    return options;
+                  })()}
                   value={entradaForm.id_plaza}
                   onChange={val => setEntradaForm({ ...entradaForm, id_plaza: val })}
-                  placeholder="Seleccionar plaza disponible"
+                  placeholder="— Seleccionar plaza libre —"
                   focusRingClass="focus:ring-indigo-500"
                   selectedItemClass="bg-indigo-100 text-indigo-800"
+                  groupLabelClass="text-blue-600 bg-blue-50"
                 />
               </div>
               <div>
