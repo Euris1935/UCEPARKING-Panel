@@ -496,17 +496,16 @@ export default function Ocupacion() {
                       <FaWheelchair className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-6xl text-blue-200 pointer-events-none" />
                     )}
 
-                    {isOcupada && (
+                    {isOcupada && !isReservada && (
                       <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-[20%] text-5xl md:text-6xl drop-shadow-md z-10 group-hover:scale-105 transition-transform ${
                         isAsignada ? 'text-purple-600' : 
-                        isReservada ? 'text-yellow-500' : 
                         'text-red-500'
                       }`}>
                          <FaCar />
                       </div>
                     )}
                     
-                    {isReservada && !isOcupada && (
+                    {isReservada && (
                       <FaLock className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl text-yellow-500 drop-shadow-sm z-10 group-hover:scale-110 transition-transform" />
                     )}
 
@@ -642,13 +641,13 @@ export default function Ocupacion() {
                         <FaWheelchair className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 ${numZonas > 4 ? 'text-2xl' : 'text-5xl'} text-blue-200 pointer-events-none`} />
                       )}
 
-                      {isOcupada && (
+                      {isOcupada && !isReservada && (
                         <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-[20%] ${numZonas > 4 ? 'text-3xl' : 'text-5xl'} text-red-500 drop-shadow-md z-10 group-hover:scale-105 transition-transform`}>
                            <FaCar />
                         </div>
                       )}
                       
-                      {isReservada && !isOcupada && (
+                      {isReservada && (
                         <FaLock className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 ${numZonas > 4 ? 'text-xl' : 'text-3xl'} text-yellow-500 drop-shadow-sm z-10 group-hover:scale-110 transition-transform`} />
                       )}
 
