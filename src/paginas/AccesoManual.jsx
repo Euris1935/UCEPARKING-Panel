@@ -6,6 +6,7 @@ import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaHi
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
 import { registrarLog, EVENT_TYPES } from '../utils/logging';
+import { accessApi } from '../lib/api';
 
 // ─────────────────────────────────────────────────────────────
 // CAMBIOS:
@@ -299,14 +300,12 @@ export default function AccesoManual() {
 
       // Abrir barrera
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) {
-          fetch(`http://localhost:4000/api/access/open-${entradaForm.puertaDestino}`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${session.access_token}` }
-          }).catch(() => {});
-        }
-      } catch (_) {}
+        if (entradaForm.puertaDestino === 'vip') await accessApi.openVip();
+        else if (entradaForm.puertaDestino === 'exit') await accessApi.openExit();
+        else await accessApi.openMain();
+      } catch (err) {
+        console.error('Error al abrir barrera:', err);
+      }
 
       const nombrePuertaMap = { 'vip': 'VIP', 'main': 'Principal', 'exit': 'Salida' };
       Swal.fire('Registro Exitoso', `Entrada registrada para ${vehiculoSelect.placa}. Barrera ${nombrePuertaMap[entradaForm.puertaDestino] || 'Desconocida'} abriéndose.`, 'success');
@@ -352,14 +351,10 @@ export default function AccesoManual() {
 
       // Abrir barrera
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) {
-          fetch('http://localhost:4000/api/access/open-exit', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${session.access_token}` }
-          }).catch(() => {});
-        }
-      } catch (_) {}
+        await accessApi.openExit();
+      } catch (err) {
+        console.error('Error al abrir barrera de salida:', err);
+      }
 
       Swal.fire('Salida Registrada', 'La plaza quedó libre y la barrera se está abriendo.', 'success');
       loadData();
@@ -372,14 +367,13 @@ export default function AccesoManual() {
     const res = await Swal.fire({ title: tituloConfirmacion, text: 'Esto abrirá la barrera físicamente.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#eab308', confirmButtonText: 'Sí, abrir', cancelButtonText: 'Cancelar' });
     if (res.isConfirmed) {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const respuesta = await fetch(`http://localhost:4000/api/access/${endpoint}`, {
-          method: 'POST', headers: { 'Authorization': `Bearer ${session?.access_token}` }
-        });
-        if (respuesta.ok) Swal.fire('Barrera Abierta', 'El comando se envió exitosamente.', 'success');
-        else Swal.fire('Error', 'El servidor respondió con un error.', 'error');
+        if (endpoint === 'open-main') await accessApi.openMain();
+        else if (endpoint === 'open-vip') await accessApi.openVip();
+        else if (endpoint === 'open-exit') await accessApi.openExit();
+        
+        Swal.fire('Barrera Abierta', 'El comando se envió exitosamente.', 'success');
       } catch (e) {
-        Swal.fire('Error de Conexión', 'No se pudo conectar con el backend local.', 'error');
+        Swal.fire('Error', e.message || 'No se pudo conectar con el backend local.', 'error');
       }
     }
   };

@@ -7,6 +7,7 @@ import Swal from 'sweetalert2';
 import { FaSearch, FaDownload, FaFileAlt, FaPlus, FaTrash, FaUser, FaSync, FaTimesCircle } from 'react-icons/fa';
 import SearchableSelect from '../componentes/SearchableSelect';
 import { useOrg } from '../contexts/OrgContext';
+import { reportsApi } from '../lib/api';
 
 export default function Reportes() {
     const { orgId } = useOrg();
@@ -75,26 +76,14 @@ export default function Reportes() {
     setLoading(true);
 
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) throw new Error("No hay sesión activa.");
+        const payload = {
+          fechaDesde: `${fechaDesde}T00:00:00.000Z`,
+          fechaHasta: `${fechaHasta}T23:59:59.999Z`,
+          tipo: tipoReporte,
+          descripcion
+        };
 
-        const url = 'http://localhost:4000/api/reports';
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
-          },
-          body: JSON.stringify({
-            fechaDesde: `${fechaDesde}T00:00:00.000Z`,
-            fechaHasta: `${fechaHasta}T23:59:59.999Z`,
-            tipo: tipoReporte,
-            descripcion
-          })
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || data.error || "Error al generar reporte en el backend.");
+        await reportsApi.generate(payload);
 
         Swal.fire('Generado', "Reporte creado exitosamente.", 'success');
         
@@ -120,25 +109,14 @@ export default function Reportes() {
     setPreviewLoading(true);
 
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) throw new Error("No hay sesión activa.");
+        const payload = {
+          fechaDesde: `${fechaDesde}T00:00:00.000Z`,
+          fechaHasta: `${fechaHasta}T23:59:59.999Z`,
+          tipo: tipoReporte
+        };
 
-        const url = 'http://localhost:4000/api/reports/preview';
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
-          },
-          body: JSON.stringify({
-            fechaDesde: `${fechaDesde}T00:00:00.000Z`,
-            fechaHasta: `${fechaHasta}T23:59:59.999Z`,
-            tipo: tipoReporte
-          })
-        });
-
+        const res = await reportsApi.previewNew(payload);
         const resData = await res.json();
-        if (!res.ok) throw new Error(resData.message || resData.error || "Error al previsualizar reporte.");
 
         setPreviewData({
             tipo: tipoReporte,
@@ -158,17 +136,8 @@ export default function Reportes() {
   const handlePreviewExistingReport = async (id) => {
     setPreviewLoading(true);
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) throw new Error("No hay sesión activa.");
-
-        const url = `http://localhost:4000/api/reports/${id}/preview`;
-        const res = await fetch(url, {
-          method: 'GET',
-          headers: { 'Authorization': `Bearer ${session.access_token}` }
-        });
-
+        const res = await reportsApi.previewExisting(id);
         const resData = await res.json();
-        if (!res.ok) throw new Error(resData.message || resData.error || "Error al previsualizar reporte.");
 
         setPreviewData(resData);
         setShowPreviewModal(true);
@@ -203,32 +172,7 @@ export default function Reportes() {
 
   const handleDownloadExcel = async (id, title) => {
     try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) throw new Error("No hay sesión activa.");
-
-        const url = `http://localhost:4000/api/reports/${id}/download`;
-        const res = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`
-          }
-        });
-
-        if (!res.ok) {
-           const errData = await res.json();
-           throw new Error(errData.error || errData.message || "Error descargando Documento");
-        }
-
-        const blob = await res.blob();
-        const objUrl = window.URL.createObjectURL(blob);
-
-        const link = document.createElement('a');
-        link.href = objUrl;
-        link.download = `reporte_${title.replace(/ /g, '_')}_${id}.xlsx`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
+        await reportsApi.downloadExcel(id, title);
     } catch (error) {
         Swal.fire('Error', error.message, 'error');
     }
