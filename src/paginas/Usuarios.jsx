@@ -585,9 +585,6 @@ export default function Usuarios() {
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Usuario</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Rol</th>
-                      <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
-                      <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Cargo</th>
-                      <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nivel</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Fecha de Creación</th>
                       <th className="px-5 py-3 text-center text-xs font-bold text-gray-500 uppercase">Estado</th>
                       <th className="px-5 py-3 text-right text-xs font-bold text-gray-500 uppercase">Acciones</th>
@@ -632,15 +629,6 @@ export default function Usuarios() {
                           ) : (
                             <RoleBadge roleId={u.id_rol} roleName={u.nombre_rol} />
                           )}
-                        </td>
-                        <td className="px-5 py-3.5 text-sm text-gray-600">
-                          {u.tipo_persona?.nombre ?? '—'}
-                        </td>
-                        <td className="px-5 py-3.5 text-sm text-gray-600">
-                          {u.cargo?.nombre ?? '—'}
-                        </td>
-                        <td className="px-5 py-3.5 text-sm font-bold text-amber-600">
-                          {u.cargo?.nivel_privilegio ? `★ ${u.cargo.nivel_privilegio}` : '—'}
                         </td>
                         <td className="px-5 py-3.5 text-sm font-medium text-gray-900 border-l border-transparent">
                           {u.created_at ? new Date(u.created_at).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' }) : 'N/D'}
@@ -957,9 +945,9 @@ export default function Usuarios() {
             )}
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[650px] overflow-y-auto custom-scrollbar">
             <table className="min-w-full divide-y divide-gray-100">
-              <thead className="bg-gray-50/50">
+              <thead className="bg-gray-50/50 sticky top-0 z-10 backdrop-blur-md">
                 <tr>
                   <th className="px-6 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Identificación / Datos Personales</th>
                   <th className="px-6 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Información {searchMode === 'employee' ? 'Laboral' : 'Académica'} / Rol</th>

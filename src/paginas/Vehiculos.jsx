@@ -79,7 +79,14 @@ export default function Vehiculos() {
         rol: u.tipo || 'Usuario'
       }));
 
-      setVehiculos(vhs || []);
+      // Mapear personas para enriquecer vehículos
+      const pMap = Object.fromEntries((personal || []).map(p => [p.id_persona, p]));
+      const vhsEnriquecidos = (vhs || []).map(v => ({
+        ...v,
+        persona: pMap[v.id_persona] || null
+      }));
+
+      setVehiculos(vhsEnriquecidos);
       setListaMarcas(catMarcas || []);
       setListaModelos(catModelos || []);
       setListaColores(catColores || []);
