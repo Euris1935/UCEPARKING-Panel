@@ -34,9 +34,9 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
   const qrData = `TICKET-${ticket.id_ticket}-${ticket.placa_capturada}`;
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-        <div className="bg-green-700 text-white p-5 text-center relative">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 print:p-0 print:bg-transparent">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col max-h-[95vh] print:max-h-none print:shadow-none overflow-hidden print:overflow-visible">
+        <div className="bg-green-700 text-white p-5 text-center relative shrink-0">
           <h2 className="text-2xl font-extrabold tracking-widest">UCE PARKING</h2>
           <p className="text-green-200 text-xs mt-1">TICKET DE ACCESO / VISITANTE</p>
           {esReimpresion && (
@@ -45,7 +45,7 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
             </div>
           )}
         </div>
-        <div id="ticket-print-area" className="p-6 space-y-3 text-sm">
+        <div id="ticket-print-area" className="p-5 space-y-3 text-base flex-1 overflow-y-auto print:overflow-visible">
           <Row label="N° Ticket" value={`#${String(ticket.id_ticket).padStart(6, '0')}`} bold />
           {esReimpresion && (
             <p className="text-center text-[10px] font-bold text-yellow-600 bg-yellow-50 border border-yellow-200 rounded px-2 py-1">
@@ -131,7 +131,7 @@ export default function Tickets() {
 
   // CAMBIO: formulario sin id_visitante — datos inline
   const [visitanteForm, setVisitanteForm] = useState({
-    nombre: '', apellido: '', telefono: '', sexo: 'M',
+    nombre: '', apellido: '', telefono: '', sexo: '',
     placa: '', id_marca: '', id_modelo: '', id_color: '',
     id_plaza: '', duracion: '60', descripcion: ''
   });
@@ -214,28 +214,48 @@ export default function Tickets() {
         _marcaNombre:  t.marca?.nombre  || null,
         _modeloNombre: t.modelo?.nombre || null,
         _colorNombre:  t.color?.nombre  || null,
-        _horaSalida:   null // ticket no tiene salida_at — se maneja por id_estado
+        _horaSalida:   (stMap[t.id_estado]?.toLowerCase() === 'cerrado' || stMap[t.id_estado]?.toLowerCase() === 'vencido') ? t.fecha_hora_vencimiento : null
       }));
 
-      // Plazas libres para el formulario
-      const { data: rawPlazas } = await supabase
-        .from('plaza')
-        .select('*, zona:id_zona(estado_zona(nombre))')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', idEstLibrePlaza)
-        .order('numero_plaza');
+      // Carga dinámica de ocupación para filtrar el selector
+      const ahoraISO = new Date().toISOString();
+      const [
+        { data: rawPlazas },
+        { data: asigsActivas },
+        { data: tksActivos },
+        { data: accActivos },
+        { data: resActivas },
+        { data: resZonas }
+      ] = await Promise.all([
+        supabase.from('plaza').select('*, zona:id_zona(nombre, estado_zona(nombre))').eq('organizacion_id', orgId),
+        supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
+        supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO),
+        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO)
+      ]);
 
-      const { data: asigsActivas } = await supabase
-        .from('asignacion')
-        .select('id_plaza')
-        .eq('organizacion_id', orgId)
-        .eq('id_estado', 1);
+      if (!rawPlazas) return;
+
+      const plazasOcupadasDinamicas = new Set();
+      (tksActivos || []).forEach(t => { if (t.id_plaza_asignada) plazasOcupadasDinamicas.add(t.id_plaza_asignada); });
+      (accActivos || []).forEach(a => { if (a.id_plaza) plazasOcupadasDinamicas.add(a.id_plaza); });
+      (resActivas || []).forEach(r => { if (r.id_plaza) plazasOcupadasDinamicas.add(r.id_plaza); });
+      if (resZonas?.length > 0) {
+        resZonas.forEach(rz => {
+          rawPlazas.filter(p => p.id_zona === rz.id_zona).forEach(p => plazasOcupadasDinamicas.add(p.id_plaza));
+        });
+      }
 
       const plazasAsignadasIds = new Set((asigsActivas || []).map(a => a.id_plaza));
 
-      const plazas = (rawPlazas || []).filter(p => {
-        const est = p.zona?.estado_zona?.nombre || 'Activa';
-        return est === 'Activa' && !plazasAsignadasIds.has(p.id_plaza);
+      const plazasFiltradas = (rawPlazas || []).filter(p => {
+        const estZona = p.zona?.estado_zona?.nombre || 'Activa';
+        const esLibreDB = p.id_estado === idEstLibrePlaza;
+        const noEstaOcupadaDinamica = !plazasOcupadasDinamicas.has(p.id_plaza);
+        const noEsAsignada = !plazasAsignadasIds.has(p.id_plaza);
+        
+        return estZona === 'Activa' && esLibreDB && noEstaOcupadaDinamica && noEsAsignada;
       });
 
       // Obtener currentPersonaId
@@ -245,7 +265,7 @@ export default function Tickets() {
         setCurrentPersonaId(ud?.id_persona);
       }
 
-      setPlazasLibres(plazas || []);
+      setPlazasLibres(plazasFiltradas || []);
       setTickets(ticketsEnriquecidos);
       setTicketsActivos(ticketsEnriquecidos.filter(t => t._statusName?.toLowerCase() === 'activo').length);
       setListaMarcas(catMarcas || []);
@@ -429,7 +449,7 @@ export default function Tickets() {
       // CAMBIO: solo actualizar id_estado — no existe salida_at en ticket
       const { error: tkErr } = await supabase
         .from('ticket')
-        .update({ id_estado: idEstCerrTk })
+        .update({ id_estado: idEstCerrTk, fecha_hora_vencimiento: ahora })
         .eq('id_ticket', ticket.id_ticket);
       if (tkErr) throw tkErr;
 
@@ -591,7 +611,9 @@ export default function Tickets() {
                     className="w-full border rounded-lg p-2 text-sm mt-0.5 bg-white"
                     value={visitanteForm.sexo}
                     onChange={e => setVisitanteForm(f => ({ ...f, sexo: e.target.value }))}
+                    required
                   >
+                    <option value="">Seleccionar sexo</option>
                     <option value="M">Masculino</option>
                     <option value="F">Femenino</option>
                   </select>
@@ -666,12 +688,23 @@ export default function Tickets() {
               <div>
                 <label className="text-[10px] font-bold text-gray-400 uppercase">Plaza Asignada *</label>
                 <SearchableSelect
-                  options={plazasLibres.map(p => ({ value: p.id_plaza, label: p.numero_plaza }))}
+                  options={(() => {
+                    const options = [];
+                    const zonas = [...new Set(plazasLibres.map(p => p.zona?.nombre))].sort();
+                    zonas.forEach(zName => {
+                      options.push({ label: zName || 'Sin Zona', isGroup: true });
+                      plazasLibres
+                        .filter(p => p.zona?.nombre === zName)
+                        .forEach(p => options.push({ value: p.id_plaza, label: p.numero_plaza }));
+                    });
+                    return options;
+                  })()}
                   value={visitanteForm.id_plaza}
                   onChange={val => setVisitanteForm(f => ({ ...f, id_plaza: val }))}
                   placeholder="— Seleccionar plaza libre —"
                   focusRingClass="focus:ring-green-500"
                   selectedItemClass="bg-green-100 text-green-800"
+                  groupLabelClass="text-green-600 bg-green-50"
                 />
                 {plazasLibres.length === 0 && (
                   <p className="text-red-500 text-xs mt-1">⚠️ No hay plazas libres disponibles.</p>
@@ -847,10 +880,10 @@ export default function Tickets() {
                                 })
                               : '—'}
                           </td>
-                          <td className="px-5 py-4 text-xs font-bold text-amber-600">
+                          <td className={`px-5 py-4 text-xs font-bold ${sLower === 'activo' ? 'text-amber-600' : 'text-gray-500'}`}>
                             {sLower === 'activo'
                               ? <span className="animate-pulse">{calcTiempo(t.fecha_hora_emision, new Date().toISOString())}</span>
-                              : '—'}
+                              : (t._horaSalida ? calcTiempo(t.fecha_hora_emision, t._horaSalida) : '—')}
                           </td>
                           <td className="px-5 py-4 text-center">
                             <div className="flex gap-1 justify-center opacity-70 group-hover:opacity-100 transition-opacity">

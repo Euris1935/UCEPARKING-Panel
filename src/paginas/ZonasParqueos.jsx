@@ -89,7 +89,9 @@ export default function ZonasParqueo() {
         supabase.from('tipo_plaza').select('*').order('nombre')
       ]);
       setTiposZona(tzData || []);
-      setEstadosZona(ezData || []);
+      // Filtrar estados para excluir "Mantenimiento" (se gestiona desde el módulo de Mantenimiento)
+      const estadosZonaFiltrados = (ezData || []).filter(e => !e.nombre.toLowerCase().includes('mantenimiento'));
+      setEstadosZona(estadosZonaFiltrados);
       setTiposPlaza(tpData || []);
 
       // 2. Zonas ordenadas alfabéticamente
@@ -945,8 +947,7 @@ export default function ZonasParqueo() {
                             </button>
                             <button onClick={() => handleDeletePlaza(p)} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Borrar">
                               <FaTrash size={14} />
-                              </button>
-                            )}
+                            </button>
                         </div>
                       </div>
                      );

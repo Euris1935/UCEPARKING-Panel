@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { playBeep } from '../utils/audio';
 import { useOrg } from '../contexts/OrgContext';
-import { FaBell } from 'react-icons/fa';
+import { FaBell, FaClock } from 'react-icons/fa';
 import BarraLateral from './barraLateral';
+import ScheduleGuard from './ScheduleGuard';
 
 export default function Layout({ children }) {
   const { orgId } = useOrg();
@@ -16,22 +16,16 @@ export default function Layout({ children }) {
   const prevReservadas = useRef(0);
   const prevAsignadas = useRef(0);
   const firstLoad = useRef(true);
+  const [alertaEstanciaLarga, setAlertaEstanciaLarga] = useState([]);
+  const estanciaAlertaEnviada = useRef(false);
 
   useEffect(() => {
     loadMonitorData();
 
     const channel = supabase
       .channel('global_monitor')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'plaza' }, (payload) => {
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'plaza' }, () => {
           loadMonitorData();
-          // Disparar sonido si la plaza estaba LIBRE (o null) y ahora NO lo está
-          const idLibre = 1; // Fallback común, pero se ajusta dinámicamente si es posible
-          const eraLibre = !payload.old.id_estado || payload.old.id_estado === idLibre;
-          const ahoraNoEsLibre = payload.new.id_estado && payload.new.id_estado !== idLibre;
-          
-          if (eraLibre && ahoraNoEsLibre) {
-              playBeep();
-          }
       })
       .subscribe();
 
@@ -42,43 +36,121 @@ export default function Layout({ children }) {
     try {
       // 1. Obtener estados de plazas de la tabla correcta (estado_plaza)
       const { data: estados } = await supabase.from('estado_plaza').select('id_estado, nombre');
-      const { data: rawPlazas } = await supabase
-        .from('plaza')
-        .select(`
-            id_estado,
-            zona:id_zona(
-                estado_zona(nombre)
-            )
-        `);
+      const ahoraISO = new Date().toISOString();
+      const hoySoloFecha = ahoraISO.split('T')[0];
 
-      if (!estados || !rawPlazas) return;
+      // 1. Carga de datos paralela para el mapa de ocupación (igual que Dashboard)
+      const [
+        { data: rawPlazas },
+        { data: asigData },
+        { data: ticketsActivosData },
+        { data: accesosActivosData },
+        { data: reservasActivasData },
+        { data: reservasZonasActivas }
+      ] = await Promise.all([
+        supabase.from('plaza').select('*, zona:id_zona(id_estado, estado_zona(nombre))').eq('organizacion_id', orgId),
+        supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).or(`fecha_fin.is.null,fecha_fin.gte.${hoySoloFecha}`),
+        supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
+        supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
+        supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO),
+        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO)
+      ]);
 
-      // Filtrar plazas de zonas que NO estén inactivas
-      const plazas = rawPlazas.filter(p => !p.zona?.estado_zona || p.zona.estado_zona.nombre !== 'Inactiva');
+      if (!rawPlazas) return;
 
-      const getId = (pattern) => estados.find(e => {
-        const n = (e.nombre || '').trim().toUpperCase();
-        return n.startsWith(pattern) || (pattern === 'OCUPAD' && n === 'OCUPADO');
-      })?.id_estado;
+      // 2. Mapas de Compromiso Separados
+      const mapaReservas = new Set();
+      const mapaAsignaciones = new Set();
       
-      const idOcupada = getId('OCUPAD');
-      const idReservada = getId('RESERVAD');
-      const idAsignada = getId('ASIGNAD');
-      const idLibre = getId('LIBRE');
+      (reservasActivasData || []).forEach(res => { if (res.id_plaza) mapaReservas.add(res.id_plaza); });
+      (asigData || []).forEach(asig => { if (asig.id_plaza) mapaAsignaciones.add(asig.id_plaza); });
+      
+      if (reservasZonasActivas?.length > 0) {
+        reservasZonasActivas.forEach(rz => {
+          rawPlazas.filter(p => p.id_zona === rz.id_zona).forEach(p => mapaReservas.add(p.id_plaza));
+        });
+      }
 
-      const total = plazas.length;
-      const ocupadasNum = plazas.filter(p => p.id_estado === idOcupada).length;
-      const reservadasNum = plazas.filter(p => p.id_estado === idReservada).length;
-      const asignadasNum  = plazas.filter(p => p.id_estado === idAsignada).length;
-      const libresNum = plazas.filter(p => p.id_estado === idLibre || p.id_estado === null || 
-                                     (![idOcupada, idReservada, idAsignada].includes(p.id_estado))).length;
+      // 3. Crear Mapa de Ocupación Física (Solo vehículos reales: Tickets y Accesos)
+      const mapaVehiculosFisicos = new Set();
+      (accesosActivosData || []).forEach(acc => { if (acc.id_plaza) mapaVehiculosFisicos.add(acc.id_plaza); });
+      (ticketsActivosData || []).forEach(tk => { if (tk.id_plaza_asignada) mapaVehiculosFisicos.add(tk.id_plaza_asignada); });
 
+      // 4. Filtrar plazas de zonas ACTIVAS (ID 1)
+      const plazasFiltradas = rawPlazas.filter(p => p.zona?.id_estado === 1);
+
+      // 5. Conteo Final (No excluyentes para mantener visibilidad de compromiso)
+      const total = plazasFiltradas.length;
+      
+      // Vehículos estacionados: Presencia física real
+      const ocupadasNum = plazasFiltradas.filter(p => mapaVehiculosFisicos.has(p.id_plaza)).length;
+
+      // Reservas y Asignadas: Total de compromiso (aunque tengan carro encima)
+      const reservadasNum = plazasFiltradas.filter(p => p.id_estado === 3 || mapaReservas.has(p.id_plaza)).length;
+      const asignadasNum = plazasFiltradas.filter(p => p.id_estado === 5 || mapaAsignaciones.has(p.id_plaza)).length;
+
+      // Libres reales: Estado LIBRE en DB y SIN vehículo y SIN reserva y SIN asignación
+      const libresNum = plazasFiltradas.filter(p => 
+        p.id_estado === 1 && 
+        !mapaVehiculosFisicos.has(p.id_plaza) && 
+        !mapaReservas.has(p.id_plaza) && 
+        !mapaAsignaciones.has(p.id_plaza)
+      ).length;
+      
       // Actualizar stats
-      setStats({ total, ocupadas: ocupadasNum, reservadas: reservadasNum, asignadas: asignadasNum, libres: libresNum });
+      setStats({ 
+        total, 
+        ocupadas: ocupadasNum, 
+        reservadas: reservadasNum, 
+        asignadas: asignadasNum, 
+        libres: libresNum 
+      });
     } catch (error) {
       console.error("Monitor Error:", error.message);
     }
   };
+
+  // ── Monitor de Estancia Larga (>16h) ──
+  const checkEstanciaLarga = async () => {
+    if (!orgId) return;
+    try {
+      const hace16h = new Date(Date.now() - 16 * 60 * 60 * 1000).toISOString();
+      const { data } = await supabase
+        .from('acceso')
+        .select('id_registro, entrada_at, id_plaza, vehiculo:id_vehiculo(placa), plaza:id_plaza(numero_plaza)')
+        .eq('organizacion_id', orgId)
+        .is('salida_at', null)
+        .lt('entrada_at', hace16h);
+
+      if (data && data.length > 0) {
+        setAlertaEstanciaLarga(data);
+        if (!estanciaAlertaEnviada.current) {
+          estanciaAlertaEnviada.current = true;
+          const placas = data.map(a => a.vehiculo?.placa || 'Desconocida').join(', ');
+          supabase.from('notificacion').insert([{
+            contenido: `ALERTA: ${data.length} vehículo(s) con más de 16h en el parqueo: ${placas}`,
+            leida: false,
+            organizacion_id: orgId
+          }]).then(({ error }) => { if (error) console.warn('Error notif estancia:', error.message); });
+        }
+      } else {
+        setAlertaEstanciaLarga([]);
+        estanciaAlertaEnviada.current = false;
+      }
+    } catch (err) {
+      console.error('Error checkEstanciaLarga:', err.message);
+    }
+  };
+
+  useEffect(() => {
+    if (orgId) {
+      checkEstanciaLarga();
+      const interval = setInterval(checkEstanciaLarga, 5 * 60 * 1000); // cada 5 min
+      return () => clearInterval(interval);
+    }
+  }, [orgId]);
+
+
 
   // Efecto reactivo para actualizar referencias
   useEffect(() => {
@@ -116,7 +188,27 @@ export default function Layout({ children }) {
       <BarraLateral />
       
       <main className="ml-64 flex-1 p-8 overflow-y-auto relative">
-        {/* Banner de Capacidad Global */}
+        {/* Banner de Estancia Larga (azul) */}
+        {alertaEstanciaLarga.length > 0 && (
+          <div className="mb-4 flex items-start gap-4 bg-blue-600 text-white px-5 py-3 rounded-xl shadow-lg sticky top-0 z-50">
+            <FaClock className="text-2xl shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-bold text-sm">ALERTA DE ESTANCIA LARGA — {alertaEstanciaLarga.length} vehículo(s) con más de 16 horas</p>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {alertaEstanciaLarga.map(a => (
+                  <span key={a.id_registro} className="bg-white/20 text-white text-[10px] font-black px-2 py-0.5 rounded-lg">
+                    Plaza {a.plaza?.numero_plaza || a.id_plaza} — {a.vehiculo?.placa || 'Sin placa'}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <button onClick={() => setAlertaEstanciaLarga([])} className="text-white/70 hover:text-white text-lg font-bold px-2 shrink-0">✕</button>
+          </div>
+        )}
+
+
+
+        {/* Banner de Capacidad Global (rojo) */}
         {alertaBanner && (
           <div className="mb-6 flex items-center gap-4 bg-red-600 text-white px-5 py-3 rounded-xl shadow-lg animate-pulse sticky top-0 z-50">
             <FaBell className="text-2xl shrink-0" />
@@ -128,7 +220,9 @@ export default function Layout({ children }) {
           </div>
         )}
 
-        {children}
+        <ScheduleGuard>
+          {children}
+        </ScheduleGuard>
       </main>
     </div>
   );

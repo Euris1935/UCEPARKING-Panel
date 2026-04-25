@@ -5,6 +5,7 @@ import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaUserTie, FaUsers
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useOrg } from '../contexts/OrgContext';
 import { ESTADO_PLAZA, ESTADO_RESERVA, ROL } from '../lib/constants';
+import DashboardMap from '../componentes/DashboardMap';
 
 function timeAgo(dateString) {
   const date = new Date(dateString);
@@ -75,13 +76,13 @@ export default function Dashboard() {
       ] = await Promise.all([
         supabase.from('estado_plaza').select('*'),
         supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, nivel_piso, estado_zona:id_estado(nombre))').eq('organizacion_id', orgId),
-        supabase.from('zona').select('id_zona').eq('organizacion_id', orgId),
+        supabase.from('zona').select('id_zona, estado_zona:id_estado(nombre)').eq('organizacion_id', orgId),
         
         supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().split('T')[0]}`),
         supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
         supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
-        supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
-        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA),
+        supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA).lte('fecha_hora_inicio', new Date().toISOString()).gte('fecha_hora_fin', new Date().toISOString()),
+        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA).lte('fecha_hora_inicio', new Date().toISOString()).gte('fecha_hora_fin', new Date().toISOString()),
         
         supabase.from('evento').select('fecha_hora, descripcion, tipo_evento:id_tipo(nombre), persona:id_persona(nombre, apellido), plaza:id_plaza(numero_plaza)').eq('organizacion_id', orgId).order('fecha_hora', { ascending: false }).limit(6),
         supabase.from('ticket').select('id_ticket').eq('organizacion_id', orgId).gte('fecha_hora_emision', hoyStr),
@@ -99,55 +100,78 @@ export default function Dashboard() {
       ]);
 
       const plazasFiltradas = (rawPlazas || []).filter(p => p.zona?.estado_zona?.nombre !== 'Inactiva');
-      const mapaOcupacion = {};
+      
+      // 1. Mapa de Ocupación Física (Solo vehículos reales)
+      const mapaVehiculosFisicos = new Set();
+      (accesosActivosData || []).forEach(acc => { if (acc.id_plaza) mapaVehiculosFisicos.add(acc.id_plaza); });
+      (ticketsActivosData || []).forEach(tk => { if (tk.id_plaza_asignada) mapaVehiculosFisicos.add(tk.id_plaza_asignada); });
 
-      (accesosActivosData || []).forEach(acc => { if (acc.id_plaza) mapaOcupacion[acc.id_plaza] = { type: 'acceso' }; });
-      (reservasActivasData || []).forEach(res => { if (res.id_plaza) mapaOcupacion[res.id_plaza] = { type: 'reserva' }; });
+      // 2. Mapas de Compromiso Separados
+      const mapaReservas = new Set();
+      const mapaAsignaciones = new Set();
+      
+      (reservasActivasData || []).forEach(res => { if (res.id_plaza) mapaReservas.add(res.id_plaza); });
+      (asigData || []).forEach(asig => { if (asig.id_plaza) mapaAsignaciones.add(asig.id_plaza); });
+      
       if (reservasZonasActivas?.length > 0) {
         reservasZonasActivas.forEach(rz => {
-          plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => {
-             if (!mapaOcupacion[p.id_plaza]) mapaOcupacion[p.id_plaza] = { type: 'reserva_zona' };
-          });
+          plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => mapaReservas.add(p.id_plaza));
         });
       }
-      (asigData || []).forEach(asig => { if (asig.id_plaza) mapaOcupacion[asig.id_plaza] = { type: 'asignacion' }; });
-      (ticketsActivosData || []).forEach(tk => { if (tk.id_plaza_asignada) mapaOcupacion[tk.id_plaza_asignada] = { type: 'ticket' }; });
 
+      // 3. Preparar plazas enriquecidas para el render (con Nombre_Final para compatibilidad)
       const plazasProcesadas = plazasFiltradas.map(p => {
-        const estadoObj = (estadosPlaza || []).find(e => e.id_estado === p.id_estado);
-        let finalNombre = estadoObj ? estadoObj.nombre.toUpperCase() : 'LIBRE';
-        const info = mapaOcupacion[p.id_plaza];
-        if (info && finalNombre === 'LIBRE') {
-          if (info.type === 'acceso' || info.type === 'ticket') finalNombre = 'OCUPADA';
-          else if (info.type === 'reserva' || info.type === 'reserva_zona') finalNombre = 'RESERVADA';
-          else if (info.type === 'asignacion') finalNombre = 'ASIGNADA';
-        }
+        let finalNombre = 'LIBRE';
+        if (mapaVehiculosFisicos.has(p.id_plaza)) finalNombre = 'OCUPADA';
+        else if (mapaReservas.has(p.id_plaza) || p.id_estado === 3) finalNombre = 'RESERVADA';
+        else if (mapaAsignaciones.has(p.id_plaza) || p.id_estado === 5) finalNombre = 'ASIGNADA';
+        else if ([4, 6].includes(p.id_estado)) finalNombre = 'MANTENIMIENTO';
+        
         return { ...p, Nombre_Final: finalNombre };
       });
 
-      const libres = plazasProcesadas.filter(p => p.Nombre_Final === 'LIBRE' && !mapaOcupacion[p.id_plaza]).length;
-      const asignadas = plazasProcesadas.filter(p => p.Nombre_Final.startsWith('ASIGNAD') || mapaOcupacion[p.id_plaza]?.type === 'asignacion').length;
-      const ocupadas = plazasProcesadas.filter(p => p.Nombre_Final === 'OCUPADA' && mapaOcupacion[p.id_plaza]?.type !== 'asignacion').length;
-      const reservadas = plazasProcesadas.filter(p => (p.Nombre_Final === 'RESERVADA' || p.Nombre_Final === 'RESERVADO') && mapaOcupacion[p.id_plaza]?.type !== 'asignacion').length;
-      const mantenimiento = plazasProcesadas.filter(p => ['MANTENIMIENTO', 'FUERA DE SERVICIO', 'EN MANTENIMIENTO'].includes(p.Nombre_Final)).length;
+      // 4. Conteo de estadísticas (No excluyentes para mantener visibilidad)
+      const ocupadasNum = plazasFiltradas.filter(p => mapaVehiculosFisicos.has(p.id_plaza)).length;
+      const reservadasNum = plazasFiltradas.filter(p => p.id_estado === 3 || mapaReservas.has(p.id_plaza)).length;
+      const asignadasNum = plazasFiltradas.filter(p => p.id_estado === 5 || mapaAsignaciones.has(p.id_plaza)).length;
+      const mantenimientoNum = plazasFiltradas.filter(p => [4, 6].includes(p.id_estado)).length;
 
-      const totalPersonas = ocupadas + asignadas + reservadas;
+      // Libres reales: Estado LIBRE en DB y SIN vehículo y SIN reserva y SIN asignación
+      const libresNum = plazasFiltradas.filter(p => 
+        p.id_estado === 1 && 
+        !mapaVehiculosFisicos.has(p.id_plaza) && 
+        !mapaReservas.has(p.id_plaza) && 
+        !mapaAsignaciones.has(p.id_plaza)
+      ).length;
+
+      // "En Uso" total: Unión de plazas con compromiso u ocupación física
+      const totalPersonas = plazasFiltradas.filter(p => 
+        mapaVehiculosFisicos.has(p.id_plaza) || 
+        mapaReservas.has(p.id_plaza) || 
+        mapaAsignaciones.has(p.id_plaza) ||
+        p.id_estado === 3 || 
+        p.id_estado === 5
+      ).length;
 
       setStats({
-        totalPlazas: plazasProcesadas.length,
-        ocupadas, reservadas, libres, asignadas, mantenimiento,
+        totalPlazas: plazasFiltradas.length,
+        ocupadas: ocupadasNum, 
+        reservadas: reservadasNum, 
+        libres: libresNum, 
+        asignadas: asignadasNum, 
+        mantenimiento: mantenimientoNum,
         personasActivas: totalPersonas,
         ticketsHoy: ticketsHoyData?.length || 0,
         accesosHoy: accesosHoyData?.length || 0,
         ticketsActivos: ticketsActivosData?.length || 0,
         accesosActivosCount: accesosActivosData?.length || 0,
-        totalZonas: zonasData?.length || 0,
+        totalZonas: (zonasData || []).filter(z => z.estado_zona?.nombre !== 'Inactiva').length,
         totalUsuarios: usuariosCount || 0,
         totalVehiculos: vehiculosCount || 0,
         totalEmpleados: empleadosCount || 0,
         usuariosMoviles: usuariosMovilesCount || 0,
         salidasHoy: salidasHoyCount || 0,
-        _plazasRaw: plazasProcesadas // Para cálculos internos en el render
+        _plazasRaw: plazasProcesadas // Ahora tiene Nombre_Final para el desglose por pisos
       });
 
       setHistoryAccesos(chartAccesos || []);
@@ -255,13 +279,20 @@ export default function Dashboard() {
         ) : (
           <>
             {/* Fila principal de métricas core */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6 mb-8">
               <StatCard 
                 title="Total Espacios en Uso" 
                 value={stats.personasActivas} 
                 subtext={`De ${stats.totalPlazas} plazas en ${stats.totalZonas} zonas`}
                 icon={<FaParking size={26} />} 
                 colorClass="text-emerald-600" bgClass="bg-emerald-50" ringClass="border-emerald-100"
+              />
+              <StatCard 
+                title="Total Espacios Libres" 
+                value={stats.libres} 
+                subtext={`Disponibles para uso`}
+                icon={<FaCheckCircle size={26} />} 
+                colorClass="text-blue-600" bgClass="bg-blue-50" ringClass="border-blue-100"
               />
               <StatCard 
                 title="Vehículos Estacionados" 
@@ -432,8 +463,13 @@ export default function Dashboard() {
                 </div>
 
                 {/* Columna Lateral para Logs y Actividad */}
-                <div className="lg:col-span-1">
-                    <div className="bg-white p-0 rounded-2xl shadow-sm border border-gray-100 h-full flex flex-col">
+                <div className="lg:col-span-1 space-y-6">
+                    {/* MAPA DE UBICACIÓN FÍSICA */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden h-[320px]">
+                        <DashboardMap />
+                    </div>
+
+                    <div className="bg-white p-0 rounded-2xl shadow-sm border border-gray-100 h-[calc(100%-344px)] min-h-[400px] flex flex-col">
                         <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 rounded-t-2xl">
                             <h3 className="font-bold text-gray-800 flex items-center gap-2">
                                 <FaHistory className="text-indigo-500" />

@@ -48,13 +48,20 @@ export default function Usuarios() {
   const [loading, setLoading]       = useState(false);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  
+  // Catálogos adicionales
+  const [tiposPersona, setTiposPersona] = useState([]);
+  const [facultades, setFacultades] = useState([]);
+  const [carreras, setCarreras] = useState([]);
 
   // Estado para edición completa (formulario lateral)
   const [editingUser, setEditingUser] = useState(null);
   const initialForm = { 
     nombre: '', apellido: '', email: '', contrasena: '', 
     telefono: '', cedula: '', sexo: '', fecha_nacimiento: '', 
-    direccion: '', rol_id: '' 
+    direccion: '', rol_id: '',
+    id_tipo_persona: '', 
+    numero_carnet: '', id_facultad: '', id_carrera: '', año_academico: ''
   };
   const [formData, setFormData]     = useState(initialForm);
 
@@ -75,45 +82,81 @@ export default function Usuarios() {
     if (!orgId) return;
     setLoading(true);
     try {
-      // 1. Obtener catálogos
-      const [{ data: rolesData }, { data: estadosData }] = await Promise.all([
+      const [
+        { data: rolesData }, 
+        { data: estadosData },
+        { data: tiposPData },
+        { data: facultadesData },
+        { data: carrerasData }
+      ] = await Promise.all([
         supabase.from('rol').select('id_rol, nombre').order('nombre'),
-        supabase.from('estado_usuario').select('id_estado, nombre').order('id_estado')
+        supabase.from('estado_usuario').select('id_estado, nombre').order('id_estado'),
+        supabase.from('tipo_persona').select('*').order('id_tipo_persona'),
+        supabase.from('facultad').select('*').order('nombre'),
+        supabase.from('carrera').select('*').order('nombre')
       ]);
-
+ 
       setRolesList(rolesData || []);
       setCatEstados(estadosData || []);
+      setTiposPersona(tiposPData || []);
+      setFacultades(facultadesData || []);
+      setCarreras(carrerasData || []);
 
       // 2. Obtener usuarios de la organización
       const [
         { data: orgUsers, error: orgErr },
-        { data: estadosUsuarios }
+        { data: estadosUsuarios },
+        { data: estudiantesData },
+        { data: personasData } // Traer todos los campos de persona
       ] = await Promise.all([
         supabase.rpc('get_usuarios_org'),
-        supabase.from('usuario').select('id, id_estado, estado_u:id_estado(nombre)').eq('organizacion_id', orgId)
+        supabase.from('usuario').select('id, id_estado, estado_u:id_estado(nombre)').eq('organizacion_id', orgId),
+        supabase.from('estudiante').select('*').eq('organizacion_id', orgId),
+        supabase.from('persona').select('*') // Traer todo para el formulario de edición
       ]);
 
       if (orgErr) {
         console.error('Error get_usuarios_org:', orgErr);
         await loadUsuariosFallback(rolesData || []);
       } else {
-        // El RPC no devuelve id_estado; lo tomamos de la consulta directa
         const estadoMap = Object.fromEntries(
           (estadosUsuarios || []).map(e => [e.id, { id_estado: e.id_estado, nombre_estado: e.estado_u?.nombre ?? 'Sin Estado' }])
         );
 
         const listaNormalizada = (orgUsers || []).map(u => {
           const est = estadoMap[u.id_usuario] ?? {};
+          const estu = (estudiantesData || []).find(e => e.id_persona === u.id_persona);
+          
+          // Obtener todos los datos reales de la persona
+          const pData = (personasData || []).find(p => p.id_persona === u.id_persona);
+          const idTipoActual = pData?.id_tipo_persona || u.id_tipo_persona;
+
+          const tipoP = (tiposPData || []).find(t => t.id_tipo_persona === idTipoActual);
+
           return {
             ...u,
+            ...pData, // Inyectamos todos los campos (cedula, telefono, etc.)
             id_usuario:    u.id_usuario || u.id,
             id_persona:    u.id_persona || u.persona_id,
             id_rol:        u.rol_id     || u.id_rol,
             nombre_rol:    u.nombre_rol || u.rol_nombre || 'Sin Rol',
             id_estado:     est.id_estado   ?? null,
             nombre_estado: est.nombre_estado ?? 'Sin Estado',
+            id_tipo_persona: idTipoActual,
+            nombre_tipo_persona: tipoP?.nombre || 'Sin Clasificar',
+            // Datos de estudiante si existen
+            numero_carnet: estu?.numero_carnet || '',
+            id_facultad:   estu?.id_facultad || '',
+            id_carrera:    estu?.id_carrera || '',
+            nombre_carrera: (carrerasData || []).find(c => c.id_carrera === estu?.id_carrera)?.nombre || '',
+            año_academico: estu?.año_academico || ''
           };
-        }).filter(u => u.id_rol !== ROL.VISITANTE);
+        }).filter(u => u.id_rol !== ROL.VISITANTE)
+          .sort((a,b) => {
+            const na = `${a.nombre} ${a.apellido}`.toLowerCase();
+            const nb = `${b.nombre} ${b.apellido}`.toLowerCase();
+            return na.localeCompare(nb);
+          });
 
         // Enriquecer con tipo_persona y cargo
         const listaEnriquecida = await Promise.all(listaNormalizada.map(async (u) => {
@@ -212,6 +255,11 @@ export default function Usuarios() {
       fecha_nacimiento: user.fecha_nacimiento || '',
       direccion: user.direccion || '',
       rol_id: user.id_rol || '',
+      id_tipo_persona: user.id_tipo_persona || '',
+      numero_carnet: user.numero_carnet || '',
+      id_facultad: user.id_facultad || '',
+      id_carrera: user.id_carrera || '',
+      año_academico: user.año_academico || '',
       contrasena: ''
     });
     setChangingRolFor(null);
@@ -244,7 +292,11 @@ export default function Usuarios() {
       return Swal.fire('Error', 'No se pudo determinar la organización. Recarga la página e intenta de nuevo.', 'error');
     }
 
-    const { nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, direccion, rol_id, contrasena } = formData;
+    const { 
+      nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, 
+      direccion, rol_id, contrasena, id_tipo_persona,
+      numero_carnet, id_facultad, id_carrera, año_academico
+    } = formData;
 
     try {
       Swal.fire({ title: 'Procesando...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
@@ -252,11 +304,34 @@ export default function Usuarios() {
       if (isUpdating) {
         // 1. Actualizar Persona
         const { error: pErr } = await supabase.from('persona')
-          .update({ nombre, apellido, telefono, email, cedula, sexo, fecha_nacimiento: fecha_nacimiento || null, direccion })
+          .update({ 
+            nombre, 
+            apellido, 
+            telefono: telefono || null, 
+            email, 
+            cedula: cedula || null, 
+            sexo, 
+            fecha_nacimiento: fecha_nacimiento || null, 
+            direccion,
+            id_tipo_persona: parseInt(id_tipo_persona)
+          })
           .eq('id_persona', editingUser.id_persona);
         if (pErr) throw pErr;
 
-        // 2. Actualizar Usuario (Rol)
+        // 2. Actualizar/Crear datos de Estudiante
+        if (parseInt(id_tipo_persona) === 1) { // 1 = Estudiante
+          const { error: estuErr } = await supabase.from('estudiante').upsert({
+            id_persona: editingUser.id_persona,
+            numero_carnet,
+            id_facultad: id_facultad ? parseInt(id_facultad) : null,
+            id_carrera: id_carrera ? parseInt(id_carrera) : null,
+            año_academico: año_academico ? parseInt(año_academico) : null,
+            organizacion_id: effectiveOrgId
+          }, { onConflict: 'id_persona' });
+          if (estuErr) throw estuErr;
+        }
+
+        // 3. Actualizar Usuario (Rol)
         if (parseInt(rol_id) !== editingUser.id_rol) {
           const { error: uErr } = await supabase.from('usuario')
             .update({ rol_id: parseInt(rol_id) })
@@ -290,6 +365,25 @@ export default function Usuarios() {
 
         if (rpcError) throw rpcError;
         if (resultado?.success === false) throw new Error(resultado.error || 'Error desconocido al crear el usuario.');
+ 
+        const newUserId = resultado.user_id; // Asumiendo que el RPC devuelve el ID
+        const newPersonaId = resultado.persona_id;
+
+        // 4. Actualizar id_tipo_persona (si el RPC no lo hizo) y crear estudiante
+        if (newPersonaId) {
+            await supabase.from('persona').update({ id_tipo_persona: parseInt(id_tipo_persona) }).eq('id_persona', newPersonaId);
+            
+            if (parseInt(id_tipo_persona) === 1) {
+                await supabase.from('estudiante').insert([{
+                    id_persona: newPersonaId,
+                    numero_carnet,
+                    id_facultad: id_facultad ? parseInt(id_facultad) : null,
+                    id_carrera: id_carrera ? parseInt(id_carrera) : null,
+                    año_academico: año_academico ? parseInt(año_academico) : null,
+                    organizacion_id: effectiveOrgId
+                }]);
+            }
+        }
 
         registrarLog({
           tipo_nombre: EVENT_TYPES.USUARIO_CREADO,
@@ -381,7 +475,13 @@ export default function Usuarios() {
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-3xl font-bold text-gray-900">Gestión de Usuarios</h2>
-            <p className="text-sm text-gray-500 mt-1">Administra cuentas, roles y permisos del sistema.</p>
+            <div className="flex items-center gap-3 mt-1">
+              <p className="text-sm text-gray-500">Administra cuentas, roles y permisos del sistema.</p>
+              <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
+                <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                {usuarios.filter(u => u.nombre_estado?.toLowerCase() === 'activo').length} activos
+              </span>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             {activeTab === 'usuarios' && (
@@ -436,6 +536,7 @@ export default function Usuarios() {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Usuario</th>
+                      <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Rol</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Cargo</th>
@@ -446,8 +547,11 @@ export default function Usuarios() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-50">
-                    {filteredUsers.map(u => (
-                      <tr key={u.id_usuario}>
+                    {filteredUsers.map(u => {
+                      const isInactive = u.nombre_estado?.toLowerCase() !== 'activo';
+                      return (
+                        <tr key={u.id_usuario} className={`transition-all ${isInactive ? 'bg-gray-50/50 grayscale-[0.8] opacity-60' : 'hover:bg-gray-50/30'}`}>
+
                         <td className="px-5 py-3.5">
                           <div className="flex items-center gap-3">
                             <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 font-bold text-sm">
@@ -458,6 +562,16 @@ export default function Usuarios() {
                               <p className="text-xs text-gray-400">{u.email}</p>
                             </div>
                           </div>
+                        </td>
+                        <td className="px-5 py-3.5">
+                           <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase rounded border ${
+                             u.id_tipo_persona === 1 ? 'bg-blue-50 text-blue-600 border-blue-200' :
+                             u.id_tipo_persona === 2 ? 'bg-purple-50 text-purple-600 border-purple-200' :
+                             u.id_tipo_persona === 3 ? 'bg-amber-50 text-amber-600 border-amber-200' :
+                             'bg-gray-50 text-gray-600 border-gray-200'
+                           }`}>
+                             {u.nombre_tipo_persona}
+                           </span>
                         </td>
                         <td className="px-5 py-3.5">
                           {changingRolFor === u.id_usuario ? (
@@ -525,7 +639,8 @@ export default function Usuarios() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                        );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -551,12 +666,12 @@ export default function Usuarios() {
                 
                 <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Email *</label>
-                  <input type="email" name="email" value={formData.email} onChange={handleChange} required className="w-full border p-2 rounded text-sm"/>
+                  <input type="email" name="email" value={formData.email} onChange={handleChange} required autoComplete="off" className="w-full border p-2 rounded text-sm"/>
                 </div>
                 
                 {!isUpdating && <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Contraseña *</label>
-                  <input type="password" name="contrasena" value={formData.contrasena} onChange={handleChange} required className="w-full border p-2 rounded text-sm"/>
+                  <input type="password" name="contrasena" value={formData.contrasena} onChange={handleChange} required autoComplete="new-password" placeholder="••••••••" className="w-full border p-2 rounded text-sm"/>
                 </div>}
 
                 <div className="grid grid-cols-2 gap-2">
@@ -589,13 +704,75 @@ export default function Usuarios() {
                   <textarea name="direccion" rows="3" value={formData.direccion} onChange={handleChange} className="w-full border p-2 rounded text-sm resize-none" placeholder="Escribe la dirección detallada..."></textarea>
                 </div>
 
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Rol *</label>
-                  <select name="rol_id" value={formData.rol_id} onChange={handleChange} required className="w-full border p-2 rounded text-sm bg-white">
-                    <option value="">Selecciona un rol</option>
-                    {rolesList.filter(r => r.id_rol !== ROL.VISITANTE).map(r => <option key={r.id_rol} value={r.id_rol}>{r.nombre}</option>)}
-                  </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo de Persona *</label>
+                    <select name="id_tipo_persona" value={formData.id_tipo_persona} onChange={handleChange} required className="w-full border p-2 rounded text-sm bg-white">
+                      <option value="">Seleccionar</option>
+                      {tiposPersona.map(t => (
+                        <option key={t.id_tipo_persona} value={t.id_tipo_persona}>{t.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Rol *</label>
+                    <select name="rol_id" value={formData.rol_id} onChange={handleChange} required className="w-full border p-2 rounded text-sm bg-white">
+                      <option value="">Selecciona un rol</option>
+                      {rolesList.filter(r => r.id_rol !== ROL.VISITANTE).map(r => <option key={r.id_rol} value={r.id_rol}>{r.nombre}</option>)}
+                    </select>
+                  </div>
                 </div>
+
+                {/* Campos específicos para Estudiantes (ID 1) */}
+                {parseInt(formData.id_tipo_persona) === 1 && (
+                  <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 space-y-3 animate-fadeIn">
+                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Datos Académicos</p>
+                    
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-bold text-blue-400 uppercase mb-1">Facultad *</label>
+                        <select 
+                          name="id_facultad" 
+                          value={formData.id_facultad} 
+                          onChange={e => setFormData(f => ({ ...f, id_facultad: e.target.value, id_carrera: '' }))} 
+                          required={parseInt(formData.id_tipo_persona) === 1}
+                          className="w-full border-blue-200 border p-2 rounded text-sm bg-white"
+                        >
+                          <option value="">— Seleccionar —</option>
+                          {facultades.map(f => <option key={f.id_facultad} value={f.id_facultad}>{f.nombre}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-blue-400 uppercase mb-1">Carrera *</label>
+                        <select 
+                          name="id_carrera" 
+                          value={formData.id_carrera} 
+                          onChange={handleChange} 
+                          required={parseInt(formData.id_tipo_persona) === 1}
+                          disabled={!formData.id_facultad}
+                          className="w-full border-blue-200 border p-2 rounded text-sm bg-white disabled:bg-gray-50"
+                        >
+                          <option value="">— Seleccionar —</option>
+                          {carreras
+                            .filter(c => c.id_facultad === parseInt(formData.id_facultad))
+                            .map(c => <option key={c.id_carrera} value={c.id_carrera}>{c.nombre}</option>)
+                          }
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-bold text-blue-400 uppercase mb-1">Matrícula *</label>
+                        <input name="numero_carnet" value={formData.numero_carnet} onChange={handleChange} required={parseInt(formData.id_tipo_persona) === 1} placeholder="Ej: 2023-0001" className="w-full border-blue-200 border p-2 rounded text-sm"/>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-blue-400 uppercase mb-1">Año Académico</label>
+                        <input type="number" name="año_academico" value={formData.año_academico} onChange={handleChange} min="1" max="10" placeholder="1-10" className="w-full border-blue-200 border p-2 rounded text-sm"/>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="pt-3 flex justify-end gap-2 border-t mt-2">
                   <button type="button" onClick={handleCancel} className="px-4 py-2 text-sm bg-gray-100 rounded font-medium hover:bg-gray-200 transition">Cancelar</button>
                   <button type="submit" className="px-5 py-2 text-sm bg-green-600 text-white rounded font-bold shadow hover:bg-green-700 transition">{isUpdating ? 'Guardar Cambios' : 'Crear Usuario'}</button>

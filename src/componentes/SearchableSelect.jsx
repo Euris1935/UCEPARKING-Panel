@@ -9,7 +9,8 @@ export default function SearchableSelect({
     placeholder = "— Seleccionar —",
     className = "",
     focusRingClass = "focus:ring-purple-500",
-    selectedItemClass = "bg-purple-100 text-purple-800"
+    selectedItemClass = "bg-purple-100 text-purple-800",
+    groupLabelClass = "text-gray-400 bg-gray-50"
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -28,9 +29,39 @@ export default function SearchableSelect({
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const filteredOptions = options.filter(o => 
-        o.label.toLowerCase().includes(search.toLowerCase())
-    );
+    const filteredOptions = (() => {
+        if (!search) return options;
+        const result = [];
+        const searchLower = search.toLowerCase();
+        
+        let pendingGroup = null;
+        let groupMatchesSearch = false;
+
+        options.forEach(opt => {
+            if (opt.isGroup) {
+                pendingGroup = opt;
+                groupMatchesSearch = opt.label.toLowerCase().includes(searchLower);
+                // Si el grupo mismo coincide, lo añadimos de inmediato
+                if (groupMatchesSearch) {
+                    result.push(opt);
+                }
+            } else {
+                // Si el grupo padre coincidió o el item actual coincide
+                const itemMatchesSearch = opt.label.toLowerCase().includes(searchLower);
+                
+                if (groupMatchesSearch || itemMatchesSearch) {
+                    // Si el item coincide pero el grupo no se ha añadido aún (porque el grupo no coincidía)
+                    if (pendingGroup && !groupMatchesSearch) {
+                        result.push(pendingGroup);
+                    }
+                    // Marcamos el grupo como ya procesado para este bloque de items
+                    pendingGroup = null; 
+                    result.push(opt);
+                }
+            }
+        });
+        return result;
+    })();
 
     return (
         <div ref={wrapperRef} className={`relative ${className} ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -63,7 +94,18 @@ export default function SearchableSelect({
                         {filteredOptions.length === 0 ? (
                             <div className="p-3 text-sm text-gray-500 text-center">No hay resultados.</div>
                         ) : (
-                            filteredOptions.map(opt => {
+                            filteredOptions.map((opt, index) => {
+                                if (opt.isGroup) {
+                                    return (
+                                        <div 
+                                            key={`group-${index}`}
+                                            className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-widest border-y border-gray-100 mt-1 first:mt-0 ${groupLabelClass}`}
+                                        >
+                                            {opt.label}
+                                        </div>
+                                    );
+                                }
+
                                 const isItemDisabled = opt.disabled === true;
                                 const isSelected = String(opt.value) === String(value);
                                 return (

@@ -150,7 +150,7 @@ export default function VehiculosTickets() {
         supabase.from('marca').select('*').order('nombre'),
         supabase.from('modelo').select('*').order('nombre'),
         supabase.from('color').select('*').order('nombre'),
-        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, estado_zona:id_estado(nombre))').eq('id_estado', ESTADO_PLAZA.LIBRE).eq('organizacion_id', orgId),
+        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, estado_zona:id_estado(nombre))').eq('id_estado', ESTADO_PLAZA.LIBRE).eq('organizacion_id', orgId).order('numero_plaza'),
         supabase.from('tipo_vehiculo').select('*').order('nombre')
       ]);
 
@@ -186,9 +186,17 @@ export default function VehiculosTickets() {
       })));
 
       setTicketsActivosCount((tks || []).filter(t => stMap[t.id_estado]?.toLowerCase() === 'activo').length);
-      setVehiculos(vhs || []);
-      setVisitantesReg(Object.values(vMap));
-      setPersonasSistema(allP || []);
+      setVehiculos((vhs || []).sort((a,b) => (a.placa || '').localeCompare(b.placa || '')));
+      setVisitantesReg(Object.values(vMap).sort((a,b) => {
+        const na = `${a.persona?.nombre || ''} ${a.persona?.apellido || ''}`.toLowerCase();
+        const nb = `${b.persona?.nombre || ''} ${b.persona?.apellido || ''}`.toLowerCase();
+        return na.localeCompare(nb);
+      }));
+      setPersonasSistema((allP || []).sort((a,b) => {
+        const na = `${a.nombre || ''} ${a.apellido || ''}`.toLowerCase();
+        const nb = `${b.nombre || ''} ${b.apellido || ''}`.toLowerCase();
+        return na.localeCompare(nb);
+      }));
       setMarcasCat(marcas || []);
       setModelosCat(modelos || []);
       setColoresCat(colores || []);

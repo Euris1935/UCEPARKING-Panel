@@ -39,6 +39,15 @@ export default function Sensores() {
   const [localOrgId, setLocalOrgId] = useState(null);
 
   useEffect(() => {
+    const fetchUser = async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+            const { data: ud } = await supabase.from('usuario').select('id_persona').eq('id', user.id).maybeSingle();
+            if (ud) setCurrentPersonaId(ud.id_persona);
+        }
+    };
+    fetchUser();
+
     if (orgId) {
       loadData();
       // Sincronización en tiempo real
@@ -92,7 +101,9 @@ export default function Sensores() {
       const plazasDisponibles = (pData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa');
       setPlazas(plazasDisponibles);
       
-      setEstadosEquipo(eDisp || []);
+      // Filtrar estados para excluir "Mantenimiento" (se gestiona desde el módulo de Mantenimiento)
+      const estadosFiltrados = (eDisp || []).filter(e => !e.nombre.toLowerCase().includes('mantenimiento'));
+      setEstadosEquipo(estadosFiltrados);
 
       // Valores por defecto para nuevos registros
       if (!editingId && !formData.id_estado) {
@@ -121,7 +132,6 @@ export default function Sensores() {
   };
 
   const handleRegistrarLog = async (tipo_nombre, descripcion, idPlaza = null, idDisp = null) => {
-    if (!currentPersonaId) return;
     await registrarLog({
       tipo_nombre,
       descripcion,
@@ -458,26 +468,34 @@ export default function Sensores() {
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Vincular Plaza</label>
-                  <select 
-                    className="w-full border p-2 rounded-lg text-sm outline-none focus:ring-blue-500 bg-gray-50" 
+                  <SearchableSelect 
+                    options={(() => {
+                      const options = [];
+                      const plazasDisponiblesParaVincular = plazas.filter(p => {
+                        const estaOcupadaPorOtro = dispositivos.some(d => 
+                          String(d.id_plaza) === String(p.id_plaza) && 
+                          d.id_dispositivo !== editingId
+                        );
+                        return !estaOcupadaPorOtro;
+                      });
+
+                      const zonas = [...new Set(plazasDisponiblesParaVincular.map(p => p.zona?.nombre))].sort();
+                      zonas.forEach(zName => {
+                        options.push({ label: zName || 'Sin Zona', isGroup: true });
+                        plazasDisponiblesParaVincular
+                          .filter(p => p.zona?.nombre === zName)
+                          .forEach(p => options.push({ value: p.id_plaza, label: p.numero_plaza }));
+                      });
+                      return options;
+                    })()}
                     value={formData.id_plaza} 
-                    onChange={e => setFormData({ ...formData, id_plaza: e.target.value })}
-                  >
-                    <option value="">— Ninguna —</option>
-                    {plazas.filter(p => {
-                      // Mostrar si la plaza está libre O si es la plaza del dispositivo que estamos editando
-                      const estaOcupada = dispositivos.some(d => 
-                        String(d.id_plaza) === String(p.id_plaza) && 
-                        d.id_dispositivo !== editingId
-                      );
-                      return !estaOcupada;
-                    }).map(p => (
-                      <option key={p.id_plaza} value={p.id_plaza}>{p.numero_plaza}</option>
-                    ))}
-                    {editingId && formData.id_plaza && !plazas.find(p => String(p.id_plaza) === String(formData.id_plaza)) && (
-                      <option value={formData.id_plaza}>Plaza asignada</option>
-                    )}
-                  </select>
+                    onChange={val => setFormData({ ...formData, id_plaza: val })}
+                    placeholder="— Ninguna —"
+                    focusRingClass="focus:ring-blue-500"
+                    selectedItemClass="bg-blue-100 text-blue-800"
+                    groupLabelClass="text-blue-600 bg-blue-50"
+                    className="bg-gray-50/50"
+                  />
                 </div>
               </div>
 
