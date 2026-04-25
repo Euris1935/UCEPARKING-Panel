@@ -219,6 +219,7 @@ export default function Tickets() {
 
       // Carga dinámica de ocupación para filtrar el selector
       const ahoraISO = new Date().toISOString();
+      const buffer15min = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       const [
         { data: rawPlazas },
         { data: asigsActivas },
@@ -232,7 +233,7 @@ export default function Tickets() {
         supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
         supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
         supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO),
-        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO)
+        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', buffer15min).gte('fecha_hora_fin', ahoraISO)
       ]);
 
       if (!rawPlazas) return;

@@ -142,7 +142,7 @@ export default function Ocupacion() {
           .select('*, tipo:tipo_reserva_zona!id_tipo(nombre), persona:id_persona(nombre, apellido)')
           .eq('organizacion_id', orgId)
           .eq('id_estado', ESTADO_RESERVA.ACTIVA)
-          .lte('fecha_hora_inicio', new Date().toISOString())
+          .lte('fecha_hora_inicio', new Date(Date.now() + 15 * 60 * 1000).toISOString())
           .gte('fecha_hora_fin', new Date().toISOString()),
         // CAMBIO: ticket no tiene id_persona ni id_visitante
         // Usamos visitante_nombre y visitante_apellido directamente
@@ -225,6 +225,9 @@ export default function Ocupacion() {
       });
 
       // Enriquecer plazas con estado derivado
+      const ahora = new Date();
+      const buffer15min = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
       const plazasCompletas = (plazasData || []).map(p => {
         const z        = (zonasData || []).find(zona => zona.id_zona === p.id_zona);
         const estZona  = z?.estado_zona?.nombre || '';
@@ -234,19 +237,32 @@ export default function Ocupacion() {
         if (estZona === 'En Mantenimiento')       return { ...p, Nombre_Estado_Rel: 'MANTENIMIENTO', _zonaBloqueada: true };
 
         const info = mapaOcupacion[p.id_plaza];
+        const tieneVehiculoFisico = info && (info.type === 'acceso' || info.type === 'ticket');
         
+        // Detección de conflicto: Zona reservada pronto + vehículo físico
+        let esConflicto = false;
+        const resProxima = (reservasZonas || []).find(rz => {
+          const inicio = new Date(rz.fecha_hora_inicio);
+          const tiempoParaInicio = (inicio - ahora) / 60000;
+          return rz.id_zona === p.id_zona && tiempoParaInicio > 0 && tiempoParaInicio <= 15;
+        });
+        
+        if (tieneVehiculoFisico && resProxima) {
+          esConflicto = true;
+        }
+
         // CORRECCIÓN: Si la plaza dice RESERVADA en DB pero no hay reserva activa AHORA en mapaOcupacion, la mostramos LIBRE
         if (estadoBase === 'RESERVADA' && (!info || (info.type !== 'reserva' && info.type !== 'reserva_zona'))) {
-            return { ...p, Nombre_Estado_Rel: 'LIBRE' };
+            return { ...p, Nombre_Estado_Rel: 'LIBRE', esConflicto };
         }
 
         if (info && estadoBase === 'LIBRE') {
-          if (info.type === 'acceso' || info.type === 'ticket')                            return { ...p, Nombre_Estado_Rel: 'OCUPADA' };
-          if (info.type === 'reserva' || info.type === 'reserva_zona')                    return { ...p, Nombre_Estado_Rel: 'RESERVADA' };
-          if (info.type === 'asignacion')                                                  return { ...p, Nombre_Estado_Rel: 'ASIGNADO' };
+          if (info.type === 'acceso' || info.type === 'ticket')                            return { ...p, Nombre_Estado_Rel: 'OCUPADA', esConflicto };
+          if (info.type === 'reserva' || info.type === 'reserva_zona')                    return { ...p, Nombre_Estado_Rel: 'RESERVADA', esConflicto };
+          if (info.type === 'asignacion')                                                  return { ...p, Nombre_Estado_Rel: 'ASIGNADO', esConflicto };
         }
 
-        return { ...p, Nombre_Estado_Rel: estadoBase };
+        return { ...p, Nombre_Estado_Rel: estadoBase, esConflicto };
       });
 
       setPlazas(plazasCompletas);
@@ -460,7 +476,7 @@ export default function Ocupacion() {
                 return (
                   <div
                     key={plaza.id_plaza}
-                    className={getSlotStyle(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus, plaza.id_tipo)}
+                    className={`${getSlotStyle(plaza.Nombre_Estado_Rel, plaza.id_plaza, forcingStatus, plaza.id_tipo)} ${plaza.esConflicto ? 'border-[4px] border-orange-500 animate-pulse shadow-[0_0_15px_rgba(249,115,22,0.5)]' : ''}`}
                     onClick={() => {
                       if (isForcedState) {
                         Swal.fire({ title: 'Zona Bloqueada', text: `Esta plaza pertenece a una zona en estado "${estZona}".`, icon: 'info' });
@@ -469,6 +485,11 @@ export default function Ocupacion() {
                       toggleOccupancy(plaza);
                     }}
                   >
+                    {plaza.esConflicto && (
+                      <div className="absolute -top-3 -right-3 bg-white rounded-full p-0.5 z-40 shadow-sm">
+                        <FaExclamationTriangle className="text-orange-500 text-2xl" title="Conflicto: Zona reservada pronto" />
+                      </div>
+                    )}
                     <span className="absolute top-3 font-bold text-[2rem] text-gray-300 select-none pointer-events-none group-hover:text-gray-400 transition-colors">{plaza.numero_plaza}</span>
 
                     {plaza.id_tipo === 3 && (

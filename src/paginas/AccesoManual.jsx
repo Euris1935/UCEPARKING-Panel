@@ -140,11 +140,13 @@ export default function AccesoManual() {
 
       // 8. Reservas activas (para el filtro de plazas)
       const ahoraISO = new Date().toISOString();
+      const buffer15min = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
       const { data: resActivas } = await supabase
         .from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO);
       
       const { data: resZonas } = await supabase
-        .from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', ahoraISO).gte('fecha_hora_fin', ahoraISO);
+        .from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', 1).lte('fecha_hora_inicio', buffer15min).gte('fecha_hora_fin', ahoraISO);
 
       const plazasOcupadasDinamicas = new Set();
       (activos || []).forEach(a => { if (a.id_plaza) plazasOcupadasDinamicas.add(a.id_plaza); });

@@ -8,7 +8,8 @@ import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import {
   FaSearch, FaEdit, FaSync, FaUserTie, FaUsers,
-  FaShieldAlt, FaKey, FaCheck, FaTimes, FaUserCircle, FaPlus
+  FaShieldAlt, FaKey, FaCheck, FaTimes, FaUserCircle, FaPlus, FaInfoCircle,
+  FaAddressCard, FaPhone, FaMapMarkerAlt, FaIdCard, FaEnvelope, FaCalendarAlt
 } from 'react-icons/fa';
 import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 import { ROL } from '../lib/constants';
@@ -45,6 +46,11 @@ export default function Usuarios() {
   const [rolesList, setRolesList]   = useState([]);
   const [catEstados, setCatEstados] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterCarrera, setFilterCarrera] = useState('');
+  const [filterFacultad, setFilterFacultad] = useState('');
+  const [filterMatricula, setFilterMatricula] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterDepto, setFilterDepto] = useState('');
   const [loading, setLoading]       = useState(false);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -53,6 +59,9 @@ export default function Usuarios() {
   const [tiposPersona, setTiposPersona] = useState([]);
   const [facultades, setFacultades] = useState([]);
   const [carreras, setCarreras] = useState([]);
+  const [departamentos, setDepartamentos] = useState([]);
+
+  const [searchMode, setSearchMode] = useState('all'); // all, student, employee, role, type
 
   // Estado para edición completa (formulario lateral)
   const [editingUser, setEditingUser] = useState(null);
@@ -107,18 +116,23 @@ export default function Usuarios() {
         { data: orgUsers, error: orgErr },
         { data: estadosUsuarios },
         { data: estudiantesData },
-        { data: personasData } // Traer todos los campos de persona
+        { data: empleadosData },
+        { data: departamentosData },
+        { data: personasData } 
       ] = await Promise.all([
         supabase.rpc('get_usuarios_org'),
         supabase.from('usuario').select('id, id_estado, estado_u:id_estado(nombre)').eq('organizacion_id', orgId),
         supabase.from('estudiante').select('*').eq('organizacion_id', orgId),
-        supabase.from('persona').select('*') // Traer todo para el formulario de edición
+        supabase.from('empleado').select('*, departamento:id_departamento(nombre)').eq('organizacion_id', orgId),
+        supabase.from('departamento').select('*').order('nombre'),
+        supabase.from('persona').select('*')
       ]);
 
       if (orgErr) {
         console.error('Error get_usuarios_org:', orgErr);
         await loadUsuariosFallback(rolesData || []);
       } else {
+        setDepartamentos(departamentosData || []);
         const estadoMap = Object.fromEntries(
           (estadosUsuarios || []).map(e => [e.id, { id_estado: e.id_estado, nombre_estado: e.estado_u?.nombre ?? 'Sin Estado' }])
         );
@@ -126,6 +140,7 @@ export default function Usuarios() {
         const listaNormalizada = (orgUsers || []).map(u => {
           const est = estadoMap[u.id_usuario] ?? {};
           const estu = (estudiantesData || []).find(e => e.id_persona === u.id_persona);
+          const empl = (empleadosData || []).find(e => e.id_persona === u.id_persona);
           
           // Obtener todos los datos reales de la persona
           const pData = (personasData || []).find(p => p.id_persona === u.id_persona);
@@ -137,19 +152,19 @@ export default function Usuarios() {
             ...u,
             ...pData, // Inyectamos todos los campos (cedula, telefono, etc.)
             id_usuario:    u.id_usuario || u.id,
-            id_persona:    u.id_persona || u.persona_id,
-            id_rol:        u.rol_id     || u.id_rol,
-            nombre_rol:    u.nombre_rol || u.rol_nombre || 'Sin Rol',
-            id_estado:     est.id_estado   ?? null,
-            nombre_estado: est.nombre_estado ?? 'Sin Estado',
-            id_tipo_persona: idTipoActual,
-            nombre_tipo_persona: tipoP?.nombre || 'Sin Clasificar',
-            // Datos de estudiante si existen
-            numero_carnet: estu?.numero_carnet || '',
+            nombre_estado: est.nombre_estado || 'Activo',
+            id_estado:     est.id_estado || 1,
+            nombre_tipo_persona: tipoP?.nombre || 'General',
+            // Data Estudiante
             id_facultad:   estu?.id_facultad || '',
             id_carrera:    estu?.id_carrera || '',
             nombre_carrera: (carrerasData || []).find(c => c.id_carrera === estu?.id_carrera)?.nombre || '',
-            año_academico: estu?.año_academico || ''
+            año_academico: estu?.año_academico || '',
+            numero_carnet: estu?.numero_carnet || '',
+            // Data Empleado
+            cargo:         empl?.cargo || '',
+            id_departamento: empl?.id_departamento || '',
+            nombre_departamento: empl?.departamento?.nombre || ''
           };
         }).filter(u => u.id_rol !== ROL.VISITANTE)
           .sort((a,b) => {
@@ -425,9 +440,38 @@ export default function Usuarios() {
   };
 
   const filteredUsers = usuarios
-    .filter(u =>
-      `${u.nombre} ${u.apellido} ${u.email || ''} ${u.nombre_rol || ''}`.toLowerCase().includes(searchTerm.toLowerCase())
-    )
+    .filter(u => {
+      const matchesSearch = `${u.nombre} ${u.apellido} ${u.email || ''} ${u.nombre_rol || ''}`.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      if (activeTab === 'info') {
+        const matchesStatus = filterStatus === 'all' || 
+          (filterStatus === 'activo' && u.nombre_estado?.toLowerCase() === 'activo') || 
+          (filterStatus === 'inactivo' && u.nombre_estado?.toLowerCase() !== 'activo');
+        
+        if (!matchesStatus) return false;
+
+        if (searchMode === 'student') {
+          const mMat = !filterMatricula || (u.numero_carnet && u.numero_carnet.toLowerCase().includes(filterMatricula.toLowerCase()));
+          const mFac = !filterFacultad || u.id_facultad === parseInt(filterFacultad);
+          const mCar = !filterCarrera || u.id_carrera === parseInt(filterCarrera);
+          return matchesSearch && mMat && mFac && mCar;
+        }
+        if (searchMode === 'employee') {
+          const mDep = !filterDepto || u.id_departamento === parseInt(filterDepto);
+          return matchesSearch && mDep;
+        }
+        if (searchMode === 'role') {
+          // Reutilizamos el searchTerm o podemos añadir un select específico si prefieres
+          return matchesSearch;
+        }
+        if (searchMode === 'type') {
+          const mTyp = !formData.id_tipo_persona || u.id_tipo_persona === parseInt(formData.id_tipo_persona);
+          return matchesSearch && mTyp;
+        }
+      }
+      
+      return matchesSearch;
+    })
     .sort((a, b) => {
       const isAActive = a.nombre_estado?.toLowerCase() === 'activo';
       const isBActive = b.nombre_estado?.toLowerCase() === 'activo';
@@ -479,6 +523,9 @@ export default function Usuarios() {
           </button>
           <button className={tabCls('roles')} onClick={() => setActiveTab('roles')}>
             <FaKey className="inline mr-2 mb-0.5" size={13} />Roles y Permisos
+          </button>
+          <button className={tabCls('info')} onClick={() => setActiveTab('info')}>
+            <FaInfoCircle className="inline mr-2 mb-0.5" size={13} />Directorio Info
           </button>
         </div>
       </header>
@@ -746,6 +793,220 @@ export default function Usuarios() {
       {activeTab === 'roles' && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <RolesPermisosManager />
+        </div>
+      )}
+
+      {activeTab === 'info' && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          {/* Cabecera Adaptativa e Inteligente */}
+          <div className="p-6 border-b border-gray-100 bg-gray-50/30">
+            <div className="flex flex-col md:flex-row items-end gap-4 mb-4">
+              <div className="flex-1">
+                <label className="block text-[10px] font-black text-primary uppercase mb-1.5 ml-1">¿Qué deseas buscar hoy?</label>
+                <div className="flex gap-2">
+                  <select 
+                    className="w-48 px-3 py-2 border-2 border-primary/20 rounded-lg text-sm font-bold focus:border-primary outline-none bg-white shadow-sm"
+                    value={searchMode} 
+                    onChange={e => { setSearchMode(e.target.value); setFilterMatricula(''); setFilterCarrera(''); setFilterFacultad(''); setFilterDepto(''); }}
+                  >
+                    <option value="all">Ver Todos</option>
+                    <option value="student">Estudiantes</option>
+                    <option value="employee">Empleados</option>
+                    <option value="role">Por Rol</option>
+                    <option value="type">Tipo de Persona</option>
+                  </select>
+                  <div className="relative flex-1">
+                    <input
+                      type="text" placeholder="Búsqueda rápida por nombre o email..."
+                      className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none h-[40px]"
+                      value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                    />
+                    <FaSearch className="absolute left-3 top-3 text-gray-400" size={13} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="w-full md:w-40">
+                <label className="block text-[10px] font-black text-gray-400 uppercase mb-1.5 ml-1">Estado</label>
+                <select 
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white h-[40px]"
+                  value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                >
+                  <option value="all">Todos</option>
+                  <option value="activo">Activos</option>
+                  <option value="inactivo">Inactivos</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Filtros Dinámicos según el modo */}
+            {searchMode !== 'all' && (
+              <div className="flex flex-wrap gap-4 pt-4 border-t border-gray-100 animate-in fade-in slide-in-from-top-2">
+                {searchMode === 'student' && (
+                  <>
+                    <div className="w-full md:w-40">
+                      <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Matrícula</label>
+                      <input
+                        type="text" placeholder="Buscar..."
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white"
+                        value={filterMatricula} onChange={e => setFilterMatricula(e.target.value)}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-[200px]">
+                      <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Facultad</label>
+                      <select 
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white"
+                        value={filterFacultad} onChange={e => { setFilterFacultad(e.target.value); setFilterCarrera(''); }}
+                      >
+                        <option value="">Todas las facultades</option>
+                        {facultades.map(f => <option key={f.id_facultad} value={f.id_facultad}>{f.nombre}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex-1 min-w-[200px]">
+                      <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Carrera</label>
+                      <select 
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white disabled:bg-gray-100"
+                        value={filterCarrera} onChange={e => setFilterCarrera(e.target.value)}
+                        disabled={!filterFacultad}
+                      >
+                        <option value="">Todas las carreras</option>
+                        {carreras.filter(c => !filterFacultad || c.id_facultad === parseInt(filterFacultad)).map(c => (
+                          <option key={c.id_carrera} value={c.id_carrera}>{c.nombre}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {searchMode === 'employee' && (
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Departamento</label>
+                    <select 
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white"
+                      value={filterDepto} onChange={e => setFilterDepto(e.target.value)}
+                    >
+                      <option value="">Todos los departamentos</option>
+                      {departamentos.map(d => <option key={d.id_departamento} value={d.id_departamento}>{d.nombre}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {searchMode === 'type' && (
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Tipo de Persona</label>
+                    <select 
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white"
+                      value={formData.id_tipo_persona} 
+                      onChange={e => setFormData(f => ({ ...f, id_tipo_persona: e.target.value }))}
+                    >
+                      <option value="">Todos los tipos</option>
+                      {tiposPersona.map(t => <option key={t.id_tipo_persona} value={t.id_tipo_persona}>{t.nombre}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div className="flex items-end">
+                  <button 
+                    onClick={() => { setSearchMode('all'); setSearchTerm(''); setFilterMatricula(''); setFilterCarrera(''); setFilterFacultad(''); setFilterStatus('all'); setFilterDepto(''); }}
+                    className="px-4 py-2 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg transition underline decoration-dotted"
+                  >
+                    Restablecer vista
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-100">
+              <thead className="bg-gray-50/50">
+                <tr>
+                  <th className="px-6 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Identificación / Datos Personales</th>
+                  <th className="px-6 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Información {searchMode === 'employee' ? 'Laboral' : 'Académica'} / Rol</th>
+                  <th className="px-6 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Contacto y Ubicación</th>
+                  <th className="px-6 py-4 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest">Estado</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-50">
+                {filteredUsers.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" className="px-6 py-20 text-center text-gray-400">
+                      <FaSearch size={40} className="mx-auto mb-3 opacity-10" />
+                      <p className="font-medium text-lg italic">No se encontraron resultados que coincidan con los criterios.</p>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredUsers.map(u => {
+                    const isActive = u.nombre_estado?.toLowerCase() === 'activo';
+                    return (
+                      <tr key={u.id_usuario} className={`hover:bg-green-50/20 transition-colors ${!isActive ? 'opacity-70 grayscale-[0.3]' : ''}`}>
+                        <td className="px-6 py-5">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-2xl bg-gray-50 text-gray-400 flex items-center justify-center border border-gray-100 font-bold text-lg shadow-sm">
+                              {u.nombre?.[0]?.toUpperCase()}{u.apellido?.[0]?.toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-gray-800 leading-none mb-1">{u.nombre} {u.apellido}</p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">CED: {u.cedula || 'N/D'}</span>
+                                {u.sexo && <span className="text-[10px] font-bold text-gray-400">{u.sexo === 'M' ? 'M' : 'F'}</span>}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-5">
+                          <div className="space-y-1">
+                            {searchMode === 'employee' || (u.id_tipo_persona !== 1 && u.cargo) ? (
+                              <>
+                                <p className="text-xs font-bold text-purple-600 leading-tight">Cargo: <span className="text-gray-700">{u.cargo || 'N/D'}</span></p>
+                                <p className="text-[10px] text-gray-400 uppercase font-black truncate max-w-[200px]" title={u.nombre_departamento}>{u.nombre_departamento || 'Sin Depto'}</p>
+                              </>
+                            ) : (
+                              <>
+                                <p className="text-xs font-bold text-gray-700 leading-tight">Matrícula: <span className="text-primary">{u.numero_carnet || 'N/D'}</span></p>
+                                <p className="text-[10px] text-gray-500 uppercase font-black truncate max-w-[200px]" title={u.nombre_carrera}>{u.nombre_carrera || 'Sin Carrera'}</p>
+                              </>
+                            )}
+                            <div className="pt-1">
+                              <RoleBadge roleId={u.id_rol} roleName={u.nombre_rol} />
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-5">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2 text-xs text-gray-600">
+                              <FaEnvelope className="text-gray-300" size={10} />
+                              <span className="truncate max-w-[180px]">{u.email || 'N/D'}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-gray-600">
+                              <FaPhone className="text-gray-300" size={10} />
+                              <span>{u.telefono || 'N/D'}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-gray-400 leading-tight italic">
+                              <FaMapMarkerAlt className="text-gray-300" size={9} />
+                              <span className="truncate max-w-[200px]" title={u.direccion}>{u.direccion || 'N/D'}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-5 text-center">
+                          <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                            isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
+                          }`}>
+                            {u.nombre_estado}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+          
+          <div className="p-4 bg-gray-50/50 border-t border-gray-100 flex justify-between items-center text-[10px] font-black text-gray-400 uppercase tracking-widest">
+            <span>Resultados: {filteredUsers.length}</span>
+            <span>Directorio Maestro UCEPARKING</span>
+          </div>
         </div>
       )}
     </Layout>

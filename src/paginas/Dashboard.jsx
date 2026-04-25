@@ -109,13 +109,17 @@ export default function Dashboard() {
       // 2. Mapas de Compromiso Separados
       const mapaReservas = new Set();
       const mapaAsignaciones = new Set();
+      const buffer15min = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       
       (reservasActivasData || []).forEach(res => { if (res.id_plaza) mapaReservas.add(res.id_plaza); });
       (asigData || []).forEach(asig => { if (asig.id_plaza) mapaAsignaciones.add(asig.id_plaza); });
       
       if (reservasZonasActivas?.length > 0) {
         reservasZonasActivas.forEach(rz => {
-          plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => mapaReservas.add(p.id_plaza));
+          // Bloqueo preventivo de 15 min para zonas
+          if (new Date(rz.fecha_hora_inicio) <= new Date(Date.now() + 15 * 60 * 1000)) {
+            plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => mapaReservas.add(p.id_plaza));
+          }
         });
       }
 

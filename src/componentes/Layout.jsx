@@ -61,13 +61,17 @@ export default function Layout({ children }) {
       // 2. Mapas de Compromiso Separados
       const mapaReservas = new Set();
       const mapaAsignaciones = new Set();
+      const buffer15min = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       
       (reservasActivasData || []).forEach(res => { if (res.id_plaza) mapaReservas.add(res.id_plaza); });
       (asigData || []).forEach(asig => { if (asig.id_plaza) mapaAsignaciones.add(asig.id_plaza); });
       
       if (reservasZonasActivas?.length > 0) {
         reservasZonasActivas.forEach(rz => {
-          rawPlazas.filter(p => p.id_zona === rz.id_zona).forEach(p => mapaReservas.add(p.id_plaza));
+          // Bloqueo preventivo de 15 min para zonas
+          if (new Date(rz.fecha_hora_inicio) <= new Date(Date.now() + 15 * 60 * 1000)) {
+            rawPlazas.filter(p => p.id_zona === rz.id_zona).forEach(p => mapaReservas.add(p.id_plaza));
+          }
         });
       }
 
@@ -81,30 +85,37 @@ export default function Layout({ children }) {
 
       // 5. Conteo Final (No excluyentes para mantener visibilidad de compromiso)
       const total = plazasFiltradas.length;
-      
-      // Vehículos estacionados: Presencia física real
       const ocupadasNum = plazasFiltradas.filter(p => mapaVehiculosFisicos.has(p.id_plaza)).length;
-
-      // Reservas y Asignadas: Total de compromiso (aunque tengan carro encima)
       const reservadasNum = plazasFiltradas.filter(p => p.id_estado === 3 || mapaReservas.has(p.id_plaza)).length;
       const asignadasNum = plazasFiltradas.filter(p => p.id_estado === 5 || mapaAsignaciones.has(p.id_plaza)).length;
-
-      // Libres reales: Estado LIBRE en DB y SIN vehículo y SIN reserva y SIN asignación
       const libresNum = plazasFiltradas.filter(p => 
         p.id_estado === 1 && 
         !mapaVehiculosFisicos.has(p.id_plaza) && 
         !mapaReservas.has(p.id_plaza) && 
         !mapaAsignaciones.has(p.id_plaza)
       ).length;
-      
-      // Actualizar stats
-      setStats({ 
-        total, 
-        ocupadas: ocupadasNum, 
-        reservadas: reservadasNum, 
-        asignadas: asignadasNum, 
-        libres: libresNum 
-      });
+
+      // 6. Detección de Conflictos (Vehículos en zonas con reserva inminente)
+      const zonasConflictivas = [];
+      if (reservasZonasActivas?.length > 0) {
+        reservasZonasActivas.forEach(rz => {
+          const tiempoParaInicio = (new Date(rz.fecha_hora_inicio) - new Date()) / 60000;
+          if (tiempoParaInicio > 0 && tiempoParaInicio <= 15) {
+            const hayVehiculos = plazasFiltradas.some(p => p.id_zona === rz.id_zona && mapaVehiculosFisicos.has(p.id_plaza));
+            if (hayVehiculos) {
+              zonasConflictivas.push(rz.zona?.nombre || 'Zona ' + rz.id_zona);
+            }
+          }
+        });
+      }
+
+      if (zonasConflictivas.length > 0) {
+        setAlertaBanner(`⚠️ ATENCIÓN: La(s) zona(s) [${zonasConflictivas.join(', ')}] tienen reservas en menos de 15 min y hay vehículos ocupándolas.`);
+      } else {
+        setAlertaBanner(null);
+      }
+
+      setStats({ total, ocupadas: ocupadasNum, reservadas: reservadasNum, asignadas: asignadasNum, libres: libresNum });
     } catch (error) {
       console.error("Monitor Error:", error.message);
     }
