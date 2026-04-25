@@ -115,7 +115,28 @@ export default function Usuarios() {
           };
         }).filter(u => u.id_rol !== ROL.VISITANTE);
 
-        setUsuarios(listaNormalizada);
+        // Enriquecer con tipo_persona y cargo
+        const listaEnriquecida = await Promise.all(listaNormalizada.map(async (u) => {
+          const { data: personaExtra } = await supabase
+            .from('persona')
+            .select('id_tipo_persona, tipo_persona(nombre, puede_reservar)')
+            .eq('id_persona', u.id_persona)
+            .maybeSingle();
+
+          const { data: empData } = await supabase
+            .from('empleado')
+            .select('id_cargo, cargo(nombre, nivel_privilegio)')
+            .eq('id_persona', u.id_persona)
+            .maybeSingle();
+
+          return {
+            ...u,
+            tipo_persona: personaExtra?.tipo_persona || null,
+            cargo: empData?.cargo || null
+          };
+        }));
+
+        setUsuarios(listaEnriquecida);
       }
     } catch (err) {
         console.error('loadData error:', err);
@@ -128,13 +149,18 @@ export default function Usuarios() {
     try {
       const [{ data: usrs }, { data: pers }] = await Promise.all([
         supabase.from('usuario').select('id, id_persona, rol_id, id_estado, created_at, estado:id_estado(nombre)').eq('organizacion_id', orgId),
-        supabase.from('persona').select('id_persona, nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, direccion')
+        supabase.from('persona').select('id_persona, nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, direccion, id_tipo_persona, tipo_persona(nombre, puede_reservar)')
       ]);
+      
+      // Obtener empleados para el cargo
+      const { data: emps } = await supabase.from('empleado').select('id_persona, id_cargo, cargo(nombre, nivel_privilegio)');
       
       if (!usrs) return;
 
       const lista = usrs.map(u => {
         const persona = (pers || []).find(p => p.id_persona === u.id_persona);
+        const empleado = (emps || []).find(e => e.id_persona === u.id_persona);
+        persona.cargo = empleado?.cargo || null;
         const rol = rolesDisponibles.find(r => r.id_rol === u.rol_id);
         return {
           id_usuario: u.id,
@@ -148,7 +174,9 @@ export default function Usuarios() {
           telefono:   persona?.telefono || '',
           cedula:     persona?.cedula   || '',
           nombre_rol: rol?.nombre       || 'Sin Rol',
-          created_at: u.created_at
+          created_at: u.created_at,
+          tipo_persona: persona?.tipo_persona || null,
+          cargo: persona?.cargo || null
         };
       }).filter(u => u.id_rol !== ROL.VISITANTE);
 
@@ -409,6 +437,9 @@ export default function Usuarios() {
                     <tr>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Usuario</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Rol</th>
+                      <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>
+                      <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Cargo</th>
+                      <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Nivel</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Fecha de Creación</th>
                       <th className="px-5 py-3 text-center text-xs font-bold text-gray-500 uppercase">Estado</th>
                       <th className="px-5 py-3 text-right text-xs font-bold text-gray-500 uppercase">Acciones</th>
@@ -440,6 +471,15 @@ export default function Usuarios() {
                           ) : (
                             <RoleBadge roleId={u.id_rol} roleName={u.nombre_rol} />
                           )}
+                        </td>
+                        <td className="px-5 py-3.5 text-sm text-gray-600">
+                          {u.tipo_persona?.nombre ?? '—'}
+                        </td>
+                        <td className="px-5 py-3.5 text-sm text-gray-600">
+                          {u.cargo?.nombre ?? '—'}
+                        </td>
+                        <td className="px-5 py-3.5 text-sm font-bold text-amber-600">
+                          {u.cargo?.nivel_privilegio ? `★ ${u.cargo.nivel_privilegio}` : '—'}
                         </td>
                         <td className="px-5 py-3.5 text-sm font-medium text-gray-900 border-l border-transparent">
                           {u.created_at ? new Date(u.created_at).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' }) : 'N/D'}
