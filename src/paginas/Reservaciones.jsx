@@ -109,8 +109,8 @@ export default function Reservaciones() {
             { data: catEst },
             { data: horarioData }
         ] = await Promise.all([
-            supabase.from('reserva').select('*, persona:id_persona(id_persona, nombre, apellido), plaza:id_plaza(id_plaza, numero_plaza), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
-            supabase.from('reserva_zona').select('*, zona:id_zona(id_zona, nombre), tipo:tipo_reserva_zona!id_tipo(nombre), persona:id_persona(id_persona, nombre, apellido), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
+            supabase.from('reserva').select('*, persona:id_persona(id_persona, nombre, apellido, condicion_salud, detalle_condicion_salud), plaza:id_plaza(id_plaza, numero_plaza), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
+            supabase.from('reserva_zona').select('*, zona:id_zona(id_zona, nombre), tipo:tipo_reserva_zona!id_tipo(nombre), persona:id_persona(id_persona, nombre, apellido, condicion_salud, detalle_condicion_salud), estado:estado_reserva!id_estado(nombre), codigo_reserva').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
             supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle(),
             supabase.rpc('get_usuarios_org'),
             supabase.from('estado_reserva').select('id_estado').ilike('nombre', 'Activa').maybeSingle(),
@@ -1021,7 +1021,14 @@ export default function Reservaciones() {
                       const isActive = nombreEstado === 'Activa' || r.id_estado === 1;
                       return (
                         <tr key={r.id_reserva} className={`transition-all text-sm ${isActive ? 'hover:bg-gray-50/50' : 'bg-gray-50/30 opacity-60 grayscale-[0.4]'}`}>
-                          <td className="px-6 py-4 font-bold text-gray-700">{r.persona?.nombre} {r.persona?.apellido}</td>
+                          <td className="px-6 py-4 font-bold text-gray-700">
+                            {r.persona?.nombre} {r.persona?.apellido}
+                            {r.persona?.condicion_salud && (
+                              <span className="ml-1.5 inline-flex items-center bg-amber-100 text-amber-700 text-[8px] font-black px-1 py-0.5 rounded border border-amber-200" title={r.persona?.detalle_condicion_salud || 'Condición de salud'}>
+                                ♿
+                              </span>
+                            )}
+                          </td>
                           <td className="px-6 py-4"><span className="bg-blue-50 text-blue-600 px-2 py-1 rounded-lg font-black text-xs">#{r.plaza?.numero_plaza}</span></td>
                           <td className="px-6 py-4 text-gray-500 font-medium">
                             {r.created_at ? new Date(r.created_at).toLocaleString('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '-'}
@@ -1074,6 +1081,7 @@ export default function Reservaciones() {
                   <thead className="bg-gray-50/50 sticky top-0 z-10 shadow-sm">
                     <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
                       <th className="px-6 py-4 text-left">Tipo</th>
+                      <th className="px-6 py-4 text-left">Código</th>
                       <th className="px-6 py-4 text-left">Zona / Plaza</th>
                       <th className="px-6 py-4 text-left">Inicio</th>
                       <th className="px-6 py-4 text-left">Fin</th>
@@ -1106,6 +1114,15 @@ export default function Reservaciones() {
                               : 'bg-orange-50/20'
                         }`}>
                           <td className="px-6 py-4 font-bold text-blue-600 uppercase text-[10px]">Por Zona</td>
+                          <td className="px-6 py-4">
+                            {rz.codigo_reserva ? (
+                              <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
+                                {rz.codigo_reserva}
+                              </span>
+                            ) : (
+                              <span className="text-gray-300 text-[10px]">—</span>
+                            )}
+                          </td>
                           <td className="px-6 py-4">
                             <div className="flex flex-col">
                               <span className="font-bold text-gray-700">{rz.zona?.nombre}</span>
@@ -1174,6 +1191,7 @@ export default function Reservaciones() {
                         <thead className="bg-gray-50/50 sticky top-0 z-10 shadow-sm">
                             <tr className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
                             <th className="px-6 py-3 text-left">Solicitante</th>
+                            <th className="px-6 py-3 text-left">Código</th>
                             <th className="px-6 py-3 text-left">Zona</th>
                             <th className="px-6 py-3 text-left">Fechas</th>
                             <th className="px-6 py-3 text-left">Descripción / Motivo</th>
@@ -1184,7 +1202,23 @@ export default function Reservaciones() {
                         <tbody className="bg-white divide-y divide-gray-50">
                             {aprobacionesPendientes.filter(rz => rz.id_estado !== 5 && `${rz.zona?.nombre} ${rz.persona?.nombre}`.toLowerCase().includes(searchTerm.toLowerCase())).map(rz => (
                                 <tr key={rz.id_reserva_zona} className="transition-all text-sm bg-gray-50/50 opacity-80 grayscale-[0.2]">
-                                <td className="px-6 py-3 font-bold text-gray-700">{rz.persona?.nombre} {rz.persona?.apellido}</td>
+                                <td className="px-6 py-3 font-bold text-gray-700">
+                                  {rz.persona?.nombre} {rz.persona?.apellido}
+                                  {rz.persona?.condicion_salud && (
+                                    <span className="ml-1.5 inline-flex items-center bg-amber-100 text-amber-700 text-[8px] font-black px-1 py-0.5 rounded border border-amber-200" title={rz.persona?.detalle_condicion_salud || 'Condición de salud'}>
+                                      ♿
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-3">
+                                  {rz.codigo_reserva ? (
+                                    <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
+                                      {rz.codigo_reserva}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300 text-[10px]">—</span>
+                                  )}
+                                </td>
                                 <td className="px-6 py-3 text-blue-600 font-black">{rz.zona?.nombre}</td>
                                 <td className="px-6 py-3">
                                     <div className="text-[10px] space-y-0.5">
@@ -1238,6 +1272,7 @@ export default function Reservaciones() {
                         <thead className="bg-orange-50/50 sticky top-0 z-10 shadow-sm">
                             <tr className="text-[10px] font-black text-orange-400 uppercase tracking-widest">
                             <th className="px-6 py-3 text-left">Solicitante</th>
+                            <th className="px-6 py-3 text-left">Código</th>
                             <th className="px-6 py-3 text-left">Zona</th>
                             <th className="px-6 py-3 text-left">Fechas</th>
                             <th className="px-6 py-3 text-left">Descripción / Motivo</th>
@@ -1248,7 +1283,23 @@ export default function Reservaciones() {
                         <tbody className="bg-white divide-y divide-gray-50">
                             {aprobacionesPendientes.filter(rz => rz.id_estado === 5 && `${rz.zona?.nombre} ${rz.persona?.nombre}`.toLowerCase().includes(searchTerm.toLowerCase())).map(rz => (
                                 <tr key={rz.id_reserva_zona} className="transition-all text-sm hover:bg-orange-50/30">
-                                <td className="px-6 py-4 font-bold text-gray-700">{rz.persona?.nombre} {rz.persona?.apellido}</td>
+                                <td className="px-6 py-4 font-bold text-gray-700">
+                                  {rz.persona?.nombre} {rz.persona?.apellido}
+                                  {rz.persona?.condicion_salud && (
+                                    <span className="ml-1.5 inline-flex items-center bg-amber-100 text-amber-700 text-[8px] font-black px-1 py-0.5 rounded border border-amber-200" title={rz.persona?.detalle_condicion_salud || 'Condición de salud'}>
+                                      ♿
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4">
+                                  {rz.codigo_reserva ? (
+                                    <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
+                                      {rz.codigo_reserva}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300 text-[10px]">—</span>
+                                  )}
+                                </td>
                                 <td className="px-6 py-4 text-blue-600 font-black">{rz.zona?.nombre}</td>
                                 <td className="px-6 py-4">
                                     <div className="text-[10px] space-y-0.5">
@@ -1289,7 +1340,7 @@ export default function Reservaciones() {
                             ))}
                             {aprobacionesPendientes.filter(rz => rz.id_estado === 5).length === 0 && (
                                 <tr>
-                                <td colSpan="6" className="px-6 py-12 text-center">
+                                <td colSpan="7" className="px-6 py-12 text-center">
                                     <div className="flex flex-col items-center gap-2 opacity-30 text-gray-400">
                                         <FaUserCheck size={32} />
                                         <p className="font-black uppercase tracking-tighter text-xs">No hay reservas por zona en espera</p>

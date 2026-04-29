@@ -70,7 +70,8 @@ export default function Usuarios() {
     telefono: '', cedula: '', sexo: '', fecha_nacimiento: '', 
     direccion: '', rol_id: '',
     id_tipo_persona: '', 
-    numero_carnet: '', id_facultad: '', id_carrera: '', año_academico: ''
+    numero_carnet: '', id_facultad: '', id_carrera: '', año_academico: '',
+    condicion_salud: false, detalle_condicion_salud: ''
   };
   const [formData, setFormData]     = useState(initialForm);
 
@@ -275,7 +276,9 @@ export default function Usuarios() {
       id_facultad: user.id_facultad || '',
       id_carrera: user.id_carrera || '',
       año_academico: user.año_academico || '',
-      contrasena: ''
+      contrasena: '',
+      condicion_salud: user.condicion_salud || false,
+      detalle_condicion_salud: user.detalle_condicion_salud || ''
     });
     setChangingRolFor(null);
   };
@@ -310,7 +313,8 @@ export default function Usuarios() {
     const { 
       nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, 
       direccion, rol_id, contrasena, id_tipo_persona,
-      numero_carnet, id_facultad, id_carrera, año_academico
+      numero_carnet, id_facultad, id_carrera, año_academico,
+      condicion_salud, detalle_condicion_salud
     } = formData;
 
     try {
@@ -318,7 +322,7 @@ export default function Usuarios() {
 
       if (isUpdating) {
         // 1. Actualizar Persona
-        const { error: pErr } = await supabase.from('persona')
+        const { data: updatedPersona, error: pErr } = await supabase.from('persona')
           .update({ 
             nombre, 
             apellido, 
@@ -328,10 +332,16 @@ export default function Usuarios() {
             sexo, 
             fecha_nacimiento: fecha_nacimiento || null, 
             direccion,
-            id_tipo_persona: parseInt(id_tipo_persona)
+            id_tipo_persona: parseInt(id_tipo_persona),
+            condicion_salud: !!condicion_salud,
+            detalle_condicion_salud: condicion_salud ? (detalle_condicion_salud || null) : null
           })
-          .eq('id_persona', editingUser.id_persona);
+          .eq('id_persona', editingUser.id_persona)
+          .select('id_persona, id_tipo_persona');
         if (pErr) throw pErr;
+        if (!updatedPersona || updatedPersona.length === 0) {
+          throw new Error('No se pudo actualizar la persona. Es posible que no tengas permisos suficientes (RLS).');
+        }
 
         // 2. Actualizar/Crear datos de Estudiante
         if (parseInt(id_tipo_persona) === 1) { // 1 = Estudiante
@@ -739,6 +749,32 @@ export default function Usuarios() {
                   <textarea name="direccion" rows="3" value={formData.direccion} onChange={handleChange} className="w-full border p-2 rounded text-sm resize-none" placeholder="Escribe la dirección detallada..."></textarea>
                 </div>
 
+                {/* Condición de Salud */}
+                <div className="bg-amber-50/50 border border-amber-100 rounded-lg p-3 space-y-2">
+                  <label className="flex items-center gap-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={formData.condicion_salud}
+                      onChange={e => setFormData(prev => ({ ...prev, condicion_salud: e.target.checked, detalle_condicion_salud: e.target.checked ? prev.detalle_condicion_salud : '' }))}
+                      className="w-4 h-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500"
+                    />
+                    <span className="text-xs font-bold text-amber-700">♿ Condición de salud / Movilidad reducida</span>
+                  </label>
+                  {formData.condicion_salud && (
+                    <div className="animate-fadeIn">
+                      <label className="block text-[10px] font-bold text-amber-500 uppercase mb-1">Detalle de la condición</label>
+                      <input
+                        type="text"
+                        name="detalle_condicion_salud"
+                        value={formData.detalle_condicion_salud}
+                        onChange={handleChange}
+                        placeholder="Ej: Silla de ruedas, movilidad reducida..."
+                        className="w-full border-amber-200 border p-2 rounded text-sm bg-white"
+                      />
+                    </div>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo de Persona *</label>
@@ -974,7 +1010,14 @@ export default function Usuarios() {
                               {u.nombre?.[0]?.toUpperCase()}{u.apellido?.[0]?.toUpperCase()}
                             </div>
                             <div>
-                              <p className="text-sm font-bold text-gray-800 leading-none mb-1">{u.nombre} {u.apellido}</p>
+                              <p className="text-sm font-bold text-gray-800 leading-none mb-1">
+                                {u.nombre} {u.apellido}
+                                {u.condicion_salud && (
+                                  <span className="ml-2 inline-flex items-center gap-1 bg-amber-100 text-amber-700 text-[9px] font-black px-1.5 py-0.5 rounded-md border border-amber-200" title={u.detalle_condicion_salud || 'Condición de salud'}>
+                                    ♿ {u.detalle_condicion_salud ? u.detalle_condicion_salud : 'Cond. Salud'}
+                                  </span>
+                                )}
+                              </p>
                               <div className="flex items-center gap-2">
                                 <span className="text-[10px] font-black text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">CED: {u.cedula || 'N/D'}</span>
                                 {u.sexo && <span className="text-[10px] font-bold text-gray-400">{u.sexo === 'M' ? 'M' : 'F'}</span>}
@@ -984,9 +1027,9 @@ export default function Usuarios() {
                         </td>
                         <td className="px-6 py-5">
                           <div className="space-y-1">
-                            {searchMode === 'employee' || (u.id_tipo_persona !== 1 && u.cargo) ? (
+                            {searchMode === 'employee' || (u.id_tipo_persona !== 1 && (typeof u.cargo === 'object' ? u.cargo?.nombre : u.cargo)) ? (
                               <>
-                                <p className="text-xs font-bold text-purple-600 leading-tight">Cargo: <span className="text-gray-700">{u.cargo || 'N/D'}</span></p>
+                                <p className="text-xs font-bold text-purple-600 leading-tight">Cargo: <span className="text-gray-700">{typeof u.cargo === 'object' ? u.cargo?.nombre : u.cargo || 'N/D'}</span></p>
                                 <p className="text-[10px] text-gray-400 uppercase font-black truncate max-w-[200px]" title={u.nombre_departamento}>{u.nombre_departamento || 'Sin Depto'}</p>
                               </>
                             ) : (

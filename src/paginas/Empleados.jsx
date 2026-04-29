@@ -88,16 +88,28 @@ export default function Empleados() {
   // ── El log usa `registrarLog` global ──
 
   const cargarEmpleados = async (deptList) => {
-    const { data: emps } = await supabase
+    let emps = null;
+    
+    // Intentar con JOIN completo incluyendo tipo_persona
+    const { data: empsData, error: empErr } = await supabase
       .from('empleado')
       .select(`
         *, 
         estado:id_estado(nombre),
         cargo:id_cargo(nombre, nivel_privilegio),
-        persona:id_persona(nombre, apellido, email, id_tipo_persona, tipo_persona(nombre))
+        persona:id_persona(nombre, apellido, email, id_tipo_persona)
       `)
       .eq('organizacion_id', orgId)
       .order('id_empleado');
+
+    if (empErr) {
+      console.error('Error cargando empleados:', empErr.message);
+    }
+    emps = empsData;
+
+    // Traer tipos de persona por separado para evitar el error de FK duplicada
+    const { data: tiposData } = await supabase.from('tipo_persona').select('id_tipo_persona, nombre');
+    const tipoMap = Object.fromEntries((tiposData || []).map(t => [t.id_tipo_persona, t.nombre]));
 
     const { data: orgUsers, error: rpcErr } = await supabase.rpc('get_usuarios_org');
     if (rpcErr) console.warn('get_usuarios_org error:', rpcErr.message);
@@ -119,7 +131,7 @@ export default function Empleados() {
         nombre_depto:    depto?.nombre || 'Sin Depto',
         nombre_cargo:    emp.cargo?.nombre || 'Sin Cargo',
         nivel_cargo:     emp.cargo?.nivel_privilegio || 1,
-        nombre_tipo:     emp.persona?.tipo_persona?.nombre || 'N/A'
+        nombre_tipo:     tipoMap[emp.persona?.id_tipo_persona] || 'N/A'
       };
     }).sort((a,b) => {
       const na = `${a.nombre} ${a.apellido}`.toLowerCase();

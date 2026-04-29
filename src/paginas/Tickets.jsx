@@ -5,8 +5,10 @@ import Swal from 'sweetalert2';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   FaTicketAlt, FaUserPlus, FaPrint, FaSignOutAlt,
-  FaClipboardCheck, FaSyncAlt, FaBan, FaTimes, FaHistory
+  FaClipboardCheck, FaSyncAlt, FaBan, FaTimes, FaHistory, FaQrcode,
+  FaCheckCircle, FaTimesCircle, FaUser, FaMapMarkerAlt, FaClock, FaCar
 } from 'react-icons/fa';
+import { accessApi } from '../lib/api';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
@@ -110,6 +112,24 @@ const calcTiempo = (inicio, fin) => {
   return diff < 60 ? `${diff} min` : `${Math.floor(diff / 60)}h ${diff % 60}min`;
 };
 
+function InfoCard({ icon, label, value, color = 'gray', mono = false }) {
+  const colors = {
+    blue:   'bg-blue-50 border-blue-100 text-blue-700',
+    gray:   'bg-gray-50 border-gray-200 text-gray-700',
+    purple: 'bg-purple-50 border-purple-100 text-purple-700',
+    amber:  'bg-amber-50 border-amber-100 text-amber-700',
+    green:  'bg-green-50 border-green-100 text-green-700',
+  };
+  return (
+    <div className={`rounded-xl border px-4 py-3 ${colors[color] || colors.gray}`}>
+      <div className="flex items-center gap-1.5 mb-1 text-[9px] font-black uppercase tracking-widest opacity-60">
+        {icon} {label}
+      </div>
+      <p className={`text-sm font-bold truncate ${mono ? 'font-mono tracking-wider' : ''}`}>{value}</p>
+    </div>
+  );
+}
+
 export default function Tickets() {
   const { tienePermiso } = useRbac();
   const { orgId } = useOrg();
@@ -128,6 +148,13 @@ export default function Tickets() {
   const [listaModelos,         setListaModelos]         = useState([]);
   const [listaColores,         setListaColores]         = useState([]);
   const [ticketParaImprimir,   setTicketParaImprimir]   = useState(null);
+
+  // Estado para validación por código
+  const [codigoInput,          setCodigoInput]          = useState('');
+  const [codigoValidando,      setCodigoValidando]      = useState(false);
+  const [codigoResultado,      setCodigoResultado]      = useState(null);
+  const [codigoError,          setCodigoError]          = useState(null);
+  const [emitiendo,            setEmitiendo]            = useState(false);
 
   // CAMBIO: formulario sin id_visitante — datos inline
   const [visitanteForm, setVisitanteForm] = useState({
@@ -156,7 +183,7 @@ export default function Tickets() {
       const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
       const hoyISO = hoy.toISOString();
 
-      // CAMBIO: SELECT sin JOIN a visitante — campos inline
+      // CAMBIO: SELECT sin JOIN a visitante — campos inline + codigo_reserva
       let query = supabase.from('ticket').select(`
         id_ticket,
         placa_capturada,
@@ -174,6 +201,7 @@ export default function Tickets() {
         visitante_telefono,
         visitante_sexo,
         descripcion,
+        id_codigo_reserva,
         plaza:id_plaza_asignada(numero_plaza),
         marca:id_marca_capturada(nombre),
         modelo:id_modelo_capturado(nombre),
@@ -427,6 +455,124 @@ export default function Tickets() {
     setLoading(false);
   };
 
+  // ── VALIDAR CÓDIGO DE RESERVA ──────────────────────────────────────────────
+  const handleValidarCodigo = async () => {
+    const cod = codigoInput.trim().toUpperCase();
+    if (!cod) return;
+    setCodigoValidando(true);
+    setCodigoResultado(null);
+    setCodigoError(null);
+    try {
+      const { data, error } = await supabase.rpc('validar_entrada_por_codigo', { codigo: cod });
+      if (error) throw new Error(error.message);
+      if (!data) throw new Error('Sin respuesta del servidor');
+      if (data.valido) {
+        setCodigoResultado(data);
+      } else {
+        setCodigoError(data.mensaje || 'Código no válido');
+      }
+    } catch (err) {
+      setCodigoError(err.message);
+    } finally {
+      setCodigoValidando(false);
+    }
+  };
+
+  // ── EMITIR TICKET VINCULADO A CÓDIGO ──────────────────────────────────────
+  const handleEmitirTicketPorCodigo = async () => {
+    if (!codigoResultado || !orgId) return;
+    setEmitiendo(true);
+    try {
+      const d = codigoResultado;
+      const placa = d.placa_vehiculo || 'SIN-PLACA';
+      const ahora = new Date().toISOString();
+      const finReserva = d.fecha_hora_fin ? new Date(d.fecha_hora_fin).toISOString() : null;
+
+      // Buscar una plaza libre en la zona de la reserva
+      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
+      const idEstLibrePlaza = epLibre?.id_estado || 1;
+
+      const { data: plazaLibre } = await supabase
+        .from('plaza')
+        .select('id_plaza, numero_plaza')
+        .eq('id_zona', d.id_zona)
+        .eq('id_estado', idEstLibrePlaza)
+        .eq('organizacion_id', orgId)
+        .limit(1)
+        .maybeSingle();
+
+      if (!plazaLibre) throw new Error('No hay plazas libres en la zona de esta reserva');
+
+      const { data: stActivo } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
+      const { data: epOcupada } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Ocupad%').maybeSingle();
+      const idEstActivoTk = stActivo?.id_estado || 1;
+      const idEstOcupPlaza = epOcupada?.id_estado || 2;
+
+      const { data: nuevoTicket, error: tErr } = await supabase
+        .from('ticket')
+        .insert([{
+          placa_capturada: placa,
+          id_plaza_asignada: plazaLibre.id_plaza,
+          id_estado: idEstActivoTk,
+          fecha_hora_emision: ahora,
+          fecha_hora_vencimiento: finReserva,
+          organizacion_id: orgId,
+          visitante_nombre: d.nombre || null,
+          visitante_apellido: d.apellido || null,
+          visitante_telefono: d.telefono || null,
+          descripcion: `Entrada por código: ${codigoInput.trim().toUpperCase()}`,
+          id_codigo_reserva: codigoInput.trim().toUpperCase()
+        }])
+        .select(`
+          id_ticket, placa_capturada, fecha_hora_emision, fecha_hora_vencimiento,
+          id_plaza_asignada, id_estado, id_codigo_reserva, descripcion,
+          visitante_nombre, visitante_apellido, visitante_telefono,
+          plaza:id_plaza_asignada(numero_plaza),
+          marca:id_marca_capturada(nombre),
+          modelo:id_modelo_capturado(nombre),
+          color:id_color_capturado(nombre)
+        `)
+        .single();
+
+      if (tErr) throw tErr;
+
+      // Ocupar plaza
+      await supabase.from('plaza').update({ id_estado: idEstOcupPlaza }).eq('id_plaza', plazaLibre.id_plaza);
+
+      // Log
+      await registrarLog('Ticket Emitido', `Ticket por código ${codigoInput.trim().toUpperCase()} — ${d.nombre || ''} ${d.apellido || ''} — Placa: ${placa} — Plaza: ${plazaLibre.numero_plaza}`, plazaLibre.id_plaza);
+
+      // Abrir barrera
+      try {
+        await accessApi.openMain();
+      } catch (_) {}
+
+      // Preparar impresión
+      setTicketParaImprimir({
+        ...nuevoTicket,
+        _statusName: 'Activo',
+        _personaNombre: `${d.nombre || ''} ${d.apellido || ''}`.trim() || 'Reservista',
+        _marcaNombre: nuevoTicket.marca?.nombre || null,
+        _modeloNombre: nuevoTicket.modelo?.nombre || null,
+        _colorNombre: nuevoTicket.color?.nombre || null,
+        _horaSalida: null,
+      });
+
+      // Limpiar
+      setCodigoInput('');
+      setCodigoResultado(null);
+      setCodigoError(null);
+      setActiveTab('activos');
+      loadData();
+
+      Swal.fire({ title: 'Ticket Emitido', text: `Plaza ${plazaLibre.numero_plaza} asignada. Barrera abriéndose.`, icon: 'success', timer: 2500, showConfirmButton: false });
+    } catch (err) {
+      Swal.fire('Error', err.message, 'error');
+    } finally {
+      setEmitiendo(false);
+    }
+  };
+
   // ── CERRAR TICKET (registrar salida) ─────────────────────────────────────
   // CAMBIO: ticket no tiene salida_at — solo cambiamos id_estado a Cerrado
   const handleCerrarTicket = async (ticket) => {
@@ -559,6 +705,7 @@ export default function Tickets() {
 
       <div className="flex gap-2 border-b border-gray-200 mb-8">
         {tabBtn('entrada', 'Nueva Entrada', <FaTicketAlt />)}
+        {tabBtn('codigo', 'Entrada por Código', <FaQrcode />)}
         {tabBtn('activos', 'Tickets Activos', <FaClipboardCheck />)}
         {tabBtn('historial', 'Historial', <FaHistory />)}
       </div>
@@ -777,6 +924,107 @@ export default function Tickets() {
         </div>
       )}
 
+      {/* ── TAB ENTRADA POR CÓDIGO ── */}
+      {activeTab === 'codigo' && (
+        <section className="max-w-3xl">
+          <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
+            <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-gray-800">
+              <FaQrcode className="text-purple-600" /> Validar Código de Reserva
+            </h3>
+            <p className="text-xs text-gray-400 mb-4">Ingrese el código alfanumérico de la reserva (ej: UCE-20260429-A3K9M). El sistema verificará vigencia y datos del usuario.</p>
+
+            <div className="flex gap-3 mb-6">
+              <input
+                type="text"
+                className="flex-1 border-2 border-purple-200 focus:border-purple-500 rounded-xl p-3 text-base font-mono font-bold uppercase tracking-widest text-center bg-gray-50 outline-none transition-all"
+                placeholder="UCE-20260429-XXXXX"
+                value={codigoInput}
+                onChange={e => setCodigoInput(e.target.value.toUpperCase())}
+                onKeyDown={e => { if (e.key === 'Enter') handleValidarCodigo(); }}
+                maxLength={25}
+              />
+              <button
+                onClick={handleValidarCodigo}
+                disabled={codigoValidando || !codigoInput.trim()}
+                className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 shadow-md active:scale-95"
+              >
+                {codigoValidando ? (
+                  <FaSyncAlt className="animate-spin" />
+                ) : (
+                  <FaQrcode />
+                )}
+                Validar
+              </button>
+            </div>
+
+            {/* Error */}
+            {codigoError && (
+              <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-5 flex items-start gap-4 animate-fadeIn">
+                <FaTimesCircle className="text-red-500 text-2xl flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-red-700 text-sm">Código No Válido</p>
+                  <p className="text-red-600 text-xs mt-1">{codigoError}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Resultado válido */}
+            {codigoResultado && codigoResultado.valido && (
+              <div className="animate-fadeIn">
+                <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-2xl p-6 space-y-4">
+                  {/* Header */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center shadow-md">
+                        <FaCheckCircle className="text-white text-xl" />
+                      </div>
+                      <div>
+                        <p className="font-black text-emerald-700 text-lg">Código Válido</p>
+                        <p className="text-emerald-600 text-[10px] font-bold uppercase tracking-wider">{codigoResultado.mensaje}</p>
+                      </div>
+                    </div>
+                    <span className="bg-emerald-600 text-white font-mono font-black text-xs px-3 py-1.5 rounded-lg shadow">
+                      {codigoInput.trim().toUpperCase()}
+                    </span>
+                  </div>
+
+                  {/* Info Grid */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <InfoCard icon={<FaUser />} label="Nombre" value={`${codigoResultado.nombre || ''} ${codigoResultado.apellido || ''}`.trim() || '—'} color="blue" />
+                    <InfoCard icon={<FaCar />} label="Placa" value={codigoResultado.placa_vehiculo || 'Sin placa'} color="gray" mono />
+                    <InfoCard icon={<FaMapMarkerAlt />} label="Zona" value={codigoResultado.zona_nombre || '—'} color="purple" />
+                    <InfoCard icon={<FaClock />} label="Vigencia" value={
+                      codigoResultado.fecha_hora_inicio && codigoResultado.fecha_hora_fin
+                        ? `${new Date(codigoResultado.fecha_hora_inicio).toLocaleString('es-DO', { hour: '2-digit', minute: '2-digit', hour12: true })} — ${new Date(codigoResultado.fecha_hora_fin).toLocaleString('es-DO', { hour: '2-digit', minute: '2-digit', hour12: true })}`
+                        : '—'
+                    } color="amber" />
+                  </div>
+
+                  {codigoResultado.telefono && (
+                    <div className="bg-white/60 rounded-lg px-4 py-2 text-xs text-gray-600">
+                      📞 Teléfono: <span className="font-bold">{codigoResultado.telefono}</span>
+                    </div>
+                  )}
+
+                  {/* Botón Emitir */}
+                  <button
+                    onClick={handleEmitirTicketPorCodigo}
+                    disabled={emitiendo}
+                    className="w-full bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white py-4 rounded-xl font-black tracking-wide text-base transition-all shadow-lg flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-50"
+                  >
+                    {emitiendo ? (
+                      <><FaSyncAlt className="animate-spin" /> Procesando...</>
+                    ) : (
+                      <><FaTicketAlt size={18} /> EMITIR TICKET Y ABRIR BARRERA</>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* ── TAB ACTIVOS / HISTORIAL ── */}
       {(activeTab === 'activos' || activeTab === 'historial') && (
         <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden text-nowrap">
@@ -825,6 +1073,7 @@ export default function Tickets() {
                     <th className="px-5 py-4 text-left">Ticket</th>
                     <th className="px-5 py-4 text-left">Visitante</th>
                     <th className="px-5 py-4 text-left">Placa</th>
+                    <th className="px-5 py-4 text-left">Código Reserva</th>
                     <th className="px-5 py-4 text-left">Estado</th>
                     <th className="px-5 py-4 text-left">Plaza</th>
                     <th className="px-5 py-4 text-left">Entrada</th>
@@ -860,6 +1109,15 @@ export default function Tickets() {
                             <span className="bg-gray-900 text-white font-mono text-[10px] px-2 py-1 rounded-md shadow-sm">
                               {t.placa_capturada}
                             </span>
+                          </td>
+                          <td className="px-5 py-4">
+                            {t.id_codigo_reserva ? (
+                              <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
+                                {t.id_codigo_reserva}
+                              </span>
+                            ) : (
+                              <span className="text-gray-300 text-[10px]">—</span>
+                            )}
                           </td>
                           <td className="px-5 py-4">
                             <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase ${cls}`}>

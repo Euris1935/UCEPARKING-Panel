@@ -31,6 +31,13 @@ export const accessApi = {
   openMain: () => apiFetch('/access/open-main', { method: 'POST' }),
   openVip: () => apiFetch('/access/open-vip', { method: 'POST' }),
   openExit: () => apiFetch('/access/open-exit', { method: 'POST' }),
+  validarCodigo: async (codigo) => {
+    const res = await apiFetch('/access/validar-codigo', {
+      method: 'POST',
+      body: JSON.stringify({ codigo })
+    });
+    return res.json();
+  },
 };
 
 export const reportsApi = {
