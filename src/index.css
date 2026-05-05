@@ -11,3 +11,32 @@ body {
   font-family: 'Roboto', sans-serif; 
 }
 /* Asegúrate de añadir la etiqueta <link> para Roboto en tu public/index.html */
+
+@media print {
+  /* Ocultar TODO por defecto en la página */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Mostrar SOLO el contenedor del ticket y todo su contenido */
+  #ticket-print-container, #ticket-print-container * {
+    visibility: visible;
+  }
+  
+  /* Posicionar el ticket en la esquina superior izquierda sin márgenes */
+  #ticket-print-container {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 80mm !important; /* Forzar el ancho estándar de impresora térmica */
+    background: white !important;
+    display: block !important; /* Quitar flexbox para evitar centrados extraños en el papel */
+  }
+
+  /* Quitar los márgenes automáticos que agregan los navegadores al imprimir */
+  @page {
+    margin: 0;
+  }
+}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { QRCodeSVG } from 'qrcode.react';
+import Barcode from 'react-barcode';
 import {
   FaTicketAlt, FaUserPlus, FaPrint, FaSignOutAlt,
   FaClipboardCheck, FaSyncAlt, FaBan, FaTimes, FaHistory, FaQrcode,
@@ -25,69 +25,117 @@ import SearchableSelect from '../componentes/SearchableSelect';
 function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
   const handlePrint = () => window.print();
 
-  const calcTiempoTicket = () => {
-    if (ticket._statusName === 'Cerrado' && ticket._horaSalida) {
-      const diff = Math.floor((new Date(ticket._horaSalida) - new Date(ticket.fecha_hora_emision)) / 60000);
-      return diff < 60 ? `${diff} min` : `${Math.floor(diff / 60)}h ${diff % 60}min`;
-    }
-    return null;
-  };
-
-  const qrData = `TICKET-${ticket.id_ticket}-${ticket.placa_capturada}`;
+  // Formato largo solicitado: TICKET-ID-PLACA
+  const barcodeData = `TICKET-${ticket.id_ticket}-${ticket.placa_capturada || 'GENERAL'}`;
+  
+  // Custom date format for receipt
+  const dateObj = new Date(ticket.fecha_hora_emision);
+  const formattedDate = dateObj.toLocaleDateString('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const formattedTime = dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 print:p-0 print:bg-transparent">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm flex flex-col max-h-[95vh] print:max-h-none print:shadow-none overflow-hidden print:overflow-visible">
-        <div className="bg-green-700 text-white p-5 text-center relative shrink-0">
-          <h2 className="text-2xl font-extrabold tracking-widest">UCE PARKING</h2>
-          <p className="text-green-200 text-xs mt-1">TICKET DE ACCESO / VISITANTE</p>
-          {esReimpresion && (
-            <div className="absolute top-2 right-2 bg-yellow-400 text-yellow-900 text-[9px] font-black px-2 py-0.5 rounded rotate-12 border border-yellow-600 shadow">
-              ⚠ REIMPRESIÓN
+    <div id="ticket-print-container" className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 print:p-0 print:bg-transparent">
+      {/* Container simulating the thermal receipt */}
+      <div className="bg-white shadow-2xl w-full max-w-[80mm] flex flex-col max-h-[95vh] print:max-h-none print:shadow-none print:w-[80mm] print:max-w-[80mm] print:border print:border-dashed print:border-gray-400 overflow-hidden print:overflow-visible text-black font-sans leading-tight">
+        
+        {/* Receipt Header */}
+        <div className="pt-4 pb-1 px-4 text-center shrink-0">
+          <div className="flex items-center justify-center gap-1.5 mb-1">
+            <div 
+              className="bg-[#15803d] text-white rounded text-base font-black px-1.5 py-0.5 leading-none" 
+              style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
+            >
+              P
             </div>
-          )}
-        </div>
-        <div id="ticket-print-area" className="p-5 space-y-3 text-base flex-1 overflow-y-auto print:overflow-visible">
-          <Row label="N° Ticket" value={`#${String(ticket.id_ticket).padStart(6, '0')}`} bold />
-          {esReimpresion && (
-            <p className="text-center text-[10px] font-bold text-yellow-600 bg-yellow-50 border border-yellow-200 rounded px-2 py-1">
-              ⚠ COPIA — TICKET REIMPRESO
-            </p>
-          )}
-          <hr />
-          {/* CAMBIO: visitante_nombre/apellido directo de ticket */}
-          <Row label="Visitante" value={`${ticket.visitante_nombre || ''} ${ticket.visitante_apellido || ''}`.trim() || 'Visitante General'} />
-          {ticket.visitante_telefono && <Row label="Teléfono" value={ticket.visitante_telefono} />}
-          <Row label="Placa" value={ticket.placa_capturada} bold mono />
-          <Row label="Marca"  value={ticket._marcaNombre  || '—'} />
-          <Row label="Modelo" value={ticket._modeloNombre || '—'} />
-          <Row label="Color"  value={ticket._colorNombre  || '—'} />
-          <hr />
-          <Row label="Entrada" value={new Date(ticket.fecha_hora_emision).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })} />
-          {ticket._horaSalida && (
-            <Row label="Salida" value={new Date(ticket._horaSalida).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' })} />
-          )}
-          <Row label="Plaza"  value={ticket.plaza?.numero_plaza || `#${ticket.id_plaza_asignada}`} bold />
-          <Row label="Estado" value={ticket._statusName || '—'} />
-          {ticket.descripcion?.trim() && (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-              <p className="text-[10px] text-gray-400 font-bold uppercase mb-0.5">Motivo de visita</p>
-              <p className="text-xs text-gray-700">{ticket.descripcion}</p>
-            </div>
-          )}
-          <hr />
-          <div className="flex justify-center py-2">
-            <QRCodeSVG value={qrData} size={120} level="M" />
+            <h2 
+              className="text-lg font-extrabold tracking-tight text-[#15803d]"
+              style={{ WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}
+            >
+              UCE PARKING
+            </h2>
           </div>
-          <p className="text-center text-[10px] text-gray-400 mt-1">
-            Presente este código QR al salir del parqueo.
-          </p>
+          {esReimpresion && (
+            <p className="text-[10px] font-bold text-black mt-1">*** REIMPRESIÓN ***</p>
+          )}
         </div>
-        <div className="flex gap-3 p-4 border-t print:hidden">
-          <button onClick={handlePrint} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-bold flex items-center justify-center gap-2">
+        
+        <div className="px-4">
+          <hr className="border-t-[1.5px] border-black border-dashed my-1" />
+        </div>
+
+        {/* Receipt Body */}
+        <div id="ticket-print-area" className="px-4 py-2 flex flex-col gap-2 flex-1 overflow-y-auto print:overflow-visible">
+          
+          <StackedRow label="NUMERO DE TICKET" value={ticket.id_ticket.toString()} />
+          <StackedRow label="FECHA DE EMISION" value={`${formattedDate} ${formattedTime}`} />
+          
+          <StackedRow 
+            label="VISITANTE" 
+            value={`${ticket.visitante_nombre || ''} ${ticket.visitante_apellido || ''}`.trim() || 'Visitante General'} 
+          />
+
+          {/* Dos columnas para ahorrar espacio */}
+          <div className="flex justify-between gap-2">
+            <div className="flex-1">
+              <StackedRow label="PLACA" value={ticket.placa_capturada} />
+            </div>
+            <div className="flex-1">
+              <StackedRow label="PLAZA" value={ticket.plaza?.numero_plaza || `#${ticket.id_plaza_asignada}`} />
+            </div>
+          </div>
+
+          {(ticket._marcaNombre || ticket._colorNombre) && (
+            <StackedRow label="VEHICULO" value={`${ticket._marcaNombre || ''} ${ticket._modeloNombre || ''} ${ticket._colorNombre ? '- '+ticket._colorNombre : ''}`.trim()} smallValue />
+          )}
+
+          {/* Dos columnas para Estado y Salida */}
+          <div className="flex justify-between gap-2">
+            <div className="flex-1">
+              <StackedRow label="ESTADO" value={ticket._statusName || '—'} smallValue />
+            </div>
+            {ticket._horaSalida && (
+              <div className="flex-1">
+                <StackedRow 
+                  label="SALIDA" 
+                  value={`${new Date(ticket._horaSalida).toLocaleDateString('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric' })} ${new Date(ticket._horaSalida).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`} 
+                  smallValue
+                />
+              </div>
+            )}
+          </div>
+
+          {ticket.descripcion?.trim() && (
+            <StackedRow label="MOTIVO" value={ticket.descripcion} smallValue />
+          )}
+
+          <div className="mt-2 pt-2 border-t-[1.5px] border-black border-dashed text-center">
+            <p className="text-[10px] font-bold uppercase mb-0.5 text-black">ANTES DE SALIR</p>
+            <p className="text-[11px] text-black">Coloque el ticket en el escáner para la salida.</p>
+          </div>
+
+          <div className="flex flex-col items-center justify-center pt-2 pb-1 overflow-hidden">
+            <Barcode 
+              value={barcodeData} 
+              width={1.1} 
+              height={40} 
+              fontSize={11}
+              margin={0}
+              displayValue={true} 
+            />
+          </div>
+
+          <div className="text-center space-y-0.5 pb-2 text-black">
+            <p className="text-[9px]">Conserve este ticket</p>
+            <p className="text-[8px] mt-1">www.uceparking.com</p>
+          </div>
+        </div>
+
+        {/* Web UI Buttons (Hidden in Print) */}
+        <div className="flex gap-3 p-4 border-t print:hidden bg-gray-50">
+          <button onClick={handlePrint} className="flex-1 bg-gray-900 hover:bg-black text-white py-2.5 rounded font-bold flex items-center justify-center gap-2">
             <FaPrint /> Imprimir
           </button>
-          <button onClick={onClose} className="flex-1 border border-gray-300 text-gray-600 hover:bg-gray-50 py-2 rounded-lg font-bold">
+          <button onClick={onClose} className="flex-1 border-2 border-gray-300 text-gray-700 hover:bg-gray-100 py-2.5 rounded font-bold">
             Cerrar
           </button>
         </div>
@@ -96,11 +144,12 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
   );
 }
 
-function Row({ label, value, bold, mono }) {
+function StackedRow({ label, value, smallValue = false }) {
+  if (!value) return null;
   return (
-    <div className="flex justify-between items-center">
-      <span className="text-gray-500">{label}</span>
-      <span className={`${bold ? 'font-bold text-gray-900' : 'text-gray-700'} ${mono ? 'font-mono bg-gray-900 text-white px-2 py-0.5 rounded' : ''}`}>
+    <div className="flex flex-col">
+      <span className="text-[9px] text-black font-semibold uppercase">{label}</span>
+      <span className={`${smallValue ? 'text-[12px]' : 'text-[14px]'} font-bold text-black leading-none mt-0.5`}>
         {value}
       </span>
     </div>
@@ -285,6 +334,8 @@ export default function Tickets() {
         const noEsAsignada = !plazasAsignadasIds.has(p.id_plaza);
         
         return estZona === 'Activa' && esLibreDB && noEstaOcupadaDinamica && noEsAsignada;
+      }).sort((a, b) => {
+        return (a.numero_plaza || '').localeCompare(b.numero_plaza || '', undefined, { numeric: true, sensitivity: 'base' });
       });
 
       // Obtener currentPersonaId
@@ -395,10 +446,12 @@ export default function Tickets() {
           id_marca_capturada:   visitanteForm.id_marca  ? parseInt(visitanteForm.id_marca)  : null,
           id_modelo_capturado:  visitanteForm.id_modelo ? parseInt(visitanteForm.id_modelo) : null,
           id_color_capturado:   visitanteForm.id_color  ? parseInt(visitanteForm.id_color)  : null,
+          // Código de reserva
+          id_codigo_reserva:    codigoResultado ? codigoInput.trim().toUpperCase() : null,
         }])
         .select(`
           id_ticket, placa_capturada, fecha_hora_emision, fecha_hora_vencimiento,
-          id_plaza_asignada, id_estado, descripcion,
+          id_plaza_asignada, id_estado, descripcion, id_codigo_reserva,
           visitante_nombre, visitante_apellido, visitante_telefono, visitante_sexo,
           plaza:id_plaza_asignada(numero_plaza),
           marca:id_marca_capturada(nombre),
@@ -438,12 +491,15 @@ export default function Tickets() {
         _horaSalida:   null,
       });
 
-      // Limpiar formulario
+      // Limpiar formulario y código
       setVisitanteForm({
         nombre: '', apellido: '', telefono: '', sexo: 'M',
         placa: '', id_marca: '', id_modelo: '', id_color: '',
         id_plaza: '', duracion: '60', descripcion: ''
       });
+      setCodigoInput('');
+      setCodigoResultado(null);
+      setCodigoError(null);
 
       setActiveTab('activos');
       loadData();
@@ -463,11 +519,17 @@ export default function Tickets() {
     setCodigoResultado(null);
     setCodigoError(null);
     try {
-      const { data, error } = await supabase.rpc('validar_entrada_por_codigo', { codigo: cod });
+      const { data, error } = await supabase.rpc('validar_entrada_por_codigo', { p_codigo: cod });
       if (error) throw new Error(error.message);
       if (!data) throw new Error('Sin respuesta del servidor');
       if (data.valido) {
         setCodigoResultado(data);
+        setVisitanteForm(f => ({
+          ...f,
+          telefono: data.telefono || f.telefono,
+          placa: data.placa_vehiculo || f.placa,
+          id_plaza: ''
+        }));
       } else {
         setCodigoError(data.mensaje || 'Código no válido');
       }
@@ -475,101 +537,6 @@ export default function Tickets() {
       setCodigoError(err.message);
     } finally {
       setCodigoValidando(false);
-    }
-  };
-
-  // ── EMITIR TICKET VINCULADO A CÓDIGO ──────────────────────────────────────
-  const handleEmitirTicketPorCodigo = async () => {
-    if (!codigoResultado || !orgId) return;
-    setEmitiendo(true);
-    try {
-      const d = codigoResultado;
-      const placa = d.placa_vehiculo || 'SIN-PLACA';
-      const ahora = new Date().toISOString();
-      const finReserva = d.fecha_hora_fin ? new Date(d.fecha_hora_fin).toISOString() : null;
-
-      // Buscar una plaza libre en la zona de la reserva
-      const { data: epLibre } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
-      const idEstLibrePlaza = epLibre?.id_estado || 1;
-
-      const { data: plazaLibre } = await supabase
-        .from('plaza')
-        .select('id_plaza, numero_plaza')
-        .eq('id_zona', d.id_zona)
-        .eq('id_estado', idEstLibrePlaza)
-        .eq('organizacion_id', orgId)
-        .limit(1)
-        .maybeSingle();
-
-      if (!plazaLibre) throw new Error('No hay plazas libres en la zona de esta reserva');
-
-      const { data: stActivo } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
-      const { data: epOcupada } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Ocupad%').maybeSingle();
-      const idEstActivoTk = stActivo?.id_estado || 1;
-      const idEstOcupPlaza = epOcupada?.id_estado || 2;
-
-      const { data: nuevoTicket, error: tErr } = await supabase
-        .from('ticket')
-        .insert([{
-          placa_capturada: placa,
-          id_plaza_asignada: plazaLibre.id_plaza,
-          id_estado: idEstActivoTk,
-          fecha_hora_emision: ahora,
-          fecha_hora_vencimiento: finReserva,
-          organizacion_id: orgId,
-          visitante_nombre: d.nombre || null,
-          visitante_apellido: d.apellido || null,
-          visitante_telefono: d.telefono || null,
-          descripcion: `Entrada por código: ${codigoInput.trim().toUpperCase()}`,
-          id_codigo_reserva: codigoInput.trim().toUpperCase()
-        }])
-        .select(`
-          id_ticket, placa_capturada, fecha_hora_emision, fecha_hora_vencimiento,
-          id_plaza_asignada, id_estado, id_codigo_reserva, descripcion,
-          visitante_nombre, visitante_apellido, visitante_telefono,
-          plaza:id_plaza_asignada(numero_plaza),
-          marca:id_marca_capturada(nombre),
-          modelo:id_modelo_capturado(nombre),
-          color:id_color_capturado(nombre)
-        `)
-        .single();
-
-      if (tErr) throw tErr;
-
-      // Ocupar plaza
-      await supabase.from('plaza').update({ id_estado: idEstOcupPlaza }).eq('id_plaza', plazaLibre.id_plaza);
-
-      // Log
-      await registrarLog('Ticket Emitido', `Ticket por código ${codigoInput.trim().toUpperCase()} — ${d.nombre || ''} ${d.apellido || ''} — Placa: ${placa} — Plaza: ${plazaLibre.numero_plaza}`, plazaLibre.id_plaza);
-
-      // Abrir barrera
-      try {
-        await accessApi.openMain();
-      } catch (_) {}
-
-      // Preparar impresión
-      setTicketParaImprimir({
-        ...nuevoTicket,
-        _statusName: 'Activo',
-        _personaNombre: `${d.nombre || ''} ${d.apellido || ''}`.trim() || 'Reservista',
-        _marcaNombre: nuevoTicket.marca?.nombre || null,
-        _modeloNombre: nuevoTicket.modelo?.nombre || null,
-        _colorNombre: nuevoTicket.color?.nombre || null,
-        _horaSalida: null,
-      });
-
-      // Limpiar
-      setCodigoInput('');
-      setCodigoResultado(null);
-      setCodigoError(null);
-      setActiveTab('activos');
-      loadData();
-
-      Swal.fire({ title: 'Ticket Emitido', text: `Plaza ${plazaLibre.numero_plaza} asignada. Barrera abriéndose.`, icon: 'success', timer: 2500, showConfirmButton: false });
-    } catch (err) {
-      Swal.fire('Error', err.message, 'error');
-    } finally {
-      setEmitiendo(false);
     }
   };
 
@@ -705,7 +672,6 @@ export default function Tickets() {
 
       <div className="flex gap-2 border-b border-gray-200 mb-8">
         {tabBtn('entrada', 'Nueva Entrada', <FaTicketAlt />)}
-        {tabBtn('codigo', 'Entrada por Código', <FaQrcode />)}
         {tabBtn('activos', 'Tickets Activos', <FaClipboardCheck />)}
         {tabBtn('historial', 'Historial', <FaHistory />)}
       </div>
@@ -838,10 +804,14 @@ export default function Tickets() {
                 <SearchableSelect
                   options={(() => {
                     const options = [];
-                    const zonas = [...new Set(plazasLibres.map(p => p.zona?.nombre))].sort();
+                    const filteredPlazas = codigoResultado 
+                      ? plazasLibres.filter(p => p.id_zona === codigoResultado.id_zona)
+                      : plazasLibres;
+
+                    const zonas = [...new Set(filteredPlazas.map(p => p.zona?.nombre))].sort();
                     zonas.forEach(zName => {
                       options.push({ label: zName || 'Sin Zona', isGroup: true });
-                      plazasLibres
+                      filteredPlazas
                         .filter(p => p.zona?.nombre === zName)
                         .forEach(p => options.push({ value: p.id_plaza, label: p.numero_plaza }));
                     });
@@ -849,13 +819,13 @@ export default function Tickets() {
                   })()}
                   value={visitanteForm.id_plaza}
                   onChange={val => setVisitanteForm(f => ({ ...f, id_plaza: val }))}
-                  placeholder="— Seleccionar plaza libre —"
+                  placeholder={codigoResultado ? `— Seleccionar de ${codigoResultado.zona_nombre || 'Zona'} —` : "— Seleccionar plaza libre —"}
                   focusRingClass="focus:ring-green-500"
                   selectedItemClass="bg-green-100 text-green-800"
                   groupLabelClass="text-green-600 bg-green-50"
                 />
-                {plazasLibres.length === 0 && (
-                  <p className="text-red-500 text-xs mt-1">⚠️ No hay plazas libres disponibles.</p>
+                {(codigoResultado ? plazasLibres.filter(p => p.id_zona === codigoResultado.id_zona).length === 0 : plazasLibres.length === 0) && (
+                  <p className="text-red-500 text-xs mt-1">⚠️ No hay plazas libres disponibles {codigoResultado ? 'en esta zona' : ''}.</p>
                 )}
               </div>
 
@@ -908,7 +878,7 @@ export default function Tickets() {
             </form>
           </section>
 
-          <section className="lg:col-span-3">
+          <section className="lg:col-span-3 space-y-6">
             <div className="bg-white rounded-2xl border border-gray-100 shadow p-6">
               <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
                 <FaClipboardCheck className="text-green-600" /> Resumen Actual
@@ -920,109 +890,79 @@ export default function Tickets() {
                 </div>
               </div>
             </div>
+
+            {/* PANEL DE VALIDACIÓN (movido de la pestaña antigua) */}
+            <div className="bg-white p-6 rounded-2xl shadow-lg border border-purple-100">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold flex items-center gap-2 text-gray-800">
+                  <FaQrcode className="text-purple-600" /> Reserva por Código
+                </h3>
+                {codigoResultado && (
+                  <button type="button" onClick={() => { setCodigoResultado(null); setCodigoInput(''); setVisitanteForm(f => ({...f, nombre:'', apellido:'', telefono:'', placa:'', id_plaza:''})) }} className="text-[10px] uppercase font-bold text-gray-400 hover:text-red-500">
+                    Limpiar Código
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mb-4">Valide un código de reserva para autocompletar los datos del visitante y filtrar las plazas disponibles.</p>
+
+              <div className="flex gap-3 mb-4">
+                <input
+                  type="text"
+                  className="flex-1 border-2 border-purple-200 focus:border-purple-500 rounded-xl p-3 text-sm font-mono font-bold uppercase tracking-widest text-center bg-purple-50/30 outline-none transition-all"
+                  placeholder="UCE-XXXX-XXXXX"
+                  value={codigoInput}
+                  onChange={e => setCodigoInput(e.target.value.toUpperCase())}
+                  onKeyDown={e => { if (e.key === 'Enter') handleValidarCodigo(); }}
+                  maxLength={25}
+                  disabled={!!codigoResultado}
+                />
+                {!codigoResultado && (
+                  <button
+                    type="button"
+                    onClick={handleValidarCodigo}
+                    disabled={codigoValidando || !codigoInput.trim()}
+                    className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white px-5 rounded-xl font-bold transition-all shadow-md active:scale-95 flex items-center gap-2"
+                  >
+                    {codigoValidando ? <FaSyncAlt className="animate-spin" /> : <FaQrcode />}
+                    Validar
+                  </button>
+                )}
+              </div>
+
+              {codigoError && (
+                <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-start gap-3 animate-fadeIn mt-2">
+                  <FaTimesCircle className="text-red-500 text-lg flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-red-700 text-sm">Código No Válido</p>
+                    <p className="text-red-600 text-[11px] mt-0.5">{codigoError}</p>
+                  </div>
+                </div>
+              )}
+
+              {codigoResultado && codigoResultado.valido && (
+                <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-4 animate-fadeIn mt-2 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FaCheckCircle className="text-emerald-500 text-xl" />
+                    <div>
+                      <p className="font-black text-emerald-700 text-sm">¡Código Validado!</p>
+                      <p className="text-emerald-600 text-[10px] font-bold uppercase">Complete los datos a la izquierda</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-white p-2 rounded border border-emerald-100">
+                      <span className="text-gray-400 block text-[9px] uppercase font-bold">Reservista</span>
+                      <span className="font-bold text-gray-700">{codigoResultado.nombre} {codigoResultado.apellido}</span>
+                    </div>
+                    <div className="bg-white p-2 rounded border border-emerald-100">
+                      <span className="text-gray-400 block text-[9px] uppercase font-bold">Zona Asignada</span>
+                      <span className="font-bold text-purple-700">{codigoResultado.zona_nombre || '—'}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </section>
         </div>
-      )}
-
-      {/* ── TAB ENTRADA POR CÓDIGO ── */}
-      {activeTab === 'codigo' && (
-        <section className="max-w-3xl">
-          <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
-            <h3 className="text-lg font-bold mb-5 flex items-center gap-2 text-gray-800">
-              <FaQrcode className="text-purple-600" /> Validar Código de Reserva
-            </h3>
-            <p className="text-xs text-gray-400 mb-4">Ingrese el código alfanumérico de la reserva (ej: UCE-20260429-A3K9M). El sistema verificará vigencia y datos del usuario.</p>
-
-            <div className="flex gap-3 mb-6">
-              <input
-                type="text"
-                className="flex-1 border-2 border-purple-200 focus:border-purple-500 rounded-xl p-3 text-base font-mono font-bold uppercase tracking-widest text-center bg-gray-50 outline-none transition-all"
-                placeholder="UCE-20260429-XXXXX"
-                value={codigoInput}
-                onChange={e => setCodigoInput(e.target.value.toUpperCase())}
-                onKeyDown={e => { if (e.key === 'Enter') handleValidarCodigo(); }}
-                maxLength={25}
-              />
-              <button
-                onClick={handleValidarCodigo}
-                disabled={codigoValidando || !codigoInput.trim()}
-                className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 shadow-md active:scale-95"
-              >
-                {codigoValidando ? (
-                  <FaSyncAlt className="animate-spin" />
-                ) : (
-                  <FaQrcode />
-                )}
-                Validar
-              </button>
-            </div>
-
-            {/* Error */}
-            {codigoError && (
-              <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-5 flex items-start gap-4 animate-fadeIn">
-                <FaTimesCircle className="text-red-500 text-2xl flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold text-red-700 text-sm">Código No Válido</p>
-                  <p className="text-red-600 text-xs mt-1">{codigoError}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Resultado válido */}
-            {codigoResultado && codigoResultado.valido && (
-              <div className="animate-fadeIn">
-                <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-2xl p-6 space-y-4">
-                  {/* Header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-emerald-500 rounded-xl flex items-center justify-center shadow-md">
-                        <FaCheckCircle className="text-white text-xl" />
-                      </div>
-                      <div>
-                        <p className="font-black text-emerald-700 text-lg">Código Válido</p>
-                        <p className="text-emerald-600 text-[10px] font-bold uppercase tracking-wider">{codigoResultado.mensaje}</p>
-                      </div>
-                    </div>
-                    <span className="bg-emerald-600 text-white font-mono font-black text-xs px-3 py-1.5 rounded-lg shadow">
-                      {codigoInput.trim().toUpperCase()}
-                    </span>
-                  </div>
-
-                  {/* Info Grid */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <InfoCard icon={<FaUser />} label="Nombre" value={`${codigoResultado.nombre || ''} ${codigoResultado.apellido || ''}`.trim() || '—'} color="blue" />
-                    <InfoCard icon={<FaCar />} label="Placa" value={codigoResultado.placa_vehiculo || 'Sin placa'} color="gray" mono />
-                    <InfoCard icon={<FaMapMarkerAlt />} label="Zona" value={codigoResultado.zona_nombre || '—'} color="purple" />
-                    <InfoCard icon={<FaClock />} label="Vigencia" value={
-                      codigoResultado.fecha_hora_inicio && codigoResultado.fecha_hora_fin
-                        ? `${new Date(codigoResultado.fecha_hora_inicio).toLocaleString('es-DO', { hour: '2-digit', minute: '2-digit', hour12: true })} — ${new Date(codigoResultado.fecha_hora_fin).toLocaleString('es-DO', { hour: '2-digit', minute: '2-digit', hour12: true })}`
-                        : '—'
-                    } color="amber" />
-                  </div>
-
-                  {codigoResultado.telefono && (
-                    <div className="bg-white/60 rounded-lg px-4 py-2 text-xs text-gray-600">
-                      📞 Teléfono: <span className="font-bold">{codigoResultado.telefono}</span>
-                    </div>
-                  )}
-
-                  {/* Botón Emitir */}
-                  <button
-                    onClick={handleEmitirTicketPorCodigo}
-                    disabled={emitiendo}
-                    className="w-full bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 text-white py-4 rounded-xl font-black tracking-wide text-base transition-all shadow-lg flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-50"
-                  >
-                    {emitiendo ? (
-                      <><FaSyncAlt className="animate-spin" /> Procesando...</>
-                    ) : (
-                      <><FaTicketAlt size={18} /> EMITIR TICKET Y ABRIR BARRERA</>
-                    )}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
       )}
 
       {/* ── TAB ACTIVOS / HISTORIAL ── */}
