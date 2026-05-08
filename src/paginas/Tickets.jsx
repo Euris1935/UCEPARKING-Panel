@@ -6,7 +6,7 @@ import Barcode from 'react-barcode';
 import {
   FaTicketAlt, FaUserPlus, FaPrint, FaSignOutAlt,
   FaClipboardCheck, FaSyncAlt, FaBan, FaTimes, FaHistory, FaQrcode,
-  FaCheckCircle, FaTimesCircle, FaUser, FaMapMarkerAlt, FaClock, FaCar
+  FaCheckCircle, FaTimesCircle, FaUser, FaMapMarkerAlt, FaClock, FaCar, FaUserTag
 } from 'react-icons/fa';
 import { accessApi } from '../lib/api';
 import { useRbac } from '../contexts/RbacContext';
@@ -84,9 +84,18 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
             </div>
           </div>
 
-          {(ticket._marcaNombre || ticket._colorNombre) && (
-            <StackedRow label="VEHICULO" value={`${ticket._marcaNombre || ''} ${ticket._modeloNombre || ''} ${ticket._colorNombre ? '- '+ticket._colorNombre : ''}`.trim()} smallValue />
-          )}
+          <div className="flex justify-between gap-2">
+            <div className="flex-[2]">
+              {(ticket._marcaNombre || ticket._colorNombre) && (
+                <StackedRow label="VEHICULO" value={`${ticket._marcaNombre || ''} ${ticket._modeloNombre || ''} ${ticket._colorNombre ? '- '+ticket._colorNombre : ''}`.trim()} smallValue />
+              )}
+            </div>
+            {ticket._horaSalida && (
+              <div className="flex-1">
+                <StackedRow label="TIEMPO" value={calcTiempo(ticket.fecha_hora_emision, ticket._horaSalida).toUpperCase()} smallValue />
+              </div>
+            )}
+          </div>
 
           {/* Dos columnas para Estado y Salida */}
           <div className="flex justify-between gap-2">
@@ -106,6 +115,10 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
 
           {ticket.descripcion?.trim() && (
             <StackedRow label="MOTIVO" value={ticket.descripcion} smallValue />
+          )}
+
+          {ticket.id_codigo_reserva && (
+            <StackedRow label="CÓDIGO DE RESERVA" value={ticket.id_codigo_reserva} smallValue />
           )}
 
           <div className="mt-2 pt-2 border-t-[1.5px] border-black border-dashed text-center">
@@ -196,6 +209,7 @@ export default function Tickets() {
   const [listaMarcas,          setListaMarcas]          = useState([]);
   const [listaModelos,         setListaModelos]         = useState([]);
   const [listaColores,         setListaColores]         = useState([]);
+  const [plazasBloqueadasPorZona, setPlazasBloqueadasPorZona] = useState(new Set());
   const [ticketParaImprimir,   setTicketParaImprimir]   = useState(null);
 
   // Estado para validación por código
@@ -204,6 +218,7 @@ export default function Tickets() {
   const [codigoResultado,      setCodigoResultado]      = useState(null);
   const [codigoError,          setCodigoError]          = useState(null);
   const [emitiendo,            setEmitiendo]            = useState(false);
+  const [modoReservaZona,      setModoReservaZona]      = useState(false);
 
   // CAMBIO: formulario sin id_visitante — datos inline
   const [visitanteForm, setVisitanteForm] = useState({
@@ -215,6 +230,7 @@ export default function Tickets() {
   useEffect(() => {
     if (orgId) {
       loadData();
+      checkExpiredTickets();
       const intervalo = setInterval(() => checkExpiredTickets(), 60_000);
       const ch = supabase.channel('rt_tickets_page')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'ticket' }, loadData)
@@ -269,17 +285,20 @@ export default function Tickets() {
         { data: catMarcas },
         { data: catModelos },
         { data: catColores },
-        { data: epLibre }
+        { data: epLibre },
+        { data: epReservada }
       ] = await Promise.all([
         query.order('fecha_hora_emision', { ascending: false }),
         supabase.from('estado_ticket').select('id_estado, nombre'),
         supabase.from('marca').select('id_marca, nombre').order('nombre'),
         supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre'),
         supabase.from('color').select('id_color, nombre').order('nombre'),
-        supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle()
+        supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle(),
+        supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Reservada').maybeSingle()
       ]);
 
       const idEstLibrePlaza = epLibre?.id_estado || 1;
+      const idEstReservPlaza = epReservada?.id_estado || 3;
       const stMap = {};
       (stCat || []).forEach(s => { stMap[s.id_estado] = s.nombre; });
 
@@ -305,7 +324,7 @@ export default function Tickets() {
         { data: resActivas },
         { data: resZonas }
       ] = await Promise.all([
-        supabase.from('plaza').select('*, zona:id_zona(nombre, estado_zona(nombre))').eq('organizacion_id', orgId),
+        supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, estado_zona(nombre))').eq('organizacion_id', orgId),
         supabase.from('asignacion').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', 1),
         supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
         supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
@@ -319,21 +338,25 @@ export default function Tickets() {
       (tksActivos || []).forEach(t => { if (t.id_plaza_asignada) plazasOcupadasDinamicas.add(t.id_plaza_asignada); });
       (accActivos || []).forEach(a => { if (a.id_plaza) plazasOcupadasDinamicas.add(a.id_plaza); });
       (resActivas || []).forEach(r => { if (r.id_plaza) plazasOcupadasDinamicas.add(r.id_plaza); });
+      
+      const bloqueadasZona = new Set();
       if (resZonas?.length > 0) {
         resZonas.forEach(rz => {
-          rawPlazas.filter(p => p.id_zona === rz.id_zona).forEach(p => plazasOcupadasDinamicas.add(p.id_plaza));
+          rawPlazas.filter(p => p.id_zona === rz.id_zona).forEach(p => bloqueadasZona.add(p.id_plaza));
         });
       }
+      setPlazasBloqueadasPorZona(bloqueadasZona);
 
       const plazasAsignadasIds = new Set((asigsActivas || []).map(a => a.id_plaza));
 
       const plazasFiltradas = (rawPlazas || []).filter(p => {
         const estZona = p.zona?.estado_zona?.nombre || 'Activa';
-        const esLibreDB = p.id_estado === idEstLibrePlaza;
-        const noEstaOcupadaDinamica = !plazasOcupadasDinamicas.has(p.id_plaza);
+        // CAMBIO: Considerar tanto LIBRE (1) como RESERVADA (3) para el pool inicial
+        const esValidaDB = p.id_estado === idEstLibrePlaza || p.id_estado === idEstReservPlaza;
+        const noEstaOcupadaFisicamente = !plazasOcupadasDinamicas.has(p.id_plaza);
         const noEsAsignada = !plazasAsignadasIds.has(p.id_plaza);
         
-        return estZona === 'Activa' && esLibreDB && noEstaOcupadaDinamica && noEsAsignada;
+        return esValidaDB && noEstaOcupadaFisicamente && noEsAsignada && estZona === 'Activa';
       }).sort((a, b) => {
         return (a.numero_plaza || '').localeCompare(b.numero_plaza || '', undefined, { numeric: true, sensitivity: 'base' });
       });
@@ -418,7 +441,9 @@ export default function Tickets() {
       const placa     = visitanteForm.placa.toUpperCase();
       const ahora     = new Date().toISOString();
       const minutos   = parseInt(visitanteForm.duracion) || 0;
-      const vencimiento = minutos > 0 ? new Date(Date.now() + minutos * 60000).toISOString() : null;
+      const vencimiento = (modoReservaZona && codigoResultado?.fecha_fin)
+        ? codigoResultado.fecha_fin
+        : (minutos > 0 ? new Date(Date.now() + minutos * 60000).toISOString() : null);
 
       const { data: stActivo  } = await supabase.from('estado_ticket').select('id_estado').ilike('nombre', 'Activo').maybeSingle();
       const { data: epOcupada } = await supabase.from('estado_plaza').select('id_estado').ilike('nombre', 'Ocupad%').maybeSingle();
@@ -500,6 +525,7 @@ export default function Tickets() {
       setCodigoInput('');
       setCodigoResultado(null);
       setCodigoError(null);
+      setModoReservaZona(false);
 
       setActiveTab('activos');
       loadData();
@@ -519,11 +545,50 @@ export default function Tickets() {
     setCodigoResultado(null);
     setCodigoError(null);
     try {
+      // 1. Pre-validación en el cliente
+      const { data: reservaData, error: reservaErr } = await supabase
+        .from('reserva_zona')
+        .select('id_estado, fecha_hora_inicio, fecha_hora_fin, persona:id_persona(nombre, apellido)')
+        .eq('codigo_reserva', cod)
+        .maybeSingle();
+
+      if (reservaErr || !reservaData) {
+        setCodigoError('Código no válido, revise el código');
+        setCodigoValidando(false);
+        return;
+      }
+
+      if (reservaData.id_estado !== 1) { // 1 = ACTIVA
+        setCodigoError('Código no válido, revise el código');
+        setCodigoValidando(false);
+        return;
+      }
+
+      const ahora = new Date();
+      const inicio = new Date(reservaData.fecha_hora_inicio);
+      const fin = new Date(reservaData.fecha_hora_fin);
+
+      if (ahora < inicio) {
+        setCodigoError('Código inválido en este momento, aún no llega la fecha y hora de la reserva.');
+        setCodigoValidando(false);
+        return;
+      }
+
+      if (ahora > fin) {
+        setCodigoError('Código no válido, la reserva ya ha finalizado.');
+        setCodigoValidando(false);
+        return;
+      }
+
+      // 2. Validación oficial con la función de la base de datos
       const { data, error } = await supabase.rpc('validar_entrada_por_codigo', { p_codigo: cod });
       if (error) throw new Error(error.message);
       if (!data) throw new Error('Sin respuesta del servidor');
       if (data.valido) {
-        setCodigoResultado(data);
+        setCodigoResultado({
+          ...data,
+          solicitante: `${reservaData?.persona?.nombre || ''} ${reservaData?.persona?.apellido || ''}`.trim()
+        });
         setVisitanteForm(f => ({
           ...f,
           telefono: data.telefono || f.telefono,
@@ -685,7 +750,120 @@ export default function Tickets() {
             </h3>
             <form onSubmit={handleEmitirTicket} className="space-y-4">
 
-              {/* Datos del visitante — CAMBIO: sin selector de visitante existente */}
+              {/* ── TOGGLE MODO RESERVA DE ZONA ── */}
+              <label className={`flex items-center gap-3 cursor-pointer p-3 rounded-xl border-2 transition-all ${
+                modoReservaZona
+                  ? 'bg-purple-50 border-purple-300'
+                  : 'bg-gray-50 border-gray-200 hover:border-purple-200'
+              }`}>
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 accent-purple-600"
+                  checked={modoReservaZona}
+                  onChange={e => {
+                    const activo = e.target.checked;
+                    setModoReservaZona(activo);
+                    if (!activo) {
+                      setCodigoInput('');
+                      setCodigoResultado(null);
+                      setCodigoError(null);
+                      setVisitanteForm(f => ({ ...f, id_plaza: '' }));
+                    }
+                  }}
+                />
+                <span className={`text-sm font-bold ${
+                  modoReservaZona ? 'text-purple-700' : 'text-gray-500'
+                }`}>
+                  Entrada por Reservación de Zona
+                </span>
+              </label>
+
+              {/* ── PANEL DE VALIDACIÓN DE CÓDIGO (solo cuando toggle activo) ── */}
+              {modoReservaZona && (
+                <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-black text-purple-700 uppercase tracking-wider flex items-center gap-1.5">
+                      <FaQrcode /> Validar Código de Reserva
+                    </p>
+                    {codigoResultado && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCodigoResultado(null);
+                          setCodigoInput('');
+                          setCodigoError(null);
+                          setVisitanteForm(f => ({ ...f, nombre: '', apellido: '', telefono: '', placa: '', id_plaza: '' }));
+                        }}
+                        className="text-[10px] font-bold text-purple-400 hover:text-red-500 uppercase"
+                      >
+                        Limpiar
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      className="flex-1 border-2 border-purple-200 focus:border-purple-500 rounded-lg p-2.5 text-sm font-mono font-bold uppercase tracking-widest text-center bg-white outline-none transition-all"
+                      placeholder="UCE-XXXX-XXXXX"
+                      value={codigoInput}
+                      onChange={e => setCodigoInput(e.target.value.toUpperCase())}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleValidarCodigo(); } }}
+                      maxLength={25}
+                      disabled={!!codigoResultado}
+                    />
+                    {!codigoResultado && (
+                      <button
+                        type="button"
+                        onClick={handleValidarCodigo}
+                        disabled={codigoValidando || !codigoInput.trim()}
+                        className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white px-4 rounded-lg font-bold transition-all shadow flex items-center gap-1.5 text-sm"
+                      >
+                        {codigoValidando ? <FaSyncAlt className="animate-spin" /> : <FaQrcode />}
+                        Validar
+                      </button>
+                    )}
+                  </div>
+
+                  {codigoError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+                      <FaTimesCircle className="text-red-500 flex-shrink-0 mt-0.5" size={14} />
+                      <p className="text-red-700 text-xs font-bold">{codigoError}</p>
+                    </div>
+                  )}
+
+                  {codigoResultado && codigoResultado.valido && (
+                    <div className="bg-white border border-emerald-200 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2 mb-2">
+                        <FaCheckCircle className="text-emerald-500" size={16} />
+                        <span className="font-black text-emerald-700 text-sm">Código Válido</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="col-span-2">
+                           <InfoCard icon={<FaUserTag size={9}/>} label="Solicitante" value={codigoResultado.solicitante || '—'} color="purple" />
+                        </div>
+                        <InfoCard icon={<FaMapMarkerAlt size={9}/>} label="Zona" value={codigoResultado.nombre_zona || '—'} color="purple" />
+                        <InfoCard
+                          icon={<FaUser size={9}/>}
+                          label="Capacidad"
+                          value={`${codigoResultado.tickets_emitidos ?? '?'} / ${codigoResultado.capacidad ?? '?'} usados`}
+                          color={(
+                            codigoResultado.tickets_emitidos >= codigoResultado.capacidad
+                              ? 'amber' : 'green'
+                          )}
+                        />
+                        <InfoCard icon={<FaClock size={9}/>} label="Inicio" value={codigoResultado.fecha_hora_inicio ? new Date(codigoResultado.fecha_hora_inicio).toLocaleString('es-DO', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hour12:true }) : '—'} color="blue" />
+                        <InfoCard icon={<FaClock size={9}/>} label="Fin" value={codigoResultado.fecha_fin ? new Date(codigoResultado.fecha_fin).toLocaleString('es-DO', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hour12:true }) : '—'} color="blue" />
+                      </div>
+                      {codigoResultado.tickets_emitidos >= codigoResultado.capacidad && (
+                        <p className="text-amber-700 text-[10px] font-black text-center pt-1">
+                          ⚠️ Capacidad de zona agotada. No se puede emitir más tickets.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-bold text-gray-400 uppercase">Nombre *</label>
@@ -806,7 +984,7 @@ export default function Tickets() {
                     const options = [];
                     const filteredPlazas = codigoResultado 
                       ? plazasLibres.filter(p => p.id_zona === codigoResultado.id_zona)
-                      : plazasLibres;
+                      : plazasLibres.filter(p => p.id_estado === 1 && !plazasBloqueadasPorZona.has(p.id_plaza));
 
                     const zonas = [...new Set(filteredPlazas.map(p => p.zona?.nombre))].sort();
                     zonas.forEach(zName => {
@@ -870,96 +1048,56 @@ export default function Tickets() {
 
               <button
                 type="submit"
-                disabled={loading || plazasLibres.length === 0}
+                disabled={
+                  loading ||
+                  plazasLibres.length === 0 ||
+                  (modoReservaZona && codigoResultado && codigoResultado.tickets_emitidos >= codigoResultado.capacidad)
+                }
                 className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white py-3 rounded-xl font-bold text-base transition flex items-center justify-center gap-2 shadow"
               >
-                <FaTicketAlt /> {loading ? 'Procesando...' : 'EMITIR TICKET'}
+                <FaTicketAlt /> {loading ? 'Procesando...' : modoReservaZona ? 'EMITIR TICKET DE RESERVA' : 'EMITIR TICKET'}
               </button>
             </form>
           </section>
 
+          {/* ── COLUMNA DERECHA: RESUMEN ── */}
           <section className="lg:col-span-3 space-y-6">
-            <div className="bg-white rounded-2xl border border-gray-100 shadow p-6">
-              <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
-                <FaClipboardCheck className="text-green-600" /> Resumen Actual
+            {/* Conteo de tickets activos */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-lg p-6">
+              <h3 className="font-bold text-gray-700 mb-5 flex items-center gap-2 text-base">
+                <FaClipboardCheck className="text-green-600" /> Resumen del Día
               </h3>
               <div className="flex justify-center">
-                <div className="bg-green-50 rounded-xl p-6 border border-green-100 text-center w-48">
-                  <p className="text-4xl font-extrabold text-green-700">{ticketsActivos}</p>
-                  <p className="text-xs text-green-600 font-medium mt-1">Tickets Activos</p>
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl p-8 border border-green-100 text-center w-56 shadow-inner">
+                  <p className="text-6xl font-black text-green-700 leading-none">{ticketsActivos}</p>
+                  <p className="text-sm text-green-600 font-bold mt-2 uppercase tracking-wider">Tickets Activos</p>
+                  <div className="mt-3 pt-3 border-t border-green-200">
+                    <p className="text-xs text-green-500 font-medium">{plazasLibres.length} plazas disponibles</p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* PANEL DE VALIDACIÓN (movido de la pestaña antigua) */}
-            <div className="bg-white p-6 rounded-2xl shadow-lg border border-purple-100">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold flex items-center gap-2 text-gray-800">
-                  <FaQrcode className="text-purple-600" /> Reserva por Código
-                </h3>
-                {codigoResultado && (
-                  <button type="button" onClick={() => { setCodigoResultado(null); setCodigoInput(''); setVisitanteForm(f => ({...f, nombre:'', apellido:'', telefono:'', placa:'', id_plaza:''})) }} className="text-[10px] uppercase font-bold text-gray-400 hover:text-red-500">
-                    Limpiar Código
-                  </button>
-                )}
-              </div>
-              <p className="text-xs text-gray-500 mb-4">Valide un código de reserva para autocompletar los datos del visitante y filtrar las plazas disponibles.</p>
-
-              <div className="flex gap-3 mb-4">
-                <input
-                  type="text"
-                  className="flex-1 border-2 border-purple-200 focus:border-purple-500 rounded-xl p-3 text-sm font-mono font-bold uppercase tracking-widest text-center bg-purple-50/30 outline-none transition-all"
-                  placeholder="UCE-XXXX-XXXXX"
-                  value={codigoInput}
-                  onChange={e => setCodigoInput(e.target.value.toUpperCase())}
-                  onKeyDown={e => { if (e.key === 'Enter') handleValidarCodigo(); }}
-                  maxLength={25}
-                  disabled={!!codigoResultado}
-                />
-                {!codigoResultado && (
-                  <button
-                    type="button"
-                    onClick={handleValidarCodigo}
-                    disabled={codigoValidando || !codigoInput.trim()}
-                    className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 text-white px-5 rounded-xl font-bold transition-all shadow-md active:scale-95 flex items-center gap-2"
-                  >
-                    {codigoValidando ? <FaSyncAlt className="animate-spin" /> : <FaQrcode />}
-                    Validar
-                  </button>
-                )}
-              </div>
-
-              {codigoError && (
-                <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-start gap-3 animate-fadeIn mt-2">
-                  <FaTimesCircle className="text-red-500 text-lg flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-bold text-red-700 text-sm">Código No Válido</p>
-                    <p className="text-red-600 text-[11px] mt-0.5">{codigoError}</p>
-                  </div>
-                </div>
-              )}
-
-              {codigoResultado && codigoResultado.valido && (
-                <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-4 animate-fadeIn mt-2 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <FaCheckCircle className="text-emerald-500 text-xl" />
-                    <div>
-                      <p className="font-black text-emerald-700 text-sm">¡Código Validado!</p>
-                      <p className="text-emerald-600 text-[10px] font-bold uppercase">Complete los datos a la izquierda</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div className="bg-white p-2 rounded border border-emerald-100">
-                      <span className="text-gray-400 block text-[9px] uppercase font-bold">Reservista</span>
-                      <span className="font-bold text-gray-700">{codigoResultado.nombre} {codigoResultado.apellido}</span>
-                    </div>
-                    <div className="bg-white p-2 rounded border border-emerald-100">
-                      <span className="text-gray-400 block text-[9px] uppercase font-bold">Zona Asignada</span>
-                      <span className="font-bold text-purple-700">{codigoResultado.zona_nombre || '—'}</span>
-                    </div>
-                  </div>
-                </div>
-              )}
+            {/* Instrucciones de flujo */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow p-6">
+              <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2 text-sm">
+                <FaHistory className="text-gray-400" /> Flujo de Emisión
+              </h3>
+              <ol className="space-y-3">
+                {[
+                  { step: '1', text: 'Para visitantes con código de reserva: activa el toggle', color: 'purple' },
+                  { step: '2', text: 'Valida el código — el sistema filtrará las plazas de la zona', color: 'purple' },
+                  { step: '3', text: 'Completa los datos del visitante y selecciona la plaza', color: 'green' },
+                  { step: '4', text: 'Emite el ticket — la barrera se abrirá automáticamente', color: 'green' },
+                ].map(({ step, text, color }) => (
+                  <li key={step} className="flex items-start gap-3">
+                    <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black text-white ${color === 'purple' ? 'bg-purple-500' : 'bg-green-500'}`}>
+                      {step}
+                    </span>
+                    <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">{text}</p>
+                  </li>
+                ))}
+              </ol>
             </div>
           </section>
         </div>

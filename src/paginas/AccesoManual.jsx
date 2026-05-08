@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaHistory, FaSignInAlt, FaStar } from 'react-icons/fa';
+import { FaUserPlus, FaDoorOpen, FaSignOutAlt, FaList, FaSearch, FaSyncAlt, FaHistory, FaSignInAlt, FaStar, FaExclamationTriangle, FaLayerGroup } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
 import { registrarLog, EVENT_TYPES } from '../utils/logging';
@@ -35,6 +35,7 @@ export default function AccesoManual() {
   const [asignaciones,    setAsignaciones]    = useState([]);
   const [plazasVivas,     setPlazasVivas]     = useState([]);
   const [selectedPersonaId, setSelectedPersonaId] = useState(null);
+  const [reservaZonaDetectada, setReservaZonaDetectada] = useState(null); // aviso informativo para el guardia
 
   // Formulario Entrada
   const [entradaForm, setEntradaForm] = useState({
@@ -311,6 +312,8 @@ export default function AccesoManual() {
       Swal.fire('Registro Exitoso', `Entrada registrada para ${vehiculoSelect.placa}. Barrera ${nombrePuertaMap[entradaForm.puertaDestino] || 'Desconocida'} abriéndose.`, 'success');
       setEntradaForm({ vehiculo_id: '', id_plaza: '', puertaDestino: 'main' });
       setBusquedaVehiculo('');
+      setSelectedPersonaId(null);
+      setReservaZonaDetectada(null);
       setActiveTab('activos');
       loadData();
     } catch (err) {
@@ -451,7 +454,11 @@ export default function AccesoManual() {
                 onChange={e => {
                   setBusquedaVehiculo(e.target.value);
                   setMostrarDropdown(true);
-                  if (entradaForm.vehiculo_id) setEntradaForm({ ...entradaForm, vehiculo_id: '' });
+                  if (entradaForm.vehiculo_id) {
+                    setEntradaForm({ ...entradaForm, vehiculo_id: '' });
+                    setReservaZonaDetectada(null);
+                    setSelectedPersonaId(null);
+                  }
                 }}
                 onFocus={() => setMostrarDropdown(true)}
                 onBlur={() => setTimeout(() => setMostrarDropdown(false), 200)}
@@ -473,7 +480,7 @@ export default function AccesoManual() {
                         <li
                           key={`${opt.type}-${opt.id}`}
                           className={`px-4 py-3 border-b border-gray-50 last:border-0 transition-colors ${isBlocked ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'hover:bg-indigo-50 cursor-pointer'}`}
-                          onMouseDown={() => {
+                          onMouseDown={async () => {
                             if (isBlocked) return;
                             if (opt.type === 'p') {
                               // Persona sin vehículo — crear vehículo on-the-fly
@@ -504,9 +511,37 @@ export default function AccesoManual() {
                                 }
                               });
                             } else {
+                              // Vehículo registrado seleccionado
                               setEntradaForm({ ...entradaForm, vehiculo_id: opt.id });
                               setBusquedaVehiculo(`${opt.placa} - ${opt.nombre}`);
                               setSelectedPersonaId(opt.id_persona);
+
+                              // ── VERIFICAR PARTICIPACIÓN EN RESERVA DE ZONA ──
+                              setReservaZonaDetectada(null); // limpiar aviso anterior
+                              try {
+                                const ahora = new Date().toISOString();
+                                const { data: participaciones } = await supabase
+                                  .from('reserva_zona_participantes')
+                                  .select(`
+                                    id_reserva_zona,
+                                    reserva_zona:id_reserva_zona(
+                                      codigo_reserva, id_estado,
+                                      fecha_hora_inicio, fecha_hora_fin,
+                                      zona:id_zona(nombre)
+                                    )
+                                  `)
+                                  .eq('placa_vehiculo', opt.placa)
+                                  .eq('organizacion_id', orgId);
+
+                                const activa = (participaciones || []).find(p =>
+                                  p.reserva_zona?.id_estado === 1 &&
+                                  p.reserva_zona?.fecha_hora_inicio <= ahora &&
+                                  p.reserva_zona?.fecha_hora_fin   >= ahora
+                                );
+                                if (activa) setReservaZonaDetectada(activa.reserva_zona);
+                              } catch (e) {
+                                console.warn('Error verificando reserva zona:', e.message);
+                              }
                             }
                             setMostrarDropdown(false);
                           }}
@@ -532,6 +567,31 @@ export default function AccesoManual() {
                 </ul>
               )}
             </div>
+
+            {/* ── AVISO: PARTICIPANTE DE RESERVA DE ZONA ── */}
+            {reservaZonaDetectada && (
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4 flex items-start gap-3 animate-pulse">
+                <FaExclamationTriangle className="text-amber-500 flex-shrink-0 mt-0.5" size={18} />
+                <div className="flex-1">
+                  <p className="font-black text-amber-800 text-sm flex items-center gap-2">
+                    <FaLayerGroup size={13} /> Vehículo con Reserva de Zona Activa
+                  </p>
+                  <div className="mt-1.5 grid grid-cols-2 gap-2 text-xs">
+                    <div className="bg-white rounded-lg px-3 py-1.5 border border-amber-200">
+                      <p className="text-[9px] font-black text-amber-600 uppercase mb-0.5">Zona</p>
+                      <p className="font-bold text-gray-700">{reservaZonaDetectada.zona?.nombre || '—'}</p>
+                    </div>
+                    <div className="bg-white rounded-lg px-3 py-1.5 border border-amber-200">
+                      <p className="text-[9px] font-black text-amber-600 uppercase mb-0.5">Código</p>
+                      <p className="font-mono font-bold text-purple-700 text-xs">{reservaZonaDetectada.codigo_reserva}</p>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-amber-700 mt-2 font-medium">
+                    ✅ El acceso de este vehículo está autorizado por su reserva. No necesita código.
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>

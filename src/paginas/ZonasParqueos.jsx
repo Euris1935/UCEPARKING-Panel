@@ -67,7 +67,12 @@ export default function ZonasParqueo() {
         if (usr) {
           setCurrentPersonaId(usr.id_persona);
           setLocalOrgId(usr.organizacion_id);
-          const { data: emp } = await supabase.from('empleado').select('id_empleado').eq('id_persona', usr.id_persona).maybeSingle();
+          const { data: empData } = await supabase.from('empleado')
+            .select('id_empleado')
+            .eq('id_persona', usr.id_persona)
+            .eq('organizacion_id', usr.organizacion_id)
+            .limit(1);
+          const emp = empData && empData.length > 0 ? empData[0] : null;
           if (emp) setCurrentEmpleadoId(emp.id_empleado);
         }
       }

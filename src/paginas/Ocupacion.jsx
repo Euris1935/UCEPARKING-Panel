@@ -27,6 +27,8 @@ export default function Ocupacion() {
   const [nivelFilter,      setNivelFilter]      = useState('all');
   const [isKioskMode,      setIsKioskMode]      = useState(false);
   const [kioskCursorVisible, setKioskCursorVisible] = useState(true);
+  const [idsReservaPersonal, setIdsReservaPersonal] = useState(new Set());
+  const [idsReservaZona,     setIdsReservaZona]     = useState(new Set());
   const kioskRef     = useRef(null);
   const cursorTimer  = useRef(null);
 
@@ -147,7 +149,7 @@ export default function Ocupacion() {
         // CAMBIO: ticket no tiene id_persona ni id_visitante
         // Usamos visitante_nombre y visitante_apellido directamente
         supabase.from('ticket')
-          .select('id_plaza_asignada, placa_capturada, visitante_nombre, visitante_apellido')
+          .select('id_plaza_asignada, placa_capturada, visitante_nombre, visitante_apellido, id_codigo_reserva')
           .eq('organizacion_id', orgId)
           .eq('id_estado', ESTADO_TICKET.ACTIVO),
         supabase.from('asignacion')
@@ -206,10 +208,13 @@ export default function Ocupacion() {
       // CAMBIO: tickets — nombre desde visitante_nombre/apellido inline
       (ticketsActivos || []).forEach(tk => {
         if (tk.id_plaza_asignada) {
+          const infoPrevia = mapaOcupacion[tk.id_plaza_asignada];
           mapaOcupacion[tk.id_plaza_asignada] = {
             type:   'ticket',
             nombre: `${tk.visitante_nombre || ''} ${tk.visitante_apellido || ''}`.trim() || 'Visitante',
-            placa:  tk.placa_capturada
+            placa:  tk.placa_capturada,
+            // Preservar la etiqueta de reserva si existía previamente (por reserva personal o de zona)
+            labelReserva: (infoPrevia?.type === 'reserva' || infoPrevia?.type === 'reserva_zona') ? infoPrevia.nombre : null
           };
         }
       });
@@ -267,6 +272,21 @@ export default function Ocupacion() {
 
       setPlazas(plazasCompletas);
       setOcupacionInfo(mapaOcupacion);
+
+      // ── Sets para iconografía de reservas (carro amarillo) ──
+      // Set 1: plazas con reserva personal activa (ya cargado, sin query extra)
+      setIdsReservaPersonal(
+        new Set((reservasActivas || []).map(r => r.id_plaza).filter(Boolean))
+      );
+      // Set 2: plazas con ticket activo vinculado a reserva de zona
+      setIdsReservaZona(
+        new Set(
+          (ticketsActivos || [])
+            .filter(t => t.id_codigo_reserva != null)
+            .map(t => t.id_plaza_asignada)
+            .filter(Boolean)
+        )
+      );
 
       // Obtener currentPersonaId
       const { data: { user } } = await supabase.auth.getUser();
@@ -498,8 +518,11 @@ export default function Ocupacion() {
 
                     {isOcupada && !isReservada && (
                       <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-[20%] text-5xl md:text-6xl drop-shadow-md z-10 group-hover:scale-105 transition-transform ${
-                        isAsignada ? 'text-purple-600' : 
-                        'text-red-500'
+                        isAsignada
+                          ? 'text-purple-600'
+                          : (idsReservaPersonal.has(plaza.id_plaza) || idsReservaZona.has(plaza.id_plaza))
+                            ? 'text-yellow-500'
+                            : 'text-red-500'
                       }`}>
                          <FaCar />
                       </div>
@@ -529,7 +552,14 @@ export default function Ocupacion() {
                           'bg-white text-purple-600 border-purple-200'
                         }`}>
                           {isOcupada && info.placa ? (
-                            <span className="block truncate font-mono tracking-widest">{info.placa}</span>
+                            <div className="flex flex-col items-center">
+                              <span className="block truncate font-mono tracking-widest">{info.placa}</span>
+                              {info.labelReserva && (
+                                <span className="block w-full truncate text-[8px] leading-none mt-1 pt-1 border-t border-yellow-100 opacity-80 uppercase font-black text-gray-500">
+                                  {info.labelReserva}
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <span className="block truncate text-[9px] leading-tight py-0.5 text-gray-700">{info.nombre}</span>
                           )}
@@ -642,7 +672,13 @@ export default function Ocupacion() {
                       )}
 
                       {isOcupada && !isReservada && (
-                        <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-[20%] ${numZonas > 4 ? 'text-3xl' : 'text-5xl'} text-red-500 drop-shadow-md z-10 group-hover:scale-105 transition-transform`}>
+                        <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-[20%] ${numZonas > 4 ? 'text-3xl' : 'text-5xl'} drop-shadow-md z-10 group-hover:scale-105 transition-transform ${
+                          isAsignada
+                            ? 'text-purple-600'
+                            : (idsReservaPersonal.has(plaza.id_plaza) || idsReservaZona.has(plaza.id_plaza))
+                              ? 'text-yellow-500'
+                              : 'text-red-500'
+                        }`}>
                            <FaCar />
                         </div>
                       )}
@@ -702,9 +738,7 @@ export default function Ocupacion() {
         >
 
           {/* Barra de estado superior en modo kiosco */}
-          <div className={`sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm px-6 py-3 flex items-center justify-between transition-all duration-300 ${
-            kioskCursorVisible ? 'opacity-100' : 'opacity-0'
-          }`}>
+          <div className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm px-6 py-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
               <span className="text-gray-800 font-black text-sm uppercase tracking-widest">UCE PARKING — Control de Ocupación en Tiempo Real</span>

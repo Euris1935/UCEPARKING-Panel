@@ -12,6 +12,12 @@ body {
 }
 /* Asegúrate de añadir la etiqueta <link> para Roboto en tu public/index.html */
 
+/* FIX: Evita que Tailwind colapse las imágenes de los mapas de Leaflet */
+.leaflet-container img {
+  max-width: none !important;
+  max-height: none !important;
+}
+
 @media print {
   /* Ocultar TODO por defecto en la página */
   body * {

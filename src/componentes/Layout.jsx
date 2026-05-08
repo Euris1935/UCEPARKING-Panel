@@ -3,12 +3,14 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { useOrg } from '../contexts/OrgContext';
+import { useUI } from '../contexts/UIContext';
 import { FaBell, FaClock } from 'react-icons/fa';
 import BarraLateral from './barraLateral';
 import ScheduleGuard from './ScheduleGuard';
 
 export default function Layout({ children }) {
   const { orgId } = useOrg();
+  const { isSidebarFixed } = useUI();
   const [alertaBanner, setAlertaBanner] = useState(null);
   const [stats, setStats] = useState({ total: 0, ocupadas: 0, reservadas: 0, asignadas: 0, libres: 0 });
   const alertaYaEnviada = useRef(false);
@@ -195,10 +197,10 @@ export default function Layout({ children }) {
   }, [stats, orgId]);
 
   return (
-    <div className="flex bg-uce-light min-h-screen"> 
+    <div className="flex bg-uce-light min-h-screen relative overflow-hidden"> 
       <BarraLateral />
       
-      <main className="ml-64 flex-1 p-8 overflow-y-auto relative">
+      <main className={`${isSidebarFixed ? 'ml-64' : 'ml-0 pl-10'} flex-1 p-8 overflow-y-auto relative transition-all duration-300`}>
         {/* Banner de Estancia Larga (azul) */}
         {alertaEstanciaLarga.length > 0 && (
           <div className="mb-4 flex items-start gap-4 bg-blue-600 text-white px-5 py-3 rounded-xl shadow-lg sticky top-0 z-50">

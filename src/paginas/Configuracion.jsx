@@ -8,10 +8,12 @@ import {
     FaEye, FaEyeSlash
 } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
+import { useUI } from '../contexts/UIContext';
 import { registrarLog, EVENT_TYPES, generarDescripcionCambio } from '../utils/logging';
 
 export default function Configuracion() {
     const { orgId } = useOrg();
+    const { isSidebarFixed, toggleSidebarFixed } = useUI();
     const [activeTab, setActiveTab] = useState('sistema');
     
     // --- Estado General ---
@@ -370,6 +372,31 @@ export default function Configuracion() {
                         >
                             <FaSave /> Guardar Configuración
                         </button>
+                    </section>
+
+                    <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 space-y-6 mt-6">
+                        <div className="flex items-center gap-3 border-b pb-4">
+                            <FaEye className="text-purple-500 text-xl" />
+                            <h3 className="text-xl font-bold text-gray-800">Comportamiento de la Interfaz</h3>
+                        </div>
+
+                        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-100">
+                            <div>
+                                <h4 className="font-bold text-gray-800">Barra Lateral Fija</h4>
+                                <p className="text-xs text-gray-500 max-w-sm mt-1">
+                                    Si está activa, la barra lateral siempre estará visible. Si la desactivas, la barra se ocultará para darte pantalla completa y solo aparecerá al acercar el ratón al borde izquierdo.
+                                </p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer ml-4">
+                                <input
+                                    type="checkbox"
+                                    className="sr-only peer"
+                                    checked={isSidebarFixed}
+                                    onChange={(e) => toggleSidebarFixed(e.target.checked)}
+                                />
+                                <div className="w-14 h-7 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-purple-600"></div>
+                            </label>
+                        </div>
                     </section>
                 </div>
             )}

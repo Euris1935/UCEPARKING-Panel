@@ -6,6 +6,7 @@ import { supabase } from './supabaseClient';
 
 import { RbacProvider } from './contexts/RbacContext';
 import { OrgProvider } from './contexts/OrgContext';
+import { UIProvider } from './contexts/UIContext';
 import { ProtectedRoute } from './componentes/ProtectedRoute';
 
 import Login from './paginas/Login';
@@ -49,43 +50,45 @@ export default function App() {
   return (
     <RbacProvider session={session}>
       <OrgProvider user={session?.user}>
-        <BrowserRouter>
-          <Routes>
-          {!session ? (
-            <>
-              <Route path="/login" element={<Login />} />
-              <Route path="*" element={<Navigate to="/login" replace />} />
-            </>
-          ) : (
-            <>
-              {/* Rutas sin protección estricta de módulo */}
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/configuracion" element={<Configuracion />} />
+        <UIProvider>
+          <BrowserRouter>
+            <Routes>
+              {!session ? (
+                <>
+                  <Route path="/login" element={<Login />} />
+                  <Route path="*" element={<Navigate to="/login" replace />} />
+                </>
+              ) : (
+                <>
+                  {/* Rutas sin protección estricta de módulo */}
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/configuracion" element={<Configuracion />} />
 
-              {/* Rutas protegidas */}
-              <Route path="/usuarios" element={<ProtectedRoute reqModulo="Módulo Usuarios"><Usuarios /></ProtectedRoute>} />
-              <Route path="/empleados" element={<ProtectedRoute reqModulo="Módulo Personal"><Empleados /></ProtectedRoute>} />
+                  {/* Rutas protegidas */}
+                  <Route path="/usuarios" element={<ProtectedRoute reqModulo="Módulo Usuarios"><Usuarios /></ProtectedRoute>} />
+                  <Route path="/empleados" element={<ProtectedRoute reqModulo="Módulo Personal"><Empleados /></ProtectedRoute>} />
 
-              <Route path="/tickets" element={<ProtectedRoute reqModulo="Módulo Parqueo"><Tickets /></ProtectedRoute>} />
-              <Route path="/vehiculos" element={<ProtectedRoute reqModulo="Módulo Vehículos"><Vehiculos /></ProtectedRoute>} />
-              <Route path="/acceso-manual" element={<ProtectedRoute reqModulo="Acceso Manual"><AccesoManual /></ProtectedRoute>} />
-              <Route path="/ocupacion" element={<ProtectedRoute reqModulo="Ocupación"><Ocupacion /></ProtectedRoute>} />
-              <Route path="/zonas-parqueo" element={<ProtectedRoute reqModulo="Zonas de Parqueo"><ZonasParqueo /></ProtectedRoute>} />
+                  <Route path="/tickets" element={<ProtectedRoute reqModulo="Módulo Parqueo"><Tickets /></ProtectedRoute>} />
+                  <Route path="/vehiculos" element={<ProtectedRoute reqModulo="Módulo Vehículos"><Vehiculos /></ProtectedRoute>} />
+                  <Route path="/acceso-manual" element={<ProtectedRoute reqModulo="Acceso Manual"><AccesoManual /></ProtectedRoute>} />
+                  <Route path="/ocupacion" element={<ProtectedRoute reqModulo="Ocupación"><Ocupacion /></ProtectedRoute>} />
+                  <Route path="/zonas-parqueo" element={<ProtectedRoute reqModulo="Zonas de Parqueo"><ZonasParqueo /></ProtectedRoute>} />
 
-              <Route path="/reservaciones" element={<ProtectedRoute reqModulo="Reservas"><Reservaciones /></ProtectedRoute>} />
-              <Route path="/asignaciones" element={<ProtectedRoute reqModulo="Asignaciones"><Asignaciones /></ProtectedRoute>} />
+                  <Route path="/reservaciones" element={<ProtectedRoute reqModulo="Reservas"><Reservaciones /></ProtectedRoute>} />
+                  <Route path="/asignaciones" element={<ProtectedRoute reqModulo="Asignaciones"><Asignaciones /></ProtectedRoute>} />
 
-              <Route path="/sensores" element={<ProtectedRoute reqModulo="Dispositivos"><Sensores /></ProtectedRoute>} />
-              <Route path="/reportes" element={<ProtectedRoute reqModulo="Reportes"><Reportes /></ProtectedRoute>} />
-              <Route path="/mantenimiento" element={<ProtectedRoute reqModulo="Mantenimiento"><Mantenimiento /></ProtectedRoute>} />
-              <Route path="/logs" element={<ProtectedRoute reqModulo="Logs"><Logs /></ProtectedRoute>} />
-              <Route path="/notificaciones" element={<ProtectedRoute reqModulo="Notificaciones"><Notificaciones /></ProtectedRoute>} />
+                  <Route path="/sensores" element={<ProtectedRoute reqModulo="Dispositivos"><Sensores /></ProtectedRoute>} />
+                  <Route path="/reportes" element={<ProtectedRoute reqModulo="Reportes"><Reportes /></ProtectedRoute>} />
+                  <Route path="/mantenimiento" element={<ProtectedRoute reqModulo="Mantenimiento"><Mantenimiento /></ProtectedRoute>} />
+                  <Route path="/logs" element={<ProtectedRoute reqModulo="Logs"><Logs /></ProtectedRoute>} />
+                  <Route path="/notificaciones" element={<ProtectedRoute reqModulo="Notificaciones"><Notificaciones /></ProtectedRoute>} />
 
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </>
-          )}
-        </Routes>
-        </BrowserRouter>
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </>
+              )}
+            </Routes>
+          </BrowserRouter>
+        </UIProvider>
       </OrgProvider>
     </RbacProvider>
   );

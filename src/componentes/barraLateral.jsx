@@ -4,6 +4,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useEffect, useState } from 'react';
 import { useRbac } from '../contexts/RbacContext';
+import { useUI } from '../contexts/UIContext';
 import {
   FaTachometerAlt, FaCar, FaClipboardList, FaUsers,
   FaMicrochip, FaChartBar, FaWrench, FaCog, FaSignOutAlt,
@@ -30,6 +31,7 @@ export default function BarraLateral() {
   const location = useLocation();
   const [noLeidas, setNoLeidas] = useState(0);
   const { modulos, esAdmin } = useRbac();
+  const { isSidebarFixed } = useUI();
 
   useEffect(() => {
     const fetchNoLeidas = async () => {
@@ -61,7 +63,8 @@ export default function BarraLateral() {
   };
 
   return (
-    <aside className="w-64 h-screen bg-white flex flex-col p-4 border-r border-gray-200 fixed left-0 top-0 z-50 overflow-hidden">
+    <div className={`fixed left-0 top-0 h-screen z-[100] group ${isSidebarFixed ? 'w-64' : 'w-4 hover:w-64'}`}>
+      <aside className={`w-64 h-full bg-white flex flex-col p-4 border-r border-gray-200 transition-transform duration-300 overflow-hidden ${isSidebarFixed ? 'translate-x-0' : '-translate-x-full group-hover:translate-x-0 shadow-2xl'}`}>
 
 
       <Link to="/" className="flex items-center gap-2 mb-8 px-2 h-16 shrink-0 hover:opacity-80 transition-opacity">
@@ -120,6 +123,7 @@ export default function BarraLateral() {
         </button>
       </div>
     </aside>
+    </div>
   );
 }
 

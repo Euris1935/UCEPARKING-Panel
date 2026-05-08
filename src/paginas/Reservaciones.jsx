@@ -7,7 +7,7 @@ import Swal from 'sweetalert2';
 import { 
   FaSearch, FaEdit, FaCheckCircle, FaTimesCircle, 
   FaPlus, FaCalendarAlt, FaTrash, FaLock, FaSync,
-  FaUsers, FaLayerGroup, FaMapMarkedAlt, FaInfoCircle, FaUserCheck
+  FaUsers, FaLayerGroup, FaMapMarkedAlt, FaInfoCircle, FaUserCheck, FaCopy
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
@@ -50,6 +50,12 @@ export default function Reservaciones() {
   const [changingStatusType, setChangingStatusType] = useState(null);
   const [newStatusChoice, setNewStatusChoice] = useState('');
   const [horarios, setHorarios] = useState([]); // Horario laboral de la organización
+
+  // --- PARTICIPANTES DE RESERVA DE ZONA ---
+  const [participantes, setParticipantes] = useState([]);
+  const [showParticipantes, setShowParticipantes] = useState(false);
+  const [busquedaParticipante, setBusquedaParticipante] = useState('');
+  const [isParticipanteInputFocused, setIsParticipanteInputFocused] = useState(false);
   
   const initialForm = {
     id_persona: '',
@@ -63,6 +69,48 @@ export default function Reservaciones() {
   const [formData, setFormData] = useState(initialForm);
   const [plazasDeZona, setPlazasDeZona] = useState([]);
   const isUpdating = !!editingReservaId;
+
+  // --- 0. SESIÓN DEL USUARIO ---
+  useEffect(() => {
+    async function loadUserSession() {
+      console.log("[Auth Debug] Empezando a cargar sesión...");
+      const { data: { session }, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) console.error("[Auth Debug] Error en sesión:", sessionErr);
+
+      if (session?.user) {
+        console.log("[Auth Debug] Sesión encontrada para UID:", session.user.id);
+        const { data: usr, error: usrErr } = await supabase.from('usuario').select('id_persona, organizacion_id').eq('id', session.user.id).single();
+        
+        if (usrErr) console.error("[Auth Debug] Error buscando usuario:", usrErr);
+        console.log("[Auth Debug] Usuario DB encontrado:", usr);
+
+        if (usr) {
+          setCurrentPersonaId(usr.id_persona);
+          
+          const { data: empData, error: empErr } = await supabase.from('empleado')
+            .select('id_empleado, id_persona, organizacion_id')
+            .eq('id_persona', usr.id_persona)
+            .eq('organizacion_id', usr.organizacion_id)
+            .limit(1);
+          
+          if (empErr) console.error("[Auth Debug] Error buscando empleado:", empErr);
+          
+          const emp = empData && empData.length > 0 ? empData[0] : null;
+          console.log("[Auth Debug] Empleado DB encontrado:", emp);
+
+          if (emp) {
+            setCurrentEmpleadoId(emp.id_empleado);
+            console.log("[Auth Debug] Estado currentEmpleadoId actualizado a:", emp.id_empleado);
+          } else {
+            console.warn("[Auth Debug] La consulta de empleado no devolvió nada para id_persona:", usr.id_persona);
+          }
+        }
+      } else {
+        console.warn("[Auth Debug] No hay session.user");
+      }
+    }
+    loadUserSession();
+  }, []);
 
   // --- 1. CARGA INICIAL ---
   useEffect(() => {
@@ -292,6 +340,24 @@ export default function Reservaciones() {
         }
       }
     }
+
+    // 4. Sanación Automática: Liberar plazas "en el aire"
+    try {
+      const { data: plazasRes } = await supabase.from('plaza').select('id_plaza').eq('id_estado', ESTADO_PLAZA.RESERVADA);
+      if (plazasRes && plazasRes.length > 0) {
+        const { data: activeRes } = await supabase.from('reserva').select('id_plaza').in('id_estado', [1, 5]);
+        const activePlazaIds = new Set((activeRes || []).map(r => r.id_plaza));
+        const stuckPlazas = plazasRes.filter(p => !activePlazaIds.has(p.id_plaza));
+        
+        if (stuckPlazas.length > 0) {
+          const idsToFix = stuckPlazas.map(p => p.id_plaza);
+          console.log(`[AutoHeal] Liberando ${idsToFix.length} plazas en el aire...`);
+          await supabase.from('plaza').update({ id_estado: ESTADO_PLAZA.LIBRE }).in('id_plaza', idsToFix);
+          // Si encontramos y reparamos plazas, recargamos la data para que aparezcan enseguida
+          loadAllData();
+        }
+      }
+    } catch(e) { console.error("[AutoHeal] Error sanando plazas:", e); }
   };
 
   // --- 4. ACCIONES (COMPLETAR, CANCELAR, ELIMINAR) ---
@@ -458,7 +524,7 @@ export default function Reservaciones() {
     } catch (error) { console.error("Error al liberar zona:", error); }
   };
 
-  const handleEditZona = (res) => {
+  const handleEditZona = async (res) => {
     setEditingReservaId(res.id_reserva_zona);
     const toInputFormat = (str) => {
       if (!str) return '';
@@ -476,6 +542,35 @@ export default function Reservaciones() {
       tipo_reserva: 'zona'
     });
     setEditingOriginalData(res);
+
+    // Cargar participantes existentes de esta reserva
+    try {
+      const { data: partsExistentes } = await supabase
+        .from('reserva_zona_participantes')
+        .select('id_persona, placa_vehiculo')
+        .eq('id_reserva_zona', res.id_reserva_zona);
+
+      if (partsExistentes && partsExistentes.length > 0) {
+        // Enriquecer con nombre desde personasList
+        const partsEnriquecidos = partsExistentes.map(p => {
+          const persona = personasList.find(per => per.id_persona === p.id_persona);
+          return {
+            id_persona:    p.id_persona,
+            placa_vehiculo: p.placa_vehiculo,
+            nombre:        persona ? `${persona.nombre} ${persona.apellido}` : `Persona #${p.id_persona}`
+          };
+        });
+        setParticipantes(partsEnriquecidos);
+        setShowParticipantes(true);
+      } else {
+        setParticipantes([]);
+        setShowParticipantes(false);
+      }
+    } catch (e) {
+      console.warn('No se pudieron cargar participantes:', e.message);
+      setParticipantes([]);
+    }
+
     setShowModal(true);
   };
 
@@ -493,7 +588,10 @@ export default function Reservaciones() {
       setLoading(true);
       try {
         const ahoraISO = new Date().toISOString();
-        const { error } = await supabase.from('reserva_zona').update({ id_estado: ESTADO_RESERVA.ACTIVA }).eq('id_reserva_zona', rz.id_reserva_zona);
+        const { error } = await supabase.from('reserva_zona').update({ 
+          id_estado: ESTADO_RESERVA.ACTIVA,
+          id_empleado_aprobador: currentEmpleadoId 
+        }).eq('id_reserva_zona', rz.id_reserva_zona);
         if (error) throw error;
 
         // Si la fecha de inicio ya llegó, marcar las plazas de la zona como RESERVADA
@@ -502,6 +600,33 @@ export default function Reservaciones() {
           const ids = plazasZona?.map(p => p.id_plaza) || [];
           if (ids.length > 0) {
             await supabase.from('plaza').update({ id_estado: ESTADO_PLAZA.RESERVADA }).in('id_plaza', ids);
+          }
+        }
+
+        // --- NOTIFICACIÓN AL SOLICITANTE ---
+        if (rz.id_persona && rz.codigo_reserva) {
+          await supabase.from('notificacion').insert([{
+            id_persona:      rz.id_persona,
+            organizacion_id: orgId,
+            contenido:       `RESERVA APROBADA (Código: ${rz.codigo_reserva}) — Tu reserva de zona "${rz.zona?.nombre}" fue aprobada. Comparte el código con quienes no estén registrados.`,
+            leida:           false
+          }]);
+        }
+
+        // --- NOTIFICACIONES A PARTICIPANTES REGISTRADOS ---
+        const { data: parts } = await supabase
+          .from('reserva_zona_participantes')
+          .select('id_persona')
+          .eq('id_reserva_zona', rz.id_reserva_zona);
+
+        for (const p of (parts || [])) {
+          if (p.id_persona) {
+            await supabase.from('notificacion').insert([{
+              id_persona:      p.id_persona,
+              organizacion_id: orgId,
+              contenido:       `INVITACIÓN DE ACCESO (Código: ${rz.codigo_reserva}) — Fuiste añadido a la reserva de zona "${rz.zona?.nombre}". Tu acceso será automático por tu placa registrada.`,
+              leida:           false
+            }]);
           }
         }
 
@@ -538,11 +663,21 @@ export default function Reservaciones() {
       setLoading(true);
       try {
         const { error } = await supabase.from('reserva_zona').update({ 
-          id_estado: 2,
-          descripcion: rz.descripcion + ` [RECHAZADO: ${reason}]`
+          id_estado: 2, // Asumiendo que 2 es Cancelada/Rechazada
+          motivo_rechazo: reason
         }).eq('id_reserva_zona', rz.id_reserva_zona);
 
         if (error) throw error;
+
+        // --- NOTIFICACIÓN AL SOLICITANTE ---
+        if (rz.id_persona) {
+          await supabase.from('notificacion').insert([{
+            id_persona:      rz.id_persona,
+            organizacion_id: orgId,
+            contenido:       `RESERVA RECHAZADA — Lamentablemente tu reserva de zona "${rz.zona?.nombre}" fue rechazada. Motivo: ${reason || 'No especificado'}. Intenta en otra ocasión.`,
+            leida:           false
+          }]);
+        }
 
         registrarLog({
           tipo_nombre: EVENT_TYPES.RESERVA_CANCELADA,
@@ -727,10 +862,40 @@ export default function Reservaciones() {
             if (isUpdating) {
               const { error } = await supabase.from('reserva_zona').update(payloadZona).eq('id_reserva_zona', editingReservaId);
               if (error) throw error;
+
+              // Actualizar participantes: borrar los viejos e insertar los nuevos
+              await supabase.from('reserva_zona_participantes').delete().eq('id_reserva_zona', editingReservaId);
+              if (participantes.length > 0) {
+                const { error: partErr } = await supabase.from('reserva_zona_participantes').insert(
+                  participantes.map(p => ({
+                    id_reserva_zona: editingReservaId,
+                    id_persona:      p.id_persona,
+                    placa_vehiculo:  p.placa_vehiculo || null
+                  }))
+                );
+                if (partErr) console.error('Error insertando participantes (edición):', partErr.message);
+              }
+
               registrarLog('Cambio de Estado', `Edición de reserva de zona (ID: ${editingReservaId})`);
             } else {
-              const { error } = await supabase.from('reserva_zona').insert([payloadZona]);
+              const { data: nuevaReserva, error } = await supabase
+                .from('reserva_zona')
+                .insert([payloadZona])
+                .select('id_reserva_zona')
+                .single();
               if (error) throw error;
+
+              // Insertar participantes registrados si los hay
+              if (participantes.length > 0 && nuevaReserva?.id_reserva_zona) {
+                const { error: partErr } = await supabase.from('reserva_zona_participantes').insert(
+                  participantes.map(p => ({
+                    id_reserva_zona: nuevaReserva.id_reserva_zona,
+                    id_persona:      p.id_persona,
+                    placa_vehiculo:  p.placa_vehiculo || null
+                  }))
+                );
+                if (partErr) console.error('Error insertando participantes:', partErr.message);
+              }
 
               // NO marcamos plazas todavía — se marcan solo cuando se apruebe Y llegue la fecha
               // El mapa de Ocupación lo toma dinámicamente (estado Activa + fecha vigente)
@@ -767,7 +932,8 @@ export default function Reservaciones() {
       id_persona: res.id_persona,
       Id_Plaza: res.id_plaza,
       Fecha_Hora_Inicio: toInputFormat(res.fecha_hora_inicio),
-      Fecha_Hora_Fin: toInputFormat(res.fecha_hora_fin)
+      Fecha_Hora_Fin: toInputFormat(res.fecha_hora_fin),
+      tipo_reserva: 'plaza'
     });
     setEditingOriginalData(res);
     setShowModal(true);
@@ -777,6 +943,9 @@ export default function Reservaciones() {
     setFormData(initialForm);
     setEditingReservaId(null);
     setShowModal(false);
+    setParticipantes([]);
+    setShowParticipantes(false);
+    setBusquedaParticipante('');
   };
 
   const handleOpenCreate = async (tipoForzado = null) => {
@@ -802,6 +971,19 @@ export default function Reservaciones() {
       });
   };
 
+  const handleCopyCode = (codigo) => {
+    navigator.clipboard.writeText(codigo);
+    Swal.fire({
+      toast: true,
+      position: 'top-end',
+      icon: 'success',
+      title: 'Código copiado',
+      showConfirmButton: false,
+      timer: 1500,
+      timerProgressBar: true
+    });
+  };
+
   const handleConfirmarCambioEstado = async (reserva, tipo) => {
     if (!orgId) return;
     const oldStatus = reserva.id_estado;
@@ -813,13 +995,50 @@ export default function Reservaciones() {
         return;
     }
 
+    const estNuevoObj = estadosReservaList.find(e => e.id_estado === nextStatus);
+    const estNuevoName = estNuevoObj?.nombre?.toLowerCase() || '';
+    const isRejectionOrCancel = estNuevoName.includes('rechazada') || estNuevoName.includes('cancelada');
+    let reasonText = '';
+
+    if (isRejectionOrCancel && tipo !== 'plaza') {
+      const { value, isConfirmed } = await Swal.fire({
+        title: `Confirmar ${estNuevoObj?.nombre || 'Acción'}`,
+        input: 'textarea',
+        inputLabel: `Motivo`,
+        inputPlaceholder: 'Escribe aquí el motivo...',
+        showCancelButton: true,
+        confirmButtonText: 'Confirmar',
+        confirmButtonColor: '#EF4444'
+      });
+      if (!isConfirmed) {
+        setChangingStatusFor(null);
+        setChangingStatusType(null);
+        return; 
+      }
+      reasonText = value || '';
+    }
+
     try {
         setLoading(true);
         const tabla = tipo === 'plaza' ? 'reserva' : 'reserva_zona';
         const idCampo = tipo === 'plaza' ? 'id_reserva' : 'id_reserva_zona';
         const idValor = reserva[idCampo];
 
-        const { error: upErr } = await supabase.from(tabla).update({ id_estado: nextStatus }).eq(idCampo, idValor);
+        const updatePayload = { id_estado: nextStatus };
+        if (tabla === 'reserva_zona') {
+            if (nextStatus === ESTADO_RESERVA.ACTIVA) updatePayload.id_empleado_aprobador = currentEmpleadoId;
+            if (isRejectionOrCancel && reasonText) {
+                if (estNuevoName.includes('cancelada')) {
+                    updatePayload.motivo_cancelacion = reasonText;
+                } else {
+                    updatePayload.motivo_rechazo = reasonText;
+                }
+            }
+        } else if (tabla === 'reserva' && isRejectionOrCancel && reasonText) {
+            updatePayload.descripcion = reserva.descripcion ? `${reserva.descripcion} [MOTIVO: ${reasonText}]` : `[MOTIVO: ${reasonText}]`;
+        }
+
+        const { error: upErr } = await supabase.from(tabla).update(updatePayload).eq(idCampo, idValor);
         if (upErr) throw upErr;
 
         // Si es una reserva de zona, gestionar el estado de sus plazas
@@ -838,6 +1057,49 @@ export default function Reservaciones() {
               if (ids.length > 0) await supabase.from('plaza').update({ id_estado: ESTADO_PLAZA.RESERVADA }).in('id_plaza', ids);
             } else if (esTerminal) {
               await liberarPlazasZona(idZona);
+            }
+            
+            // --- NOTIFICACIÓN EN APROBACIÓN MANUAL ---
+            if (estaActiva) {
+              if (reserva.id_persona && reserva.codigo_reserva) {
+                console.log("[Notif Debug] Intentando enviar notif a solicitante:", reserva.id_persona);
+                const { error: notifErr } = await supabase.from('notificacion').insert([{
+                  id_persona:      reserva.id_persona,
+                  organizacion_id: orgId,
+                  contenido:       `RESERVA APROBADA (Código: ${reserva.codigo_reserva}) — Tu reserva de zona "${reserva.zona?.nombre}" fue aprobada. Comparte el código con quienes no estén registrados.`,
+                  leida:           false
+                }]);
+                if (notifErr) console.error("[Notif Debug] Error notif solicitante:", notifErr);
+                else console.log("[Notif Debug] Notif enviada exitosamente a solicitante.");
+              } else {
+                console.warn("[Notif Debug] No se envió notif a solicitante porque faltan datos:", { id_persona: reserva.id_persona, codigo: reserva.codigo_reserva });
+              }
+
+              const { data: parts } = await supabase
+                .from('reserva_zona_participantes')
+                .select('id_persona')
+                .eq('id_reserva_zona', reserva.id_reserva_zona);
+
+              for (const p of (parts || [])) {
+                if (p.id_persona) {
+                  const { error: partErr } = await supabase.from('notificacion').insert([{
+                    id_persona:      p.id_persona,
+                    organizacion_id: orgId,
+                    contenido:       `INVITACIÓN DE ACCESO (Código: ${reserva.codigo_reserva}) — Fuiste añadido a la reserva de zona "${reserva.zona?.nombre}". Tu acceso será automático por tu placa registrada.`,
+                    leida:           false
+                  }]);
+                  if (partErr) console.error("[Notif Debug] Error notif participante:", partErr);
+                  else console.log("[Notif Debug] Notif enviada a participante:", p.id_persona);
+                }
+              }
+            } else if (isRejectionOrCancel && reserva.id_persona) {
+               const verbo = estNuevoName.includes('rechaz') ? 'rechazada' : 'cancelada';
+               await supabase.from('notificacion').insert([{
+                 id_persona:      reserva.id_persona,
+                 organizacion_id: orgId,
+                 contenido:       `RESERVA ${verbo.toUpperCase()} — Lamentablemente tu reserva de zona "${reserva.zona?.nombre}" fue ${verbo}. Motivo: ${reasonText || 'No especificado'}. Intenta en otra ocasión.`,
+                 leida:           false
+               }]);
             }
           }
         }
@@ -1116,9 +1378,14 @@ export default function Reservaciones() {
                           <td className="px-6 py-4 font-bold text-blue-600 uppercase text-[10px]">Por Zona</td>
                           <td className="px-6 py-4">
                             {rz.codigo_reserva ? (
-                              <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
-                                {rz.codigo_reserva}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
+                                  {rz.codigo_reserva}
+                                </span>
+                                <button onClick={() => handleCopyCode(rz.codigo_reserva)} className="text-gray-400 hover:text-purple-600 transition" title="Copiar código">
+                                  <FaCopy size={12} />
+                                </button>
+                              </div>
                             ) : (
                               <span className="text-gray-300 text-[10px]">—</span>
                             )}
@@ -1212,9 +1479,14 @@ export default function Reservaciones() {
                                 </td>
                                 <td className="px-6 py-3">
                                   {rz.codigo_reserva ? (
-                                    <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
-                                      {rz.codigo_reserva}
-                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
+                                        {rz.codigo_reserva}
+                                      </span>
+                                      <button onClick={() => handleCopyCode(rz.codigo_reserva)} className="text-gray-400 hover:text-purple-600 transition" title="Copiar código">
+                                        <FaCopy size={12} />
+                                      </button>
+                                    </div>
                                   ) : (
                                     <span className="text-gray-300 text-[10px]">—</span>
                                   )}
@@ -1293,9 +1565,14 @@ export default function Reservaciones() {
                                 </td>
                                 <td className="px-6 py-4">
                                   {rz.codigo_reserva ? (
-                                    <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
-                                      {rz.codigo_reserva}
-                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="bg-purple-100 text-purple-700 font-mono text-[9px] px-2 py-1 rounded-md font-bold border border-purple-200">
+                                        {rz.codigo_reserva}
+                                      </span>
+                                      <button onClick={() => handleCopyCode(rz.codigo_reserva)} className="text-gray-400 hover:text-purple-600 transition" title="Copiar código">
+                                        <FaCopy size={12} />
+                                      </button>
+                                    </div>
                                   ) : (
                                     <span className="text-gray-300 text-[10px]">—</span>
                                   )}
@@ -1516,6 +1793,121 @@ export default function Reservaciones() {
                   </div>
                     </>
                   )}
+
+                 {/* ── PANEL DE PARTICIPANTES (solo para reservas de zona) ── */}
+                 {formData.tipo_reserva === 'zona' && (
+                   <div className="border border-indigo-100 rounded-xl bg-indigo-50/30">
+                     <button
+                       type="button"
+                       onClick={() => setShowParticipantes(v => !v)}
+                       className="w-full flex items-center justify-between px-4 py-3 text-left"
+                     >
+                       <span className="flex items-center gap-2 text-xs font-black text-indigo-700 uppercase tracking-wider">
+                         <FaUsers size={14} />
+                         Usuarios Registrados del Sistema
+                         {participantes.length > 0 && (
+                           <span className="bg-indigo-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
+                             {participantes.length}
+                           </span>
+                         )}
+                       </span>
+                       <span className="text-indigo-400 text-xs">{showParticipantes ? '▲' : '▼'}</span>
+                     </button>
+
+                     {showParticipantes && (
+                       <div className="px-4 pb-4 space-y-3 border-t border-indigo-100">
+                         <p className="text-xs text-indigo-600 mb-2 mt-1">
+                           Añade usuarios del sistema. Al llegar, el acceso será automático por su placa registrada.
+                         </p>
+
+                         {/* Buscador de persona */}
+                         <div className="flex gap-2">
+                           <div className="relative flex-1">
+                             <input
+                               type="text"
+                               className="w-full border border-indigo-200 rounded-lg p-3 text-sm bg-white focus:ring-2 focus:ring-indigo-400 outline-none shadow-sm"
+                               placeholder="Buscar por nombre o haz clic para ver la lista..."
+                               value={busquedaParticipante}
+                               onChange={e => setBusquedaParticipante(e.target.value)}
+                               onFocus={() => setIsParticipanteInputFocused(true)}
+                               onBlur={() => setTimeout(() => setIsParticipanteInputFocused(false), 200)}
+                             />
+                             {(busquedaParticipante || isParticipanteInputFocused) && (
+                               <ul className="absolute z-50 w-full bg-white border border-indigo-200 shadow-2xl max-h-64 overflow-y-auto rounded-lg mt-1 py-2 text-sm">
+                                 {personasList
+                                   .filter(p =>
+                                     `${p.nombre} ${p.apellido}`.toLowerCase().includes(busquedaParticipante.toLowerCase()) &&
+                                     !participantes.some(pa => pa.id_persona === p.id_persona) &&
+                                     p.id_persona !== formData.id_persona
+                                   )
+                                   .slice(0, 50)
+                                   .map(p => (
+                                     <li
+                                       key={p.id_persona}
+                                       className="px-4 py-2.5 hover:bg-indigo-50 cursor-pointer flex items-center justify-between border-b border-gray-50 last:border-0"
+                                       onMouseDown={async () => {
+                                         // Buscar placa activa de esta persona
+                                         const { data: vhs } = await supabase
+                                           .from('vehiculo')
+                                           .select('placa')
+                                           .eq('id_persona', p.id_persona)
+                                           .eq('organizacion_id', orgId)
+                                           .limit(1);
+                                         const placa = vhs?.[0]?.placa || null;
+
+                                         setParticipantes(prev => [...prev, {
+                                           id_persona:    p.id_persona,
+                                           nombre:        `${p.nombre} ${p.apellido}`,
+                                           placa_vehiculo: placa
+                                         }]);
+                                         setBusquedaParticipante('');
+                                       }}
+                                     >
+                                       <span className="font-semibold text-gray-700">{p.nombre} {p.apellido}</span>
+                                       <span className="text-[9px] text-gray-400 font-mono">{p.email || ''}</span>
+                                     </li>
+                                   ))}
+                                 {personasList.filter(p =>
+                                   `${p.nombre} ${p.apellido}`.toLowerCase().includes(busquedaParticipante.toLowerCase()) &&
+                                   !participantes.some(pa => pa.id_persona === p.id_persona) &&
+                                   p.id_persona !== formData.id_persona
+                                 ).length === 0 && (
+                                   <li className="px-4 py-3 text-gray-500 italic text-center">No hay más usuarios disponibles</li>
+                                 )}
+                               </ul>
+                             )}
+                           </div>
+                         </div>
+
+                         {/* Lista de participantes añadidos */}
+                         {participantes.length > 0 ? (
+                           <ul className="space-y-2 mt-3">
+                             {participantes.map((p, i) => (
+                               <li key={p.id_persona} className="flex items-center justify-between bg-white border border-indigo-100 shadow-sm rounded-lg px-4 py-3">
+                                 <div>
+                                   <p className="text-sm font-bold text-gray-800">{p.nombre}</p>
+                                   <p className="text-xs text-gray-500 font-mono mt-0.5">
+                                     {p.placa_vehiculo ? `🚗 ${p.placa_vehiculo}` : '⚠️ Sin placa registrada'}
+                                   </p>
+                                 </div>
+                                 <button
+                                   type="button"
+                                   onClick={() => setParticipantes(prev => prev.filter((_, idx) => idx !== i))}
+                                   className="text-red-400 hover:text-red-600 transition ml-2"
+                                   title="Quitar participante"
+                                 >
+                                   <FaTimesCircle size={14} />
+                                 </button>
+                               </li>
+                             ))}
+                           </ul>
+                         ) : (
+                           <p className="text-[10px] text-gray-400 italic text-center py-2">Ningún participante añadido aún.</p>
+                         )}
+                       </div>
+                     )}
+                   </div>
+                 )}
 
                  {(() => {
                     const getLocalDatetimePattern = (dateObj) => {
