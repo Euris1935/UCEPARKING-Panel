@@ -8,7 +8,7 @@ import { useUI } from '../contexts/UIContext';
 import {
   FaTachometerAlt, FaCar, FaClipboardList, FaUsers,
   FaMicrochip, FaChartBar, FaWrench, FaCog, FaSignOutAlt,
-  FaParking, FaTicketAlt, FaSuitcase, FaHistory, FaBell, FaHandPaper, FaCarSide
+  FaParking, FaTicketAlt, FaSuitcase, FaHistory, FaBell, FaHandPaper, FaCarSide, FaTv
 } from 'react-icons/fa';
 
 const navItems = [
@@ -21,8 +21,9 @@ const navItems = [
   { to: '/reservaciones', icon: FaClipboardList, label: 'Reservaciones', moduloReq: 'Reservas' },
   { to: '/asignaciones', icon: FaSuitcase, label: 'Asignaciones', moduloReq: 'Asignaciones' },
   { to: '/usuarios', icon: FaUsers, label: 'Usuarios', moduloReq: 'Módulo Usuarios' },
-  { to: '/sensores', icon: FaMicrochip, label: 'Dispositivos', moduloReq: 'Dispositivos' },
-  { to: '/reportes', icon: FaChartBar, label: 'Reportes', moduloReq: 'Reportes' },
+  { to: '/sensores',    icon: FaMicrochip,      label: 'Dispositivos',     moduloReq: 'Dispositivos'    },
+  { to: '/pantallas',   icon: FaTv,             label: 'Pantallas',        moduloReq: 'Dispositivos'    },
+  { to: '/reportes',    icon: FaChartBar,       label: 'Reportes',         moduloReq: 'Reportes'        },
   { to: '/mantenimiento', icon: FaWrench, label: 'Mantenimiento', moduloReq: 'Mantenimiento' },
   { to: '/logs', icon: FaHistory, label: 'Logs de Eventos', moduloReq: 'Logs' },
 ];

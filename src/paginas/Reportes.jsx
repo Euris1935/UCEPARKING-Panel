@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2'; 
-import { FaSearch, FaDownload, FaFileAlt, FaPlus, FaTrash, FaUser, FaSync, FaTimesCircle } from 'react-icons/fa';
+import { FaSearch, FaDownload, FaFileAlt, FaFilePdf, FaPlus, FaTrash, FaUser, FaSync, FaTimesCircle } from 'react-icons/fa';
 import SearchableSelect from '../componentes/SearchableSelect';
 import { useOrg } from '../contexts/OrgContext';
 import { reportsApi } from '../lib/api';
@@ -178,6 +178,14 @@ export default function Reportes() {
     }
   };
 
+  const handleDownloadPdf = async (id, title) => {
+    try {
+        await reportsApi.downloadPdf(id, title);
+    } catch (error) {
+        Swal.fire('Error', error.message, 'error');
+    }
+  };
+
   const filteredReportes = reportes.filter(r => 
     (r.tipo_reporte?.nombre || r.tipo || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
     (`${r.persona?.nombre || ""} ${r.persona?.apellido || ""}`).toLowerCase().includes(searchTerm.toLowerCase())
@@ -281,8 +289,15 @@ export default function Reportes() {
                             <FaDownload size={16}/>
                         </button>
                         <button 
-                            onClick={() => handleEliminarReporte(r.id_reporte)} 
+                            onClick={() => handleDownloadPdf(r.id_reporte, r.tipo_reporte?.nombre || r.tipo)} 
                             className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded transition" 
+                            title="Descargar PDF"
+                        >
+                            <FaFilePdf size={16}/>
+                        </button>
+                        <button 
+                            onClick={() => handleEliminarReporte(r.id_reporte)} 
+                            className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-2 rounded transition" 
                             title="Eliminar"
                         >
                             <FaTrash size={15}/>
@@ -312,7 +327,7 @@ export default function Reportes() {
               <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tipo de Reporte *</label>
                   <SearchableSelect
-                      options={tiposReporteList.map(t => ({ value: t.id_tipo.toString(), label: t.nombre }))}
+                      options={tiposReporteList.map(t => ({ value: t.nombre, label: t.nombre }))}
                       value={tipoReporte}
                       onChange={val => setTipoReporte(val)}
                       placeholder="— Seleccionar Tipo —"
@@ -474,6 +489,32 @@ export default function Reportes() {
                             </div>
                         </div>
                     )}
+                </div>
+
+                {/* Footer del modal: botones de descarga */}
+                <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex justify-end gap-3">
+                    {previewData.id_reporte && (
+                      <>
+                        <button
+                            onClick={() => handleDownloadExcel(previewData.id_reporte, previewData.tipo)}
+                            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg transition shadow"
+                        >
+                            <FaDownload /> Descargar Excel
+                        </button>
+                        <button
+                            onClick={() => handleDownloadPdf(previewData.id_reporte, previewData.tipo)}
+                            className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition shadow"
+                        >
+                            <FaFilePdf /> Descargar PDF
+                        </button>
+                      </>
+                    )}
+                    <button
+                        onClick={() => setShowPreviewModal(false)}
+                        className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 text-xs font-bold rounded-lg transition"
+                    >
+                        Cerrar
+                    </button>
                 </div>
             </div>
         </div>

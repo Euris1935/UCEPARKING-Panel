@@ -26,6 +26,7 @@ import Configuracion from './paginas/Configuracion';
 import Logs from './paginas/Logs';
 import Notificaciones from './paginas/Notificaciones';
 import AccesoManual from './paginas/AccesoManual';
+import Pantallas from './paginas/Pantallas';
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -78,6 +79,7 @@ export default function App() {
                   <Route path="/asignaciones" element={<ProtectedRoute reqModulo="Asignaciones"><Asignaciones /></ProtectedRoute>} />
 
                   <Route path="/sensores" element={<ProtectedRoute reqModulo="Dispositivos"><Sensores /></ProtectedRoute>} />
+                  <Route path="/pantallas" element={<ProtectedRoute reqModulo="Dispositivos"><Pantallas /></ProtectedRoute>} />
                   <Route path="/reportes" element={<ProtectedRoute reqModulo="Reportes"><Reportes /></ProtectedRoute>} />
                   <Route path="/mantenimiento" element={<ProtectedRoute reqModulo="Mantenimiento"><Mantenimiento /></ProtectedRoute>} />
                   <Route path="/logs" element={<ProtectedRoute reqModulo="Logs"><Logs /></ProtectedRoute>} />

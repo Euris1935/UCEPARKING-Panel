@@ -61,5 +61,27 @@ export const reportsApi = {
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
+  },
+  // RF16.3: Exportar PDF
+  downloadPdf: async (id, title) => {
+    const response = await apiFetch(`/reports/${id}/download-pdf`);
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `reporte_${(title || 'GENERAL').replace(/ /g, '_')}_${id}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
   }
+};
+
+// ─── Pantallas (tabla pantalla) ────────────────────────────────────────────────
+export const pantallaApi = {
+  list:   ()           => apiFetch('/pantalla').then(r => r.json()),
+  get:    (id)         => apiFetch(`/pantalla/${id}`).then(r => r.json()),
+  create: (body)       => apiFetch('/pantalla', { method: 'POST', body: JSON.stringify(body) }).then(r => r.json()),
+  update: (id, body)   => apiFetch(`/pantalla/${id}`, { method: 'PUT',  body: JSON.stringify(body) }).then(r => r.json()),
+  remove: (id)         => apiFetch(`/pantalla/${id}`, { method: 'DELETE' }).then(r => r.json()),
 };
