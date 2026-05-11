@@ -4,6 +4,7 @@ const UIContext = createContext();
 
 export function UIProvider({ children }) {
     const [isSidebarFixed, setIsSidebarFixed] = useState(true);
+    const [isSidebarHovered, setIsSidebarHovered] = useState(false);
 
     useEffect(() => {
         const saved = localStorage.getItem('isSidebarFixed');
@@ -22,7 +23,7 @@ export function UIProvider({ children }) {
     };
 
     return (
-        <UIContext.Provider value={{ isSidebarFixed, toggleSidebarFixed }}>
+        <UIContext.Provider value={{ isSidebarFixed, toggleSidebarFixed, isSidebarHovered, setIsSidebarHovered }}>
             {children}
         </UIContext.Provider>
     );

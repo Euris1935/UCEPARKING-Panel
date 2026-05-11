@@ -1,13 +1,13 @@
 import { supabase } from "../supabaseClient";
 
-const BASE_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:4000/api';
+const BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://uce-parking-backend.onrender.com/api';
 
 /**
  * Helper to make authorized requests to the backend
  */
 async function apiFetch(endpoint, options = {}) {
   const { data: { session } } = await supabase.auth.getSession();
-  
+
   const headers = {
     'Content-Type': 'application/json',
     ...(session?.access_token && { 'Authorization': `Bearer ${session.access_token}` }),
@@ -41,13 +41,13 @@ export const accessApi = {
 };
 
 export const reportsApi = {
-  generate: (payload) => apiFetch('/reports', { 
-    method: 'POST', 
-    body: JSON.stringify(payload) 
+  generate: (payload) => apiFetch('/reports', {
+    method: 'POST',
+    body: JSON.stringify(payload)
   }),
-  previewNew: (payload) => apiFetch('/reports/preview', { 
-    method: 'POST', 
-    body: JSON.stringify(payload) 
+  previewNew: (payload) => apiFetch('/reports/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload)
   }),
   previewExisting: (id) => apiFetch(`/reports/${id}/preview`),
   downloadExcel: async (id, title) => {

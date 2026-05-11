@@ -82,7 +82,8 @@ export default function Dashboard() {
         supabase.from('ticket').select('id_plaza_asignada').eq('organizacion_id', orgId).eq('id_estado', 1),
         supabase.from('acceso').select('id_plaza').eq('organizacion_id', orgId).is('salida_at', null),
         supabase.from('reserva').select('id_plaza').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA).lte('fecha_hora_inicio', new Date().toISOString()).gte('fecha_hora_fin', new Date().toISOString()),
-        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA).lte('fecha_hora_inicio', new Date().toISOString()).gte('fecha_hora_fin', new Date().toISOString()),
+        // CAMBIO: Buffer de 15 min — traemos reservas de zona que inician en los próximos 15 min o ya iniciaron
+        supabase.from('reserva_zona').select('id_zona').eq('organizacion_id', orgId).eq('id_estado', ESTADO_RESERVA.ACTIVA).lte('fecha_hora_inicio', new Date(Date.now() + 15 * 60 * 1000).toISOString()).gte('fecha_hora_fin', new Date().toISOString()),
         
         supabase.from('evento').select('fecha_hora, descripcion, tipo_evento:id_tipo(nombre), persona:id_persona(nombre, apellido), plaza:id_plaza(numero_plaza)').eq('organizacion_id', orgId).order('fecha_hora', { ascending: false }).limit(6),
         supabase.from('ticket').select('id_ticket').eq('organizacion_id', orgId).gte('fecha_hora_emision', hoyStr),
@@ -114,12 +115,11 @@ export default function Dashboard() {
       (reservasActivasData || []).forEach(res => { if (res.id_plaza) mapaReservas.add(res.id_plaza); });
       (asigData || []).forEach(asig => { if (asig.id_plaza) mapaAsignaciones.add(asig.id_plaza); });
       
+      // CAMBIO: La query ya trae las reservas de zona con buffer de 15 min incluido
+      // Solo agregamos sus plazas al mapaReservas directamente
       if (reservasZonasActivas?.length > 0) {
         reservasZonasActivas.forEach(rz => {
-          // Bloqueo preventivo de 15 min para zonas
-          if (new Date(rz.fecha_hora_inicio) <= new Date(Date.now() + 15 * 60 * 1000)) {
-            plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => mapaReservas.add(p.id_plaza));
-          }
+          plazasFiltradas.filter(p => p.id_zona === rz.id_zona).forEach(p => mapaReservas.add(p.id_plaza));
         });
       }
 
@@ -136,8 +136,15 @@ export default function Dashboard() {
 
       // 4. Conteo de estadísticas (No excluyentes para mantener visibilidad)
       const ocupadasNum = plazasFiltradas.filter(p => mapaVehiculosFisicos.has(p.id_plaza)).length;
-      const reservadasNum = plazasFiltradas.filter(p => p.id_estado === 3 || mapaReservas.has(p.id_plaza)).length;
-      const asignadasNum = plazasFiltradas.filter(p => p.id_estado === 5 || mapaAsignaciones.has(p.id_plaza)).length;
+      // CAMBIO: reservadasNum excluye plazas donde ya hay vehículo físico (evita doble conteo)
+      const reservadasNum = plazasFiltradas.filter(p =>
+        (p.id_estado === 3 || mapaReservas.has(p.id_plaza)) &&
+        !mapaVehiculosFisicos.has(p.id_plaza)
+      ).length;
+      // Plaza asignada siempre cuenta como asignada, tenga o no vehículo físico
+      const asignadasNum = plazasFiltradas.filter(p =>
+        p.id_estado === 5 || mapaAsignaciones.has(p.id_plaza)
+      ).length;
       const mantenimientoNum = plazasFiltradas.filter(p => [4, 6].includes(p.id_estado)).length;
 
       // Libres reales: Estado LIBRE en DB y SIN vehículo y SIN reserva y SIN asignación

@@ -31,7 +31,7 @@ export default function BarraLateral() {
   const location = useLocation();
   const [noLeidas, setNoLeidas] = useState(0);
   const { modulos, esAdmin } = useRbac();
-  const { isSidebarFixed } = useUI();
+  const { isSidebarFixed, setIsSidebarHovered } = useUI();
 
   useEffect(() => {
     const fetchNoLeidas = async () => {
@@ -48,6 +48,11 @@ export default function BarraLateral() {
     return () => supabase.removeChannel(ch);
   }, []);
 
+  // Resetear hover al navegar a otra página
+  useEffect(() => {
+    setIsSidebarHovered(false);
+  }, [location.pathname]);
+
 
   const getLinkClasses = (path) => {
     const isActive = location.pathname === path;
@@ -63,7 +68,11 @@ export default function BarraLateral() {
   };
 
   return (
-    <div className={`fixed left-0 top-0 h-screen z-[100] group ${isSidebarFixed ? 'w-64' : 'w-4 hover:w-64'}`}>
+    <div
+      className={`fixed left-0 top-0 h-screen z-[100] group ${isSidebarFixed ? 'w-64' : 'w-4 hover:w-64'}`}
+      onMouseEnter={() => { if (!isSidebarFixed) setIsSidebarHovered(true); }}
+      onMouseLeave={() => { if (!isSidebarFixed) setIsSidebarHovered(false); }}
+    >
       <aside className={`w-64 h-full bg-white flex flex-col p-4 border-r border-gray-200 transition-transform duration-300 overflow-hidden ${isSidebarFixed ? 'translate-x-0' : '-translate-x-full group-hover:translate-x-0 shadow-2xl'}`}>
 
 

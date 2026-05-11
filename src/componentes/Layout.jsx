@@ -10,7 +10,7 @@ import ScheduleGuard from './ScheduleGuard';
 
 export default function Layout({ children }) {
   const { orgId } = useOrg();
-  const { isSidebarFixed } = useUI();
+  const { isSidebarFixed, isSidebarHovered } = useUI();
   const [alertaBanner, setAlertaBanner] = useState(null);
   const [stats, setStats] = useState({ total: 0, ocupadas: 0, reservadas: 0, asignadas: 0, libres: 0 });
   const alertaYaEnviada = useRef(false);
@@ -19,7 +19,7 @@ export default function Layout({ children }) {
   const prevAsignadas = useRef(0);
   const firstLoad = useRef(true);
   const [alertaEstanciaLarga, setAlertaEstanciaLarga] = useState([]);
-  const estanciaAlertaEnviada = useRef(false);
+  const estanciaAlertaEnviada = useRef(new Set()); // Set de id_registro ya notificados
 
   useEffect(() => {
     loadMonitorData();
@@ -123,32 +123,100 @@ export default function Layout({ children }) {
     }
   };
 
-  // ── Monitor de Estancia Larga (>16h) ──
+  // ── Monitor de Estancia Larga (>16h) ── cubre acceso manual + tickets ──
   const checkEstanciaLarga = async () => {
     if (!orgId) return;
     try {
       const hace16h = new Date(Date.now() - 16 * 60 * 60 * 1000).toISOString();
-      const { data } = await supabase
-        .from('acceso')
-        .select('id_registro, entrada_at, id_plaza, vehiculo:id_vehiculo(placa), plaza:id_plaza(numero_plaza)')
-        .eq('organizacion_id', orgId)
-        .is('salida_at', null)
-        .lt('entrada_at', hace16h);
 
-      if (data && data.length > 0) {
-        setAlertaEstanciaLarga(data);
-        if (!estanciaAlertaEnviada.current) {
-          estanciaAlertaEnviada.current = true;
-          const placas = data.map(a => a.vehiculo?.placa || 'Desconocida').join(', ');
+      const [
+        { data: accesosLargos, error: err1 },
+        { data: ticketsLargos, error: err2 }
+      ] = await Promise.all([
+        // 1. Accesos manuales sin salida y con más de 16h
+        supabase.from('acceso')
+          .select('id_registro, id_plaza, vehiculo:id_vehiculo(placa, id_persona)')
+          .eq('organizacion_id', orgId)
+          .is('salida_at', null)
+          .lt('entrada_at', hace16h),
+        // 2. Tickets de visitantes activos (id_estado=1) con más de 16h
+        supabase.from('ticket')
+          .select('id_ticket, id_plaza_asignada, placa_capturada')
+          .eq('organizacion_id', orgId)
+          .eq('id_estado', 1)
+          .lt('fecha_hora_emision', hace16h)
+      ]);
+
+      if (err1) console.error('[EstanciaLarga] Error query acceso:', err1.message);
+      if (err2) console.error('[EstanciaLarga] Error query ticket:', err2.message);
+
+      // Normalizar ambas fuentes en una lista unificada
+      const listaUnificada = [
+        ...(accesosLargos || []).map(a => ({
+          _key:       `a_${a.id_registro}`,
+          _placa:     a.vehiculo?.placa || 'Sin placa',
+          _idPlaza:   a.id_plaza,
+          _idPersona: a.vehiculo?.id_persona || null,
+          _tipo:      'Acceso Manual'
+        })),
+        ...(ticketsLargos || []).map(t => ({
+          _key:       `t_${t.id_ticket}`,
+          _placa:     t.placa_capturada || 'Sin placa',
+          _idPlaza:   t.id_plaza_asignada,
+          _idPersona: null,   // se busca por placa más abajo
+          _tipo:      'Ticket',
+          _placaRaw:  t.placa_capturada
+        }))
+      ];
+
+      if (listaUnificada.length > 0) {
+        setAlertaEstanciaLarga(listaUnificada);
+
+        for (const item of listaUnificada) {
+          if (estanciaAlertaEnviada.current.has(item._key)) continue;
+          estanciaAlertaEnviada.current.add(item._key);
+
+          const placa = item._placa;
+          const plaza = item._idPlaza ? `#${item._idPlaza}` : '—';
+          let idPersona = item._idPersona;
+
+          // Para tickets, buscar el propietario por placa en la tabla vehiculo
+          if (item._tipo === 'Ticket' && item._placaRaw) {
+            const { data: veh } = await supabase
+              .from('vehiculo')
+              .select('id_persona')
+              .ilike('placa', item._placaRaw)
+              .eq('organizacion_id', orgId)
+              .maybeSingle();
+            idPersona = veh?.id_persona || null;
+          }
+
+          // Notificación 1 → Propietario (si está registrado)
+          if (idPersona) {
+            supabase.from('notificacion').insert([{
+              id_persona:      idPersona,
+              organizacion_id: orgId,
+              contenido:       `⚠️ ALERTA DE ESTANCIA LARGA: Tu vehículo (${placa}) lleva más de 16 horas en el parqueo. Plaza: ${plaza}. Por favor retíralo o comunícate con nosotros.`,
+              leida:           false
+            }]).then(({ error }) => { if (error) console.warn('Error notif propietario estancia:', error.message); });
+          }
+
+          // Notificación 2 → Panel / Admin
           supabase.from('notificacion').insert([{
-            contenido: `ALERTA: ${data.length} vehículo(s) con más de 16h en el parqueo: ${placas}`,
-            leida: false,
-            organizacion_id: orgId
-          }]).then(({ error }) => { if (error) console.warn('Error notif estancia:', error.message); });
+            organizacion_id: orgId,
+            contenido:       `⚠️ ESTANCIA LARGA [${item._tipo}]: Vehículo ${placa} lleva más de 16h en plaza ${plaza}.${idPersona ? ' Notif. enviada al propietario.' : ' Propietario no registrado.'}`,
+            leida:           false
+          }]).then(({ error }) => { if (error) console.warn('Error notif panel estancia:', error.message); });
+        }
+
+        // Limpiar del Set los vehículos que ya salieron
+        const keysActuales = new Set(listaUnificada.map(i => i._key));
+        for (const key of estanciaAlertaEnviada.current) {
+          if (!keysActuales.has(key)) estanciaAlertaEnviada.current.delete(key);
         }
       } else {
         setAlertaEstanciaLarga([]);
-        estanciaAlertaEnviada.current = false;
+        estanciaAlertaEnviada.current.clear();
       }
     } catch (err) {
       console.error('Error checkEstanciaLarga:', err.message);
@@ -200,7 +268,7 @@ export default function Layout({ children }) {
     <div className="flex bg-uce-light min-h-screen relative overflow-hidden"> 
       <BarraLateral />
       
-      <main className={`${isSidebarFixed ? 'ml-64' : 'ml-0 pl-10'} flex-1 p-8 overflow-y-auto relative transition-all duration-300`}>
+      <main className={`${isSidebarFixed || isSidebarHovered ? 'ml-64' : 'ml-0 pl-10'} flex-1 p-8 overflow-y-auto relative transition-all duration-300`}>
         {/* Banner de Estancia Larga (azul) */}
         {alertaEstanciaLarga.length > 0 && (
           <div className="mb-4 flex items-start gap-4 bg-blue-600 text-white px-5 py-3 rounded-xl shadow-lg sticky top-0 z-50">
@@ -209,8 +277,8 @@ export default function Layout({ children }) {
               <p className="font-bold text-sm">ALERTA DE ESTANCIA LARGA — {alertaEstanciaLarga.length} vehículo(s) con más de 16 horas</p>
               <div className="flex flex-wrap gap-2 mt-1">
                 {alertaEstanciaLarga.map(a => (
-                  <span key={a.id_registro} className="bg-white/20 text-white text-[10px] font-black px-2 py-0.5 rounded-lg">
-                    Plaza {a.plaza?.numero_plaza || a.id_plaza} — {a.vehiculo?.placa || 'Sin placa'}
+                  <span key={a._key} className="bg-white/20 text-white text-[10px] font-black px-2 py-0.5 rounded-lg">
+                    [{a._tipo}] Plaza #{a._idPlaza || '—'} — {a._placa}
                   </span>
                 ))}
               </div>

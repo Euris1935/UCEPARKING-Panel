@@ -166,7 +166,7 @@ export default function Reservaciones() {
             supabase.from('zona').select('*, estado:estado_zona!id_estado(nombre)').eq('organizacion_id', orgId).order('nombre'),
             supabase.from('tipo_reserva_zona').select('*').order('nombre'),
             supabase.from('estado_reserva').select('*').order('id_estado'),
-            supabase.from('horario').select('dia_semana, hora_apertura, hora_cierre, activo').eq('organizacion_id', orgId)
+            supabase.from('horario_laboral').select('dia_semana, hora_apertura, hora_cierre, activo').eq('organizacion_id', orgId)
         ]);
 
 
@@ -663,8 +663,8 @@ export default function Reservaciones() {
       setLoading(true);
       try {
         const { error } = await supabase.from('reserva_zona').update({ 
-          id_estado: 2, // Asumiendo que 2 es Cancelada/Rechazada
-          motivo_rechazo: reason
+          id_estado: ESTADO_RESERVA.RECHAZADA, // 6 = Rechazada
+          motivo_rechazo: reason || ''
         }).eq('id_reserva_zona', rz.id_reserva_zona);
 
         if (error) throw error;
@@ -677,6 +677,22 @@ export default function Reservaciones() {
             contenido:       `RESERVA RECHAZADA — Lamentablemente tu reserva de zona "${rz.zona?.nombre}" fue rechazada. Motivo: ${reason || 'No especificado'}. Intenta en otra ocasión.`,
             leida:           false
           }]);
+        }
+
+        // --- NOTIFICACIÓN A PARTICIPANTES ---
+        const { data: partsRej } = await supabase
+          .from('reserva_zona_participantes')
+          .select('id_persona')
+          .eq('id_reserva_zona', rz.id_reserva_zona);
+        for (const p of (partsRej || [])) {
+          if (p.id_persona && p.id_persona !== rz.id_persona) {
+            await supabase.from('notificacion').insert([{
+              id_persona:      p.id_persona,
+              organizacion_id: orgId,
+              contenido:       `RESERVA RECHAZADA — La reserva de zona "${rz.zona?.nombre}" en la que eras participante fue rechazada. Motivo: ${reason || 'No especificado'}.`,
+              leida:           false
+            }]);
+          }
         }
 
         registrarLog({
@@ -711,47 +727,40 @@ export default function Reservaciones() {
         const idEstReservPlaza = ESTADO_PLAZA.RESERVADA;
         const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
 
-        // --- VALIDACIÓN DE HORARIO LABORAL (PASO 2) - APLICA A PLAZA Y ZONA ---
-        if (formData.Fecha_Hora_Fin) {
-            if (horarios.length === 0) {
-                // Si no han cargado, intentamos forzar una carga rápida o avisar
-                console.warn("[STEP 2] Horarios no cargados aún.");
-            }
+        // --- VALIDACIÓN DE HORARIO LABORAL (Aplica a Plaza y Zona) ---
+        if (formData.Fecha_Hora_Inicio && formData.Fecha_Hora_Fin) {
+            const fechaInicioObj = new Date(formData.Fecha_Hora_Inicio);
+            const fechaFinObj    = new Date(formData.Fecha_Hora_Fin);
+            const diaSemana      = fechaInicioObj.getDay();
 
-            const fechaFinObj = new Date(formData.Fecha_Hora_Fin);
-            const fechaBaseStr = formData.Fecha_Hora_Inicio || formData.Fecha_Hora_Fin;
-            const fechaBaseObj = new Date(fechaBaseStr);
-            const diaSemana = fechaBaseObj.getDay(); 
-            
-            // Usamos == o Number() para ser robustos con tipos de datos de la DB
-            const horarioDia = horarios.find(h => Number(h.dia_semana) === diaSemana && h.activo);
-            
-            console.log("[STEP 2 DEBUG] Validando reserva:", {
-                tipo: formData.tipo_reserva,
-                fechaFinInput: formData.Fecha_Hora_Fin,
-                diaSemanaCalculado: diaSemana,
-                totalHorariosOrg: horarios.length,
-                horarioEncontrado: horarioDia
-            });
+            if (horarios.length > 0) {
+                const horarioDia = horarios.find(h => Number(h.dia_semana) === diaSemana && h.activo);
 
-            if (horarioDia) {
-                const [hCierre, mCierre] = horarioDia.hora_cierre.split(':').map(Number);
-                const limiteCierre = new Date(
-                    fechaBaseObj.getFullYear(),
-                    fechaBaseObj.getMonth(),
-                    fechaBaseObj.getDate(),
-                    hCierre,
-                    mCierre,
-                    0, 0
-                );
+                if (!horarioDia) {
+                    setLoading(false);
+                    return Swal.fire('Día no laborable', 'El parqueo no labora en el día seleccionado para la reserva.', 'warning');
+                }
 
-                console.log("[STEP 2 DEBUG] Comparación Final:", {
-                    reservaFinMS: fechaFinObj.getTime(),
-                    limiteCierreMS: limiteCierre.getTime(),
-                    esMayor: fechaFinObj.getTime() > limiteCierre.getTime()
-                });
+                // Construir límites de apertura y cierre para el día del INICIO
+                const [hAbre,  mAbre]   = horarioDia.hora_apertura.split(':').map(Number);
+                const [hCierra, mCierra] = horarioDia.hora_cierre.split(':').map(Number);
+                const y  = fechaInicioObj.getFullYear();
+                const mo = fechaInicioObj.getMonth();
+                const d  = fechaInicioObj.getDate();
 
-                if (fechaFinObj.getTime() > limiteCierre.getTime()) {
+                const limiteApertura = new Date(y, mo, d, hAbre,   mAbre,   0, 0);
+                const limiteCierre   = new Date(y, mo, d, hCierra, mCierra, 0, 0);
+
+                if (fechaInicioObj < limiteApertura) {
+                    setLoading(false);
+                    return Swal.fire(
+                        'Fuera de Horario',
+                        `La hora de inicio no puede ser anterior a la apertura del parqueo (${horarioDia.hora_apertura.substring(0, 5)}).`,
+                        'warning'
+                    );
+                }
+
+                if (fechaFinObj > limiteCierre) {
                     setLoading(false);
                     return Swal.fire(
                         'Fuera de Horario',
@@ -759,9 +768,6 @@ export default function Reservaciones() {
                         'warning'
                     );
                 }
-            } else if (horarios.length > 0) {
-                setLoading(false);
-                return Swal.fire('Día no laborable', 'El parqueo no labora en el día seleccionado.', 'warning');
             }
         }
         
@@ -1094,12 +1100,28 @@ export default function Reservaciones() {
               }
             } else if (isRejectionOrCancel && reserva.id_persona) {
                const verbo = estNuevoName.includes('rechaz') ? 'rechazada' : 'cancelada';
+               // Notificar al solicitante
                await supabase.from('notificacion').insert([{
                  id_persona:      reserva.id_persona,
                  organizacion_id: orgId,
                  contenido:       `RESERVA ${verbo.toUpperCase()} — Lamentablemente tu reserva de zona "${reserva.zona?.nombre}" fue ${verbo}. Motivo: ${reasonText || 'No especificado'}. Intenta en otra ocasión.`,
                  leida:           false
                }]);
+               // Notificar a participantes
+               const { data: partsCxl } = await supabase
+                 .from('reserva_zona_participantes')
+                 .select('id_persona')
+                 .eq('id_reserva_zona', reserva.id_reserva_zona);
+               for (const p of (partsCxl || [])) {
+                 if (p.id_persona && p.id_persona !== reserva.id_persona) {
+                   await supabase.from('notificacion').insert([{
+                     id_persona:      p.id_persona,
+                     organizacion_id: orgId,
+                     contenido:       `RESERVA ${verbo.toUpperCase()} — La reserva de zona "${reserva.zona?.nombre}" en la que eras participante fue ${verbo}. Motivo: ${reasonText || 'No especificado'}.`,
+                     leida:           false
+                   }]);
+                 }
+               }
             }
           }
         }
@@ -1143,24 +1165,31 @@ export default function Reservaciones() {
     return new Date(d.getTime() - offset).toISOString().slice(0, 16);
   };
 
-  // --- LÓGICA DE RESTRICCIÓN DE CIERRE (PASO 2) ---
-  const getMaxFinParaDia = (fechaStr) => {
+  // --- RESTRICCIÓN DE APERTURA (mín) ---
+  const getMinInicioParaDia = (fechaStr) => {
     if (!fechaStr || horarios.length === 0) return undefined;
-    
-    // IMPORTANTE: Para evitar problemas de zona horaria al construir el max datetime-local
-    // usamos partes de la fecha local
     const base = new Date(fechaStr);
     const diaSemana = base.getDay();
-    const horarioDia = horarios.find(h => h.dia_semana === diaSemana && h.activo);
-    
+    const horarioDia = horarios.find(h => Number(h.dia_semana) === diaSemana && h.activo);
     if (!horarioDia) return undefined;
-
-    // Construimos el string YYYY-MM-DDTHH:mm basado en la fecha seleccionada y la hora de cierre
     const yyyy = base.getFullYear();
-    const mm = String(base.getMonth() + 1).padStart(2, '0');
-    const dd = String(base.getDate()).padStart(2, '0');
+    const mm   = String(base.getMonth() + 1).padStart(2, '0');
+    const dd   = String(base.getDate()).padStart(2, '0');
+    const hhmm = horarioDia.hora_apertura.substring(0, 5);
+    return `${yyyy}-${mm}-${dd}T${hhmm}`;
+  };
+
+  // --- RESTRICCIÓN DE CIERRE (máx) ---
+  const getMaxFinParaDia = (fechaStr) => {
+    if (!fechaStr || horarios.length === 0) return undefined;
+    const base = new Date(fechaStr);
+    const diaSemana = base.getDay();
+    const horarioDia = horarios.find(h => Number(h.dia_semana) === diaSemana && h.activo);
+    if (!horarioDia) return undefined;
+    const yyyy = base.getFullYear();
+    const mm   = String(base.getMonth() + 1).padStart(2, '0');
+    const dd   = String(base.getDate()).padStart(2, '0');
     const hhmm = horarioDia.hora_cierre.substring(0, 5);
-    
     return `${yyyy}-${mm}-${dd}T${hhmm}`;
   };
 
@@ -1467,7 +1496,16 @@ export default function Reservaciones() {
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-50">
-                            {aprobacionesPendientes.filter(rz => rz.id_estado !== 5 && `${rz.zona?.nombre} ${rz.persona?.nombre}`.toLowerCase().includes(searchTerm.toLowerCase())).map(rz => (
+                            {aprobacionesPendientes
+                              .filter(rz => rz.id_estado !== 5 && `${rz.zona?.nombre} ${rz.persona?.nombre}`.toLowerCase().includes(searchTerm.toLowerCase()))
+                              .sort((a, b) => {
+                                // Activas primero (id_estado === 1), luego el resto
+                                if (a.id_estado === 1 && b.id_estado !== 1) return -1;
+                                if (a.id_estado !== 1 && b.id_estado === 1) return 1;
+                                // Dentro del mismo grupo: más reciente primero
+                                return new Date(b.fecha_hora_inicio) - new Date(a.fecha_hora_inicio);
+                              })
+                              .map(rz => (
                                 <tr key={rz.id_reserva_zona} className="transition-all text-sm bg-gray-50/50 opacity-80 grayscale-[0.2]">
                                 <td className="px-6 py-3 font-bold text-gray-700">
                                   {rz.persona?.nombre} {rz.persona?.apellido}
@@ -1594,24 +1632,33 @@ export default function Reservaciones() {
                                     <span className="px-2.5 py-1 text-[9px] font-bold uppercase rounded-md bg-orange-100 text-orange-800">{rz.estado?.nombre || 'En Espera'}</span>
                                 </td>
                                 <td className="px-6 py-4 text-right">
-                                    {changingStatusFor === rz.id_reserva_zona && changingStatusType === 'aprob_pend' ? (
-                                        <div className="flex items-center justify-end gap-1 animate-fadeIn">
-                                            <select 
-                                                className="border border-orange-300 rounded-lg px-2 py-1 text-[10px] focus:ring-2 focus:ring-orange-200 outline-none pointer-events-auto"
-                                                value={newStatusChoice}
-                                                onChange={e => setNewStatusChoice(e.target.value)}
+                                    <div className="flex gap-2 justify-end items-center">
+                                        {canEdit && (
+                                            <button
+                                                onClick={() => handleApproveRequest(rz)}
+                                                disabled={loading}
+                                                className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white px-3 py-1.5 text-[10px] font-black rounded-lg transition shadow-sm active:scale-95"
+                                                title="Aprobar solicitud"
                                             >
-                                                {estadosReservaList.map(e => <option key={e.id_estado} value={e.id_estado}>{e.nombre}</option>)}
-                                            </select>
-                                            <button onClick={() => handleConfirmarCambioEstado(rz, 'zona')} className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm pointer-events-auto"><FaCheckCircle size={10} /></button>
-                                            <button onClick={() => { setChangingStatusFor(null); setChangingStatusType(null); }} className="p-1.5 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition pointer-events-auto"><FaTimesCircle size={10} /></button>
-                                        </div>
-                                    ) : (
-                                        <div className="flex gap-2 justify-end items-center">
-                                            {canEdit && <button onClick={() => handleEditZona(rz)} className="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-md transition" title="Editar"><FaEdit size={12} /></button>}
-                                            {canEdit && <button onClick={() => { setChangingStatusType('aprob_pend'); setChangingStatusFor(rz.id_reserva_zona); setNewStatusChoice(rz.id_estado.toString()); }} className="text-gray-600 bg-gray-100 hover:bg-gray-200 px-2 py-1.5 text-[10px] font-bold rounded-md transition flex items-center gap-1 border border-gray-200"><FaSync size={10} /> Estado</button>}
-                                        </div>
-                                    )}
+                                                <FaCheckCircle size={10} /> Aprobar
+                                            </button>
+                                        )}
+                                        {canEdit && (
+                                            <button
+                                                onClick={() => handleRejectRequest(rz)}
+                                                disabled={loading}
+                                                className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white px-3 py-1.5 text-[10px] font-black rounded-lg transition shadow-sm active:scale-95"
+                                                title="Rechazar solicitud"
+                                            >
+                                                <FaTimesCircle size={10} /> Rechazar
+                                            </button>
+                                        )}
+                                        {canEdit && (
+                                            <button onClick={() => handleEditZona(rz)} className="text-blue-500 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-md transition" title="Editar">
+                                                <FaEdit size={12} />
+                                            </button>
+                                        )}
+                                    </div>
                                 </td>
                                 </tr>
                             ))}
@@ -1931,28 +1978,24 @@ export default function Reservaciones() {
                             <div>
                                 <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Inicio *</label>
                                 <input
-                                    type="datetime-local"
-                                    className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none"
-                                    value={formData.Fecha_Hora_Inicio}
-                                    min={minDateInicio}
-                                    onChange={(e) => {
-                                      const newVal = e.target.value;
-                                      setFormData({...formData, Fecha_Hora_Inicio: newVal});
-                                    }}
-                                    required
-                                />
+                                     type="datetime-local"
+                                     className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none"
+                                     value={formData.Fecha_Hora_Inicio}
+                                     min={minDateInicio}
+                                     onChange={(e) => setFormData({...formData, Fecha_Hora_Inicio: e.target.value})}
+                                     required
+                                 />
                             </div>
                             <div>
                                 <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Fin *</label>
                                 <input
-                                    type="datetime-local"
-                                    className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none"
-                                    value={formData.Fecha_Hora_Fin}
-                                    min={minDateFin}
-                                    max={getMaxFinParaDia(formData.Fecha_Hora_Inicio || formData.Fecha_Hora_Fin)}
-                                    onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})}
-                                    required
-                                />
+                                     type="datetime-local"
+                                     className="w-full border rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50 outline-none"
+                                     value={formData.Fecha_Hora_Fin}
+                                     min={minDateFin}
+                                     onChange={(e) => setFormData({...formData, Fecha_Hora_Fin: e.target.value})}
+                                     required
+                                 />
                             </div>
                         </div>
                     );

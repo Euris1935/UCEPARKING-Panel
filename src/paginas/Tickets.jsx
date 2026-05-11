@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
@@ -33,8 +34,8 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
   const formattedDate = dateObj.toLocaleDateString('es-DO', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const formattedTime = dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
 
-  return (
-    <div id="ticket-print-container" className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 print:p-0 print:bg-transparent">
+  return createPortal(
+    <div id="ticket-print-container" className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999] p-4 print:p-0 print:bg-transparent">
       {/* Container simulating the thermal receipt */}
       <div className="bg-white shadow-2xl w-full max-w-[80mm] flex flex-col max-h-[95vh] print:max-h-none print:shadow-none print:w-[80mm] print:max-w-[80mm] print:border print:border-dashed print:border-gray-400 overflow-hidden print:overflow-visible text-black font-sans leading-tight">
         
@@ -151,9 +152,10 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
           <button onClick={onClose} className="flex-1 border-2 border-gray-300 text-gray-700 hover:bg-gray-100 py-2.5 rounded font-bold">
             Cerrar
           </button>
-        </div>
       </div>
-    </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
