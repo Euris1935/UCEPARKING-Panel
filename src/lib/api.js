@@ -77,6 +77,24 @@ export const reportsApi = {
   }
 };
 
+// ─── Scanner USB — Salida por Ticket ─────────────────────────────────────────
+export const scannerApi = {
+  /**
+   * Procesa la salida de un ticket escaneado por el lector USB.
+   * El escáner envía el token (código de barras) y el backend valida,
+   * cierra el ticket, libera la plaza y abre la barrera de salida.
+   * @param {string} token - Valor leído por el escáner (ej: "TICKET-42-L010536")
+   * @returns {Promise<object>} Respuesta del backend con placa, visitante, duración, etc.
+   */
+  procesarSalidaTicket: async (token) => {
+    const res = await apiFetch('/scanner/salida-ticket', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+    return res.json();
+  },
+};
+
 // ─── Pantallas (tabla pantalla) ────────────────────────────────────────────────
 export const pantallaApi = {
   list:   ()           => apiFetch('/pantalla').then(r => r.json()),

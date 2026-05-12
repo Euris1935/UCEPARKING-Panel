@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
@@ -9,7 +9,7 @@ import {
   FaClipboardCheck, FaSyncAlt, FaBan, FaTimes, FaHistory, FaQrcode,
   FaCheckCircle, FaTimesCircle, FaUser, FaMapMarkerAlt, FaClock, FaCar, FaUserTag
 } from 'react-icons/fa';
-import { accessApi } from '../lib/api';
+import { accessApi, scannerApi } from '../lib/api';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
@@ -132,10 +132,14 @@ function TicketPrintView({ ticket, onClose, esReimpresion = false }) {
               value={barcodeData} 
               width={1.1} 
               height={40} 
-              fontSize={11}
+              fontSize={0}         /* sin texto bajo las barras */
+              displayValue={false}  /* ocultamos el token crudo */
               margin={0}
-              displayValue={true} 
             />
+            {/* Número de ticket formateado — más limpio que el token */}
+            <p className="text-[10px] font-mono font-bold text-black tracking-widest mt-0.5">
+              #{String(ticket.id_ticket).padStart(6, '0')}
+            </p>
           </div>
 
           <div className="text-center space-y-0.5 pb-2 text-black">
@@ -222,6 +226,14 @@ export default function Tickets() {
   const [emitiendo,            setEmitiendo]            = useState(false);
   const [modoReservaZona,      setModoReservaZona]      = useState(false);
 
+  // Estado para escáner USB de salida
+  const [scanBuffer,           setScanBuffer]           = useState('');
+  const [scanProcesando,       setScanProcesando]       = useState(false);
+  const [scanResultado,        setScanResultado]        = useState(null);
+  const [scanHistorial,        setScanHistorial]        = useState([]);
+  const scanInputRef = useRef(null);
+
+
   // CAMBIO: formulario sin id_visitante — datos inline
   const [visitanteForm, setVisitanteForm] = useState({
     nombre: '', apellido: '', telefono: '', sexo: '',
@@ -242,6 +254,31 @@ export default function Tickets() {
       return () => { supabase.removeChannel(ch); clearInterval(intervalo); };
     }
   }, [orgId, activeTab]);
+
+  // ─── Foco persistente en el input oculto del escáner (solo cuando pestaña activa) ───
+  useEffect(() => {
+    if (activeTab !== 'scanner') return;
+    const mantenerFoco = (e) => {
+      // No robar foco si el clic fue dentro del modal de impresión o en un botón/input visible
+      if (e && e.target) {
+        const enPrint = e.target.closest('#ticket-print-container');
+        const esInteractivo = ['INPUT','TEXTAREA','SELECT','BUTTON','A'].includes(e.target.tagName);
+        if (enPrint || esInteractivo) return;
+      }
+      if (scanInputRef.current && !scanProcesando) {
+        scanInputRef.current.focus();
+      }
+    };
+    // Foco inicial con pequeño delay para no interferir con la transición de pestaña
+    const t = setTimeout(() => scanInputRef.current?.focus(), 150);
+    document.addEventListener('click', mantenerFoco);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('click', mantenerFoco);
+    };
+  }, [activeTab, scanProcesando]);
+
+
 
   const loadData = async () => {
     if (!orgId) return;
@@ -707,6 +744,60 @@ export default function Tickets() {
     }
   };
 
+  // ─── SCANNER: manejar pulsaciones del escáner USB ──────────────────────────────
+  const handleScanKeyDown = async (e) => {
+    if (scanProcesando) return;
+
+    if (e.key === 'Enter') {
+      const token = scanBuffer.trim();
+      setScanBuffer('');
+      if (!token) return;
+      await procesarTokenScan(token);
+      return;
+    }
+
+    // Ignorar teclas especiales que no aportan caracteres
+    if (e.key.length === 1) {
+      setScanBuffer(prev => prev + e.key);
+    }
+  };
+
+  const procesarTokenScan = async (token) => {
+    setScanProcesando(true);
+    setScanResultado(null);
+    try {
+      const data = await scannerApi.procesarSalidaTicket(token);
+      const entrada = {
+        tipo: 'exito',
+        token,
+        placa: data.placa,
+        visitante_nombre: data.visitante_nombre,
+        visitante_apellido: data.visitante_apellido,
+        duracion_minutos: data.duracion_minutos,
+        timestamp: new Date().toISOString(),
+      };
+      setScanResultado(entrada);
+      setScanHistorial(prev => [entrada, ...prev].slice(0, 50));
+      // La suscripción postgres_changes ya recarga la tabla automáticamente
+    } catch (err) {
+      // apiFetch lanza Error con el mensaje del backend
+      const msg = err.message || 'Error de conexión con el servidor';
+      // Intentar detectar code del mensaje (backend envía JSON con error + code)
+      let code = null;
+      try {
+        // Algunos backends devuelven: "TICKET_NO_ENCONTRADO: ..."
+        const match = msg.match(/^([A-Z_]+):/);
+        if (match) code = match[1];
+      } catch (_) {}
+      const entrada = { tipo: 'error', token, code, mensaje: msg, timestamp: new Date().toISOString() };
+      setScanResultado(entrada);
+      setScanHistorial(prev => [entrada, ...prev].slice(0, 50));
+    } finally {
+      setScanProcesando(false);
+      setTimeout(() => scanInputRef.current?.focus(), 300);
+    }
+  };
+
   const tabBtn = (id, label, icon) => (
     <button
       key={id}
@@ -741,6 +832,7 @@ export default function Tickets() {
         {tabBtn('entrada', 'Nueva Entrada', <FaTicketAlt />)}
         {tabBtn('activos', 'Tickets Activos', <FaClipboardCheck />)}
         {tabBtn('historial', 'Historial', <FaHistory />)}
+        {tabBtn('scanner', 'Escáner Salida', <FaQrcode />)}
       </div>
 
       {/* ── TAB ENTRADA ── */}
@@ -1262,6 +1354,215 @@ export default function Tickets() {
           )}
         </div>
       )}
+      {/* ── TAB ESCÁNER SALIDA ── */}
+      {activeTab === 'scanner' && (
+        <div className="space-y-6">
+
+          {/* Input invisible — captura las pulsaciones del escáner USB */}
+          <input
+            ref={scanInputRef}
+            value={scanBuffer}
+            onChange={() => {}} /* onChange vacío — usamos onKeyDown */
+            onKeyDown={handleScanKeyDown}
+            style={{
+              position: 'fixed',
+              top: -9999,
+              left: -9999,
+              opacity: 0,
+              width: 1,
+              height: 1,
+              pointerEvents: 'none',
+            }}
+            readOnly={false}
+            tabIndex={0}
+            aria-hidden="true"
+            id="scanner-hidden-input"
+          />
+
+          {/* Cabecera */}
+          <header>
+            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+              <FaQrcode className="text-green-600" /> Garita de Salida — Escáner USB
+            </h3>
+            <p className="text-gray-500 text-sm mt-1">
+              Coloca el código de barras del ticket frente al lector para registrar la salida automáticamente.
+            </p>
+          </header>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* Panel izquierdo: estado + última lectura */}
+            <div className="space-y-4">
+
+              {/* Indicador de estado del escáner */}
+              <div className={`flex items-center gap-4 p-5 rounded-2xl border-2 shadow-sm transition-all ${
+                scanProcesando
+                  ? 'bg-amber-50 border-amber-300'
+                  : 'bg-emerald-50 border-emerald-300'
+              }`}>
+                <span className="text-3xl">{scanProcesando ? '⏳' : '✅'}</span>
+                <div>
+                  <p className={`font-black text-lg leading-tight ${
+                    scanProcesando ? 'text-amber-800' : 'text-emerald-800'
+                  }`}>
+                    {scanProcesando ? 'Procesando...' : 'Escáner listo'}
+                  </p>
+                  <p className={`text-xs font-medium ${
+                    scanProcesando ? 'text-amber-600' : 'text-emerald-600'
+                  }`}>
+                    {scanProcesando
+                      ? 'Espera mientras se verifica el ticket'
+                      : 'Escanea el código de barras del ticket'}
+                  </p>
+                </div>
+                {/* Pulso animado cuando está listo */}
+                {!scanProcesando && (
+                  <span className="ml-auto w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+                )}
+              </div>
+
+              {/* Resultado de la última lectura */}
+              {scanResultado && (
+                <div className={`p-5 rounded-2xl border-2 shadow-sm transition-all ${
+                  scanResultado.tipo === 'exito'
+                    ? 'bg-green-50 border-green-300'
+                    : 'bg-rose-50 border-rose-300'
+                }`}>
+                  {scanResultado.tipo === 'exito' ? (
+                    <>
+                      <p className="font-black text-green-800 text-base flex items-center gap-2">
+                        <FaCheckCircle className="text-green-500" /> Salida Registrada — Barrera Abierta
+                      </p>
+                      <div className="mt-3 grid grid-cols-2 gap-3">
+                        <div className="bg-white rounded-xl px-4 py-3 border border-green-200">
+                          <p className="text-[9px] font-black text-green-600 uppercase mb-0.5">Placa</p>
+                          <p className="font-mono font-black text-gray-800 text-base">{scanResultado.placa}</p>
+                        </div>
+                        {scanResultado.duracion_minutos != null && (
+                          <div className="bg-white rounded-xl px-4 py-3 border border-green-200">
+                            <p className="text-[9px] font-black text-green-600 uppercase mb-0.5">Estancia</p>
+                            <p className="font-bold text-gray-700">{scanResultado.duracion_minutos} min</p>
+                          </div>
+                        )}
+                        {(scanResultado.visitante_nombre || scanResultado.visitante_apellido) && (
+                          <div className="col-span-2 bg-white rounded-xl px-4 py-3 border border-green-200">
+                            <p className="text-[9px] font-black text-green-600 uppercase mb-0.5">Visitante</p>
+                            <p className="font-semibold text-gray-700">
+                              {`${scanResultado.visitante_nombre || ''} ${scanResultado.visitante_apellido || ''}`.trim()}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="font-black text-rose-800 text-base flex items-center gap-2">
+                        <FaTimesCircle className="text-rose-500" />
+                        {scanResultado.code === 'TICKET_NO_ENCONTRADO' ? 'Ticket no encontrado'
+                          : scanResultado.code === 'TICKET_YA_PROCESADO' ? 'Ticket ya procesado'
+                          : scanResultado.code === 'TICKET_ANULADO'      ? 'Ticket anulado'
+                          : scanResultado.code === 'TOKEN_INVALIDO'      ? 'Código inválido'
+                          : 'Error al procesar'}
+                      </p>
+                      <p className="mt-2 text-sm text-gray-600">{scanResultado.mensaje}</p>
+                      <p className="mt-1 text-[10px] text-gray-400 font-mono">
+                        Token leído: <span className="text-gray-600">{scanResultado.token}</span>
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Instrucciones */}
+              {!scanResultado && (
+                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5">
+                  <p className="font-black text-blue-800 text-sm mb-3 flex items-center gap-2">
+                    <FaHistory className="text-blue-500" /> ¿Cómo usar el escáner?
+                  </p>
+                  <ol className="space-y-2">
+                    {[
+                      'Asegúrate de que el escáner USB esté conectado y el indicador sea verde.',
+                      'El escáner actúa como teclado — no hagas clic en ningún otro campo.',
+                      'Pasa el código de barras del ticket por el lector.',
+                      'El sistema validará el ticket, registrará la salida y abrirá la barrera automáticamente.',
+                    ].map((txt, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs text-blue-700">
+                        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-500 text-white flex items-center justify-center text-[9px] font-black">{i + 1}</span>
+                        {txt}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </div>
+
+            {/* Panel derecho: historial de sesión */}
+            <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+              <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
+                <h4 className="font-bold text-gray-700 flex items-center gap-2 text-sm">
+                  <FaHistory className="text-gray-400" /> Lecturas de esta sesión
+                </h4>
+                {scanHistorial.length > 0 && (
+                  <button
+                    onClick={() => { setScanHistorial([]); setScanResultado(null); }}
+                    className="text-[10px] text-red-400 hover:text-red-600 font-bold uppercase transition"
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
+              {scanHistorial.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-gray-300">
+                  <FaQrcode className="text-5xl mb-3" />
+                  <p className="text-sm font-medium">Sin lecturas aún</p>
+                  <p className="text-xs mt-1">Las salidas registradas aparecerán aquí</p>
+                </div>
+              ) : (
+                <ul className="divide-y divide-gray-50 max-h-[500px] overflow-y-auto">
+                  {scanHistorial.map((h, idx) => (
+                    <li key={idx} className={`px-4 py-3 flex items-start gap-3 ${
+                      h.tipo === 'exito' ? 'hover:bg-green-50' : 'hover:bg-rose-50'
+                    } transition-colors`}>
+                      <span className="text-lg mt-0.5">
+                        {h.tipo === 'exito' ? '✅' : '❌'}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        {h.tipo === 'exito' ? (
+                          <>
+                            <p className="font-bold text-gray-800 text-sm">{h.placa}</p>
+                            {(h.visitante_nombre || h.visitante_apellido) && (
+                              <p className="text-xs text-gray-500">
+                                {`${h.visitante_nombre || ''} ${h.visitante_apellido || ''}`.trim()}
+                              </p>
+                            )}
+                            {h.duracion_minutos != null && (
+                              <p className="text-[10px] text-green-600 font-semibold">Estancia: {h.duracion_minutos} min</p>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <p className="font-bold text-rose-700 text-sm">
+                              {h.code === 'TICKET_NO_ENCONTRADO' ? 'Ticket no encontrado'
+                                : h.code === 'TICKET_YA_PROCESADO' ? 'Ya procesado'
+                                : h.code === 'TICKET_ANULADO'      ? 'Anulado'
+                                : 'Error'}
+                            </p>
+                            <p className="text-[10px] text-gray-400 font-mono truncate">{h.token}</p>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-[9px] text-gray-400 whitespace-nowrap mt-0.5">
+                        {new Date(h.timestamp).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </Layout>
   );
 }
