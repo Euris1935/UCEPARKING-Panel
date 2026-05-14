@@ -1,6 +1,6 @@
 import { supabase } from "../supabaseClient";
 
-const BASE_URL = process.env.REACT_APP_BACKEND_URL || 'https://uce-parking-backend.onrender.com/api';
+const BASE_URL = process.env.REACT_APP_BACKEND_URL || `http://${window.location.hostname}:4000/api`;
 
 /**
  * Helper to make authorized requests to the backend

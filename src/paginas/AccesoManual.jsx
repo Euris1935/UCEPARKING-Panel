@@ -7,6 +7,10 @@ import { useOrg } from '../contexts/OrgContext';
 import SearchableSelect from '../componentes/SearchableSelect';
 import { registrarLog, EVENT_TYPES } from '../utils/logging';
 import { accessApi } from '../lib/api';
+import { io } from "socket.io-client";
+
+// Apunta a la URL de tu backend local
+const socket = io(process.env.REACT_APP_BACKEND_URL || `http://${window.location.hostname}:4000`);
 
 // ─────────────────────────────────────────────────────────────
 // CAMBIOS:
@@ -44,6 +48,32 @@ export default function AccesoManual() {
   const [busquedaVehiculo, setBusquedaVehiculo] = useState('');
   const [mostrarDropdown,  setMostrarDropdown]  = useState(false);
   const [busquedaActivos,  setBusquedaActivos]  = useState('');
+
+  // Estados del escáner serial via Socket.IO
+  const [resultadoScan, setResultadoScan] = useState(null);
+  const [scannerConectado, setScannerConectado] = useState(false);
+
+  useEffect(() => {
+    // Resultado exitoso del escáner serial
+    socket.on("salida-escaner", (data) => {
+      setResultadoScan({ tipo: "exito", ...data });
+      setTimeout(() => setResultadoScan(null), 5000);
+    });
+    // Error del escáner serial
+    socket.on("scanner-error", (data) => {
+      setResultadoScan({ tipo: "error", code: data.code, mensaje: data.mensaje });
+      setTimeout(() => setResultadoScan(null), 4000);
+    });
+    // Estado de conexión del escáner
+    socket.on("scanner-status", (data) => {
+      setScannerConectado(data.conectado);
+    });
+    return () => {
+      socket.off("salida-escaner");
+      socket.off("scanner-error");
+      socket.off("scanner-status");
+    };
+  }, []);
 
   useEffect(() => {
     if (orgId) {
@@ -411,6 +441,16 @@ export default function AccesoManual() {
           <p className="text-gray-500 mt-1">Dar acceso manual a clientes registrados sin LPR.</p>
         </div>
         <div className="flex flex-col md:flex-row items-center gap-4">
+          <div className="flex flex-col gap-1 items-end mr-2">
+            <div className={`text-sm font-bold flex items-center gap-2 ${scannerConectado ? "text-emerald-600" : "text-red-500"}`}>
+              {scannerConectado ? "📷 Escáner conectado" : "⚠️ Escáner desconectado"}
+            </div>
+            {resultadoScan && (
+              <div className={`text-xs font-bold px-2 py-1 rounded ${resultadoScan.tipo === 'exito' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                {resultadoScan.tipo === 'exito' ? `Ticket escaneado: ${resultadoScan.placa}` : resultadoScan.mensaje}
+              </div>
+            )}
+          </div>
           <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
             <button onClick={() => apiControlBarrera('open-main', '¿Abrir Barrera Principal?')} className="bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2.5 font-bold rounded-lg shadow-sm transition-all flex items-center gap-2 active:scale-95">
               <FaSignInAlt size={16} /> 

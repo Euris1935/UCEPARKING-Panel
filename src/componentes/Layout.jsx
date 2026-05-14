@@ -6,6 +6,7 @@ import { FaBell, FaClock, FaWifi } from "react-icons/fa";
 import BarraLateral from "./barraLateral";
 import ScheduleGuard from "./ScheduleGuard";
 import { useSensorMonitor } from "../hooks/useSensorMonitor";
+import GlobalScannerListener from "./GlobalScannerListener";
 
 export default function Layout({ children }) {
   const { orgId } = useOrg();
@@ -288,6 +289,7 @@ export default function Layout({ children }) {
 
   return (
     <div className="flex bg-uce-light min-h-screen relative overflow-hidden">
+      <GlobalScannerListener />
       <BarraLateral />
 
       <main

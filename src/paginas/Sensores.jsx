@@ -281,7 +281,7 @@ export default function Sensores() {
         const {
           data: { session },
         } = await supabase.auth.getSession();
-        const res = await fetch("http://localhost:4000/api/sensor/config", {
+        const res = await fetch(`http://${window.location.hostname}:4000/api/sensor/config`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

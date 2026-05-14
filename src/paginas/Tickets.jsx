@@ -255,28 +255,58 @@ export default function Tickets() {
     }
   }, [orgId, activeTab]);
 
-  // ─── Foco persistente en el input oculto del escáner (solo cuando pestaña activa) ───
+  // ─── Intercepción GLOBAL del escáner de código de barras ───────────────────
+  const procesarTokenRef = useRef();
   useEffect(() => {
-    if (activeTab !== 'scanner') return;
-    const mantenerFoco = (e) => {
-      // No robar foco si el clic fue dentro del modal de impresión o en un botón/input visible
-      if (e && e.target) {
-        const enPrint = e.target.closest('#ticket-print-container');
-        const esInteractivo = ['INPUT','TEXTAREA','SELECT','BUTTON','A'].includes(e.target.tagName);
-        if (enPrint || esInteractivo) return;
+    procesarTokenRef.current = procesarTokenScan;
+  });
+
+  useEffect(() => {
+    let globalBuffer = '';
+    let lastKeyTime = Date.now();
+    let timeoutId;
+
+    const handleGlobalKeyDown = (e) => {
+      // Ignorar modificadores
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      
+      const now = Date.now();
+      // Si el tiempo entre teclas es > 100ms, probablemente es una persona tipeando
+      if (now - lastKeyTime > 100) {
+        globalBuffer = '';
       }
-      if (scanInputRef.current && !scanProcesando) {
-        scanInputRef.current.focus();
+      lastKeyTime = now;
+
+      if (e.key === 'Enter') {
+        const token = globalBuffer.trim();
+        // Verificar si es un código válido (empieza con TICKET-, o es un UUID, o un ID numérico)
+        const isTicket = token.startsWith('TICKET-') || /^[0-9a-f]{8}-/i.test(token) || /^[0-9]+$/.test(token);
+        
+        // Si tiene caracteres y fue ingresado muy rápido (escáner)
+        if (isTicket && token.length > 0) {
+          e.preventDefault();
+          e.stopPropagation();
+          globalBuffer = '';
+          setActiveTab('scanner'); // Cambiar automáticamente a la pestaña
+          if (procesarTokenRef.current) {
+            procesarTokenRef.current(token);
+          }
+        }
+      } else if (e.key && e.key.length === 1) {
+        globalBuffer += e.key;
       }
+      
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => { globalBuffer = ''; }, 200);
     };
-    // Foco inicial con pequeño delay para no interferir con la transición de pestaña
-    const t = setTimeout(() => scanInputRef.current?.focus(), 150);
-    document.addEventListener('click', mantenerFoco);
+
+    // Usar 'capture' phase para evitar que el Enter envíe el formulario actual
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
     return () => {
-      clearTimeout(t);
-      document.removeEventListener('click', mantenerFoco);
+      window.removeEventListener('keydown', handleGlobalKeyDown, true);
+      clearTimeout(timeoutId);
     };
-  }, [activeTab, scanProcesando]);
+  }, []);
 
 
 
@@ -537,7 +567,7 @@ export default function Tickets() {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.access_token) {
-          fetch('http://localhost:4000/api/access/open-main', {
+          fetch(`http://${window.location.hostname}:4000/api/access/open-main`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${session.access_token}` }
           }).catch(() => {});
@@ -685,7 +715,7 @@ export default function Tickets() {
           try {
             const { data: { session } } = await supabase.auth.getSession();
             if (session?.access_token) {
-              fetch('http://localhost:4000/api/access/open-main', {
+              fetch(`http://${window.location.hostname}:4000/api/access/open-main`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${session.access_token}` }
               }).catch(() => {});
@@ -744,21 +774,15 @@ export default function Tickets() {
     }
   };
 
-  // ─── SCANNER: manejar pulsaciones del escáner USB ──────────────────────────────
   const handleScanKeyDown = async (e) => {
     if (scanProcesando) return;
-
     if (e.key === 'Enter') {
+      e.preventDefault();
       const token = scanBuffer.trim();
       setScanBuffer('');
       if (!token) return;
       await procesarTokenScan(token);
       return;
-    }
-
-    // Ignorar teclas especiales que no aportan caracteres
-    if (e.key.length === 1) {
-      setScanBuffer(prev => prev + e.key);
     }
   };
 
@@ -1358,26 +1382,23 @@ export default function Tickets() {
       {activeTab === 'scanner' && (
         <div className="space-y-6">
 
-          {/* Input invisible — captura las pulsaciones del escáner USB */}
-          <input
-            ref={scanInputRef}
-            value={scanBuffer}
-            onChange={() => {}} /* onChange vacío — usamos onKeyDown */
-            onKeyDown={handleScanKeyDown}
-            style={{
-              position: 'fixed',
-              top: -9999,
-              left: -9999,
-              opacity: 0,
-              width: 1,
-              height: 1,
-              pointerEvents: 'none',
-            }}
-            readOnly={false}
-            tabIndex={0}
-            aria-hidden="true"
-            id="scanner-hidden-input"
-          />
+          {/* Input visible — captura las pulsaciones del escáner USB o entrada manual */}
+          <div className="bg-white p-4 rounded-xl border-2 border-green-200 shadow-sm flex flex-col gap-2">
+            <label htmlFor="scanner-input" className="text-sm font-bold text-gray-700 uppercase flex items-center gap-2">
+              <FaQrcode className="text-green-600" />
+              Lectura de Ticket
+            </label>
+            <input
+              ref={scanInputRef}
+              id="scanner-input"
+              value={scanBuffer}
+              onChange={(e) => setScanBuffer(e.target.value)}
+              onKeyDown={handleScanKeyDown}
+              className="w-full border-2 border-gray-300 focus:border-green-500 rounded-lg p-3 text-lg font-mono font-bold text-center tracking-widest outline-none transition-all focus:ring-4 focus:ring-green-100"
+              placeholder="Escanea o escribe el código aquí y presiona Enter..."
+              autoFocus
+            />
+          </div>
 
           {/* Cabecera */}
           <header>

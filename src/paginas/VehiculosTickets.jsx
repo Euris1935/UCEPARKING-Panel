@@ -237,7 +237,7 @@ export default function VehiculosTickets() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
-        fetch(`http://localhost:4000/api/access/open-${puerta}`, {
+        fetch(`http://${window.location.hostname}:4000/api/access/open-${puerta}`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${session.access_token}` }
         }).catch(() => {});
