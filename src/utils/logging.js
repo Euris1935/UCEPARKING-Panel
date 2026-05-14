@@ -8,6 +8,7 @@ export const EVENT_TYPES = {
   ENTRADA: "Entrada",
   SALIDA: "Salida",
   ALERTA: "Alerta",
+  EVENTUALIDAD: "Eventualidad",
   RESERVA_CREADA: "Reserva Creada",
   RESERVA_CANCELADA: "Reserva Cancelada",
   TICKET_EMITIDO: "Ticket Emitido",

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Swal from 'sweetalert2';
 import { FaParking, FaEnvelope, FaLock } from 'react-icons/fa';
-import { ESTADO_USUARIO } from '../lib/constants';
+import { ESTADO_USUARIO, ROL } from '../lib/constants';
 
 export default function Login() {
   const [loading, setLoading] = useState(false);
@@ -42,6 +42,16 @@ export default function Login() {
       });
 
       if (authError) throw authError;
+
+      // ── 3. Validación de Rol (Plan RAW) ──
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: userData } = await supabase.from('usuario').select('rol_id').eq('id', user.id).maybeSingle();
+        if (userData?.rol_id === ROL.MOVIL) {
+          await supabase.auth.signOut();
+          throw new Error('ROLE_MOBILE');
+        }
+      }
       
       // Éxito: El cambio de estado de la sesión provocará que App.js redireccione.
       // No mostramos mensaje de éxito para que la entrada sea fluida.
@@ -55,6 +65,13 @@ export default function Login() {
           text: 'Este usuario no es un usuario activo del sistema.',
           icon: 'warning',
           confirmButtonColor: '#22c55e'
+        });
+      } else if (error.message === 'ROLE_MOBILE') {
+        Swal.fire({
+          title: 'Acceso Denegado',
+          text: 'Esta cuenta es de uso exclusivo para la aplicación móvil y no tiene permitido el acceso al panel web.',
+          icon: 'error',
+          confirmButtonColor: '#d33'
         });
       } else {
         Swal.fire({

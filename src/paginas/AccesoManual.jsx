@@ -96,6 +96,8 @@ export default function AccesoManual() {
       const { data: epLibre } = await supabase
         .from('estado_plaza').select('id_estado').ilike('nombre', 'Libre').maybeSingle();
       const idEstLibrePlaza = epLibre?.id_estado || 1;
+      const { data: estadosUsuarios } = await supabase.from('usuario').select('id_persona, id_estado').eq('organizacion_id', orgId);
+      const uStatusMap = Object.fromEntries((estadosUsuarios || []).map(u => [u.id_persona, u.id_estado]));
 
       // 2. Plazas (filtrando zonas inactivas)
       const { data: rawPlazas } = await supabase
@@ -113,6 +115,7 @@ export default function AccesoManual() {
 
       // 3. Personas de la org via RPC
       const { data: orgUsers } = await supabase.rpc('get_usuarios_org');
+      
       const allP = (orgUsers || []).map(u => ({
         id_persona: u.id_persona,
         nombre:     u.nombre,
@@ -124,6 +127,16 @@ export default function AccesoManual() {
         const nb = `${b.nombre} ${b.apellido}`.toLowerCase();
         return na.localeCompare(nb);
       });
+
+      // Plan PREA: Solo personas con usuario Activo (id_estado = 1) para selección de entrada
+      const personasActivas = (orgUsers || []).filter(u => uStatusMap[u.id_persona] === 1).map(u => ({
+        id_persona: u.id_persona,
+        nombre:     u.nombre,
+        apellido:   u.apellido,
+        email:      u.email,
+        telefono:   u.telefono
+      }));
+
       const pMap = {};
       allP.forEach(p => { pMap[p.id_persona] = p; });
       setPersonas(allP);
@@ -141,7 +154,13 @@ export default function AccesoManual() {
         .from('acceso').select('id_vehiculo').eq('organizacion_id', orgId).is('salida_at', null);
       const vehiculosConAccesoActivo = new Set((accActivosIds || []).map(a => a.id_vehiculo));
 
-      setSearchOptions(generateSearchOptions(vhsEnriquecidos, allP, vehiculosConAccesoActivo));
+      // Plan PREA: Filtrar vehículos para que solo aparezcan los de propietarios ACTIVOS
+      const vehiculosFiltradosPREA = vhsEnriquecidos.filter(v => {
+        if (!v.id_persona) return true; // Permitir si no tiene dueño (ej. vehículos genéricos)
+        return uStatusMap[v.id_persona] === 1;
+      });
+
+      setSearchOptions(generateSearchOptions(vehiculosFiltradosPREA, personasActivas, vehiculosConAccesoActivo));
 
       // 6. Accesos activos
       const { data: activos } = await supabase

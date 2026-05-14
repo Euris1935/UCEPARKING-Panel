@@ -67,7 +67,7 @@ export default function Asignaciones() {
 
         if (orgId) {
             loadData();
-            checkExpiredAssignments(); 
+            checkExpiredAssignments();
 
             const timer = setInterval(checkExpiredAssignments, 300000);
 
@@ -79,13 +79,13 @@ export default function Asignaciones() {
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'zona' }, () => loadData())
                 .subscribe();
 
-            return () => { 
-                supabase.removeChannel(channel); 
+            return () => {
+                supabase.removeChannel(channel);
                 clearInterval(timer);
             };
         }
     }, [orgId]);
-    
+
     /**
      * Monitor de Autocierre de Asignaciones
      * Busca contratos cuya fecha_fin ya pasó y los marca como Finalizada en la BD.
@@ -94,7 +94,7 @@ export default function Asignaciones() {
         try {
             console.log("[AutoClose] Verificando asignaciones vencidas...");
             const ahora = new Date().toISOString();
-            
+
             // 1. Buscar asignaciones activas (id_estado=1) cuya fecha_fin ya pasó
             const { data: vencidas, error } = await supabase
                 .from('asignacion')
@@ -103,7 +103,7 @@ export default function Asignaciones() {
                 .eq('organizacion_id', orgId)
                 .not('fecha_fin', 'is', null)
                 .lt('fecha_fin', ahora);
-            
+
             if (error) throw error;
             if (!vencidas || vencidas.length === 0) return;
 
@@ -119,7 +119,7 @@ export default function Asignaciones() {
                     await supabase.from('plaza').update({ id_estado: idLibre }).eq('id_plaza', asig.id_plaza);
                 }
             }
-            
+
             console.log("[AutoClose] Proceso completado.");
             loadData();
         } catch (e) {
@@ -140,16 +140,25 @@ export default function Asignaciones() {
                 { data: catEst }
             ] = await Promise.all([
                 supabase.from('asignacion').select('*').eq('organizacion_id', orgId).order('created_at', { ascending: false }),
-                supabase.from('empleado').select('id_empleado, persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId),
+                supabase.from('empleado').select('id_empleado, persona:id_persona(nombre, apellido, usuario:usuario(id_estado))').eq('organizacion_id', orgId),
                 supabase.from('plaza').select('id_plaza, numero_plaza, zona:id_zona(nombre)').eq('organizacion_id', orgId),
                 supabase.from('estado_asignacion').select('*').order('id_estado')
             ]);
 
             const idEstLibrePlaza = ESTADO_PLAZA.LIBRE;
+            
+            // Lista completa para mapeo (Tablas de historial)
             const todosEmpleadosOrdenados = (todosEmpleados || []).sort((a, b) => {
                 const na = `${a.persona?.nombre ?? ''} ${a.persona?.apellido ?? ''}`.toLowerCase();
                 const nb = `${b.persona?.nombre ?? ''} ${b.persona?.apellido ?? ''}`.toLowerCase();
                 return na.localeCompare(nb);
+            });
+
+            // Lista filtrada para selección (Plan PREA - Dropdowns)
+            const empleadosActivos = todosEmpleadosOrdenados.filter(e => {
+                const usr = e.persona?.usuario;
+                const uStatus = Array.isArray(usr) ? usr[0]?.id_estado : usr?.id_estado;
+                return uStatus === 1;
             });
 
             // 2. Unir datos manualmente y calcular estado derivado
@@ -157,27 +166,34 @@ export default function Asignaciones() {
             const asignacionesConDatos = (asigData || []).map(asig => {
                 const emp = todosEmpleadosOrdenados?.find(e => e.id_empleado === asig.id_empleado);
                 const plz = todasPlazas?.find(p => p.id_plaza === asig.id_plaza);
-                
+
                 let estadoFinal = asig.id_estado;
                 if (asig.id_estado === 1 && asig.fecha_fin) {
                     const fFin = new Date(asig.fecha_fin);
-                    if (fFin < ahora) estadoFinal = 2; 
+                    if (fFin < ahora) estadoFinal = 2;
                 }
 
-                return { 
-                    ...asig, 
-                    empleado: emp || null, 
+                return {
+                    ...asig,
+                    empleado: emp || null,
                     plaza: plz || null,
-                    _estadoCalculado: estadoFinal 
+                    _estadoCalculado: estadoFinal
                 };
             });
-            setAsignaciones(asignacionesConDatos);
+            const ordenadas = (asignacionesConDatos || []).sort((a, b) => {
+                // 1. Prioridad para Activas (estado 1)
+                if (a._estadoCalculado === 1 && b._estadoCalculado !== 1) return -1;
+                if (a._estadoCalculado !== 1 && b._estadoCalculado === 1) return 1;
+                // 2. Orden cronológico descendente (creación más reciente arriba)
+                return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+            });
+            setAsignaciones(ordenadas);
 
             // 3. Conjunto de empleados con plaza activa
             const ocupados = new Set(
                 (asigData || [])
-                .filter(a => a.id_estado === 1 && (!a.fecha_fin || new Date(a.fecha_fin) >= new Date(new Date().setHours(0,0,0,0))))
-                .map(a => a.id_empleado)
+                    .filter(a => a.id_estado === 1 && (!a.fecha_fin || new Date(a.fecha_fin) >= new Date(new Date().setHours(0, 0, 0, 0))))
+                    .map(a => a.id_empleado)
             );
             setEmpleadosConPlaza(ocupados);
 
@@ -188,10 +204,10 @@ export default function Asignaciones() {
                 .eq('organizacion_id', orgId)
                 .eq('id_estado', idEstLibrePlaza)
                 .order('numero_plaza');
-            
+
             const plazasDisponibles = (plazaData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa');
-            
-            setEmpleadosList(todosEmpleadosOrdenados);
+
+            setEmpleadosList(empleadosActivos);
             setPlazasList(plazasDisponibles);
             setEstadosAsigList(catEst || []);
 
@@ -227,8 +243,9 @@ export default function Asignaciones() {
             .select('id_plaza, numero_plaza, zona:id_zona(nombre, estado_zona(nombre))')
             .eq('id_estado', idEstLibrePlaza)
             .order('numero_plaza');
-        
-        const plazasDisponibles = (plazaData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa');
+
+        const plazasDisponibles = (plazaData || []).filter(p => (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa')
+            .sort((a, b) => (a.numero_plaza || '').localeCompare(b.numero_plaza || '', undefined, { numeric: true }));
         setPlazasList(plazasDisponibles);
         setShowModal(true);
     };
@@ -249,12 +266,12 @@ export default function Asignaciones() {
             .select('id_plaza, numero_plaza, zona:id_zona(nombre, estado_zona(nombre))')
             .or(`id_estado.eq.${idEstLibrePlaza},id_plaza.eq.${asig.id_plaza}`)
             .order('numero_plaza');
-        
+
         // Mantener la plaza actual aunque la zona esté bloqueada (para evitar errores en edición), 
         // pero filtrar las demás.
-        const plazasDisponibles = (plazaData || []).filter(p => 
+        const plazasDisponibles = (plazaData || []).filter(p =>
             p.id_plaza === asig.id_plaza || (p.zona?.estado_zona?.nombre || 'Activa') === 'Activa'
-        );
+        ).sort((a, b) => (a.numero_plaza || '').localeCompare(b.numero_plaza || '', undefined, { numeric: true }));
         setPlazasList(plazasDisponibles);
         setShowModal(true);
     };
@@ -349,22 +366,22 @@ export default function Asignaciones() {
 
         try {
             setLoading(true);
-            
+
             // 1. Calcular payload de actualización de asignación primero
-            const updatePayload = { 
+            const updatePayload = {
                 id_estado: nextStatus,
                 notas: asig.notas
             };
-            
+
             if (nextStatus === 2) { // Finalizada
-                    const momentAhora = new Date();
-                    const momentInicio = new Date(asig.fecha_inicio);
-                    
-                    // Asegurar que la fecha de fin sea mayor o igual al inicio para cumplir con el constraint
-                    const fechaFinFinal = momentAhora > momentInicio ? momentAhora.toISOString() : momentInicio.toISOString();
-                    updatePayload.fecha_fin = fechaFinFinal;
-                    
-                    console.log(`[StatusChange] Inicio: ${asig.fecha_inicio} -> Fin: ${updatePayload.fecha_fin}`);
+                const momentAhora = new Date();
+                const momentInicio = new Date(asig.fecha_inicio);
+
+                // Asegurar que la fecha de fin sea mayor o igual al inicio para cumplir con el constraint
+                const fechaFinFinal = momentAhora > momentInicio ? momentAhora.toISOString() : momentInicio.toISOString();
+                updatePayload.fecha_fin = fechaFinFinal;
+
+                console.log(`[StatusChange] Inicio: ${asig.fecha_inicio} -> Fin: ${updatePayload.fecha_fin}`);
             }
 
             // 2. ACTUALIZAR ASIGNACIÓN PRIMERO (Si esto falla, no liberamos la plaza)
@@ -372,7 +389,7 @@ export default function Asignaciones() {
                 .from('asignacion')
                 .update(updatePayload)
                 .eq('id_asignacion', asig.id_asignacion);
-            
+
             if (upErr) {
                 console.error("Error al cerrar asignacion:", upErr);
                 throw new Error(`No se pudo cerrar el contrato: ${upErr.message}`);
@@ -381,7 +398,7 @@ export default function Asignaciones() {
             // 3. SOLO SI EL CONTRATO SE CERRÓ: Liberar la plaza
             if (nextStatus === 2 || nextStatus === 3) {
                 const idLibrePlaza = ESTADO_PLAZA.LIBRE;
-                
+
                 if (asig.id_plaza) {
                     const { error: plzErr } = await supabase
                         .from('plaza')
@@ -393,7 +410,7 @@ export default function Asignaciones() {
 
             Swal.fire({
                 title: 'Actualizado',
-                text: 'El contrato se ha cerrado y la plaza ha sido liberada.',
+                text: 'La Asignación se ha finalizado y la plaza ha sido liberada.',
                 icon: 'success',
                 timer: 2000,
                 showConfirmButton: false
@@ -427,7 +444,7 @@ export default function Asignaciones() {
 
                 // 2. Obtener plazas marcadas como asignadas
                 const { data: plazasAsignadas } = await supabase.from('plaza').select('id_plaza').eq('id_estado', idAsignada);
-                
+
                 // 3. Obtener asignaciones realmente activas (id_estado = 1)
                 const { data: asignacionesActivas } = await supabase.from('asignacion').select('id_plaza').eq('id_estado', 1);
                 const plazasConAsigReal = new Set(asignacionesActivas?.map(a => a.id_plaza));
@@ -489,16 +506,16 @@ export default function Asignaciones() {
                                 />
                                 <FaSearch className="absolute left-3 top-2.5 text-gray-400 text-xs" />
                             </div>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={loadData}
-                                        disabled={isRefreshing}
-                                        className="p-2 text-purple-600 hover:bg-purple-50 rounded-full transition disabled:opacity-50"
-                                        title="Refrescar lista"
-                                    >
-                                        <FaSync className={isRefreshing ? 'animate-spin' : ''} />
-                                    </button>
-                                </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={loadData}
+                                    disabled={isRefreshing}
+                                    className="p-2 text-purple-600 hover:bg-purple-50 rounded-full transition disabled:opacity-50"
+                                    title="Refrescar lista"
+                                >
+                                    <FaSync className={isRefreshing ? 'animate-spin' : ''} />
+                                </button>
+                            </div>
                         </div>
                         <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                             <table className="min-w-full divide-y divide-gray-200">
@@ -521,7 +538,7 @@ export default function Asignaciones() {
                                         filteredData.map(item => {
                                             const est = item._estadoCalculado;
                                             const isClosed = est !== 1;
-                                            
+
                                             // Clases dinámicas para la fila
                                             let rowClass = "hover:bg-purple-50/20 transition";
                                             if (est === 2) rowClass = "bg-gray-50/50 grayscale-[0.4] opacity-80 opacity-60";
@@ -582,7 +599,7 @@ export default function Asignaciones() {
                                                     <td className="px-6 py-4 whitespace-nowrap">
                                                         {changingStatusFor === item.id_asignacion ? (
                                                             <div className="flex items-center gap-1 animate-fadeIn">
-                                                                <select 
+                                                                <select
                                                                     className="border border-purple-300 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-purple-200 focus:border-purple-500 outline-none transition-all cursor-pointer bg-white"
                                                                     value={newStatusChoice}
                                                                     onChange={e => setNewStatusChoice(e.target.value)}
@@ -591,15 +608,15 @@ export default function Asignaciones() {
                                                                         <option key={e.id_estado} value={e.id_estado}>{e.nombre}</option>
                                                                     ))}
                                                                 </select>
-                                                                <button 
-                                                                    onClick={() => handleConfirmarCambioEstado(item)} 
+                                                                <button
+                                                                    onClick={() => handleConfirmarCambioEstado(item)}
                                                                     className="p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition shadow-sm"
                                                                     title="Confirmar cambio"
                                                                 >
                                                                     {loading ? <FaSync size={12} className="animate-spin" /> : <FaCheck size={12} />}
                                                                 </button>
-                                                                <button 
-                                                                    onClick={() => setChangingStatusFor(null)} 
+                                                                <button
+                                                                    onClick={() => setChangingStatusFor(null)}
                                                                     className="p-1.5 bg-gray-200 text-gray-500 rounded-lg hover:bg-gray-300 transition"
                                                                     title="Cancelar"
                                                                 >
@@ -622,19 +639,19 @@ export default function Asignaciones() {
                                                             {!isClosed ? (
                                                                 <>
                                                                     {/* Botón Editar */}
-                                                                    <button 
-                                                                        onClick={() => handleOpenEdit(item)} 
+                                                                    <button
+                                                                        onClick={() => handleOpenEdit(item)}
                                                                         className="px-2.5 py-1.5 rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 text-xs font-bold transition flex items-center gap-1"
                                                                     >
                                                                         <FaEdit /> <span>Editar</span>
                                                                     </button>
 
                                                                     {/* Botón Estado */}
-                                                                    <button 
+                                                                    <button
                                                                         onClick={() => {
                                                                             setChangingStatusFor(item.id_asignacion);
                                                                             setNewStatusChoice(item.id_estado);
-                                                                        }} 
+                                                                        }}
                                                                         disabled={changingStatusFor === item.id_asignacion}
                                                                         className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold transition flex items-center gap-1 ${changingStatusFor === item.id_asignacion ? 'bg-gray-50 text-gray-300 border-gray-100' : 'text-purple-600 hover:bg-purple-50 border-purple-200'}`}
                                                                     >
@@ -705,9 +722,9 @@ export default function Asignaciones() {
                                                 options.push({ label: zName || 'Sin Zona', isGroup: true });
                                                 plazasList
                                                     .filter(p => p.zona?.nombre === zName)
-                                                    .forEach(p => options.push({ 
-                                                        value: p.id_plaza, 
-                                                        label: `${p.numero_plaza}${editingAsignacion && String(p.id_plaza) === String(editingAsignacion.id_plaza) ? ' (actual)' : ''}` 
+                                                    .forEach(p => options.push({
+                                                        value: p.id_plaza,
+                                                        label: `${p.numero_plaza}${editingAsignacion && String(p.id_plaza) === String(editingAsignacion.id_plaza) ? ' (actual)' : ''}`
                                                     }));
                                             });
                                             return options;

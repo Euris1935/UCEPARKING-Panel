@@ -8,7 +8,7 @@ import { useUI } from '../contexts/UIContext';
 import {
   FaTachometerAlt, FaCar, FaClipboardList, FaUsers,
   FaMicrochip, FaChartBar, FaWrench, FaCog, FaSignOutAlt,
-  FaParking, FaTicketAlt, FaSuitcase, FaHistory, FaBell, FaHandPaper, FaCarSide, FaTv
+  FaParking, FaTicketAlt, FaSuitcase, FaHistory, FaBell, FaHandPaper, FaCarSide, FaTv, FaChevronRight, FaExclamationTriangle
 } from 'react-icons/fa';
 
 const navItems = [
@@ -25,6 +25,7 @@ const navItems = [
   { to: '/pantallas',   icon: FaTv,             label: 'Pantallas',        moduloReq: 'Dispositivos'    },
   { to: '/reportes',    icon: FaChartBar,       label: 'Reportes',         moduloReq: 'Reportes'        },
   { to: '/mantenimiento', icon: FaWrench, label: 'Mantenimiento', moduloReq: 'Mantenimiento' },
+  { to: '/eventualidad', icon: FaExclamationTriangle, label: 'Eventualidades', moduloReq: 'Logs' },
   { to: '/logs', icon: FaHistory, label: 'Logs de Eventos', moduloReq: 'Logs' },
 ];
 
@@ -70,11 +71,18 @@ export default function BarraLateral() {
 
   return (
     <div
-      className={`fixed left-0 top-0 h-screen z-[100] group ${isSidebarFixed ? 'w-64' : 'w-4 hover:w-64'}`}
+      className={`fixed left-0 top-0 h-screen z-[100] group ${isSidebarFixed ? 'w-64' : 'w-10 hover:w-64'}`}
       onMouseEnter={() => { if (!isSidebarFixed) setIsSidebarHovered(true); }}
       onMouseLeave={() => { if (!isSidebarFixed) setIsSidebarHovered(false); }}
     >
-      <aside className={`w-64 h-full bg-white flex flex-col p-4 border-r border-gray-200 transition-transform duration-300 overflow-hidden ${isSidebarFixed ? 'translate-x-0' : '-translate-x-full group-hover:translate-x-0 shadow-2xl'}`}>
+      {/* Icono indicador cuando la barra está oculta */}
+      {!isSidebarFixed && (
+        <div className="absolute top-6 left-2 text-green-600 opacity-60 group-hover:opacity-0 transition-opacity duration-300 pointer-events-none z-0">
+          <FaParking className="text-2xl animate-pulse" />
+        </div>
+      )}
+
+      <aside className={`w-64 h-full bg-white flex flex-col p-4 border-r border-gray-200 transition-transform duration-300 overflow-hidden relative z-10 ${isSidebarFixed ? 'translate-x-0' : '-translate-x-full group-hover:translate-x-0 shadow-2xl'}`}>
 
 
       <Link to="/" className="flex items-center gap-2 mb-8 px-2 h-16 shrink-0 hover:opacity-80 transition-opacity">

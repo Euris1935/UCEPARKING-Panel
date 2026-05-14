@@ -62,25 +62,37 @@ export default function Vehiculos() {
         { data: catMarcas },
         { data: catModelos },
         { data: catColores },
-        { data: catEst }
+        { data: catEst },
+        { data: estadosUsuarios }
       ] = await Promise.all([
         supabase.from('marca').select('id_marca, nombre').order('nombre'),
         supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre'),
         supabase.from('color').select('id_color, nombre').order('nombre'),
-        supabase.from('estado_vehiculo').select('id_estado, nombre').order('id_estado')
+        supabase.from('estado_vehiculo').select('id_estado, nombre').order('id_estado'),
+        supabase.from('usuario').select('id_persona, id_estado').eq('organizacion_id', orgId)
       ]);
 
-      // Personal del sistema (RPC optimizado)
+      // Personal del sistema (Todos para mapeo de historial)
       const { data: orgUsers } = await supabase.rpc('get_usuarios_org');
-      const personal = (orgUsers || []).map(u => ({
+      const uStatusMap = Object.fromEntries((estadosUsuarios || []).map(u => [u.id_persona, u.id_estado]));
+
+      const personalCompleto = (orgUsers || []).map(u => ({
         id_persona: u.id_persona,
         nombre: u.nombre,
         apellido: u.apellido,
         rol: u.tipo || 'Usuario'
       }));
 
-      // Mapear personas para enriquecer vehículos
-      const pMap = Object.fromEntries((personal || []).map(p => [p.id_persona, p]));
+      // Plan PREA: Solo personal con usuario Activo (id_estado = 1) para selección
+      const personalActivo = (orgUsers || []).filter(u => uStatusMap[u.id_persona] === 1).map(u => ({
+        id_persona: u.id_persona,
+        nombre: u.nombre,
+        apellido: u.apellido,
+        rol: u.tipo || 'Usuario'
+      }));
+
+      // Mapear personas para enriquecer vehículos (usando lista completa)
+      const pMap = Object.fromEntries((personalCompleto || []).map(p => [p.id_persona, p]));
       const vhsEnriquecidos = (vhs || []).map(v => ({
         ...v,
         persona: pMap[v.id_persona] || null
@@ -91,7 +103,7 @@ export default function Vehiculos() {
       setListaModelos(catModelos || []);
       setListaColores(catColores || []);
       setEstadosVehiculosList(catEst || []);
-      setPersonasSistema(personal.sort((a,b) => `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`)));
+      setPersonasSistema(personalActivo.sort((a,b) => `${a.nombre} ${a.apellido}`.localeCompare(`${b.nombre} ${b.apellido}`)));
 
     } catch (err) { console.error('Error cargando datos:', err); } finally { setIsRefreshing(false); }
   };

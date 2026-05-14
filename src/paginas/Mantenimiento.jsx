@@ -82,7 +82,8 @@ export default function Mantenimiento() {
                 { data: fullZonas },
                 { data: fullPlazas },
                 { data: tipoData },
-                { data: estData }
+                { data: estData },
+                { data: uStatusList }
             ] = await Promise.all([
                 supabase.from('mantenimiento').select(`
                     id_mantenimiento, fecha_inicio, fecha_fin, descripcion, id_dispositivo, id_zona, id_plaza, id_empleado, id_tipo, id_estado,
@@ -97,7 +98,8 @@ export default function Mantenimiento() {
                 supabase.from('zona').select('id_zona, nombre, nivel_piso, id_estado, estado:estado_zona!id_estado(nombre)').eq('organizacion_id', orgId),
                 supabase.from('plaza').select('id_plaza, numero_plaza, id_zona, id_estado, estado:estado_plaza!id_estado(nombre), zona:id_zona(id_zona, nombre, nivel_piso)').eq('organizacion_id', orgId),
                 supabase.from('tipo_mantenimiento').select('*').order('nombre'),
-                supabase.from('estado_mantenimiento').select('*').order('nombre')
+                supabase.from('estado_mantenimiento').select('*').order('nombre'),
+                supabase.from('usuario').select('id_persona, id_estado').eq('organizacion_id', orgId)
             ]);
 
             if (mantErr) throw mantErr;
@@ -105,25 +107,35 @@ export default function Mantenimiento() {
             setDispositivosOcupados(new Set((mantData || []).filter(m => !m.fecha_fin).map(m => m.id_dispositivo)));
 
             // Procesar Técnicos
-            let users = [];
+            let usersMap = [];
+            const uStatusMap = Object.fromEntries((uStatusList || []).map(u => [u.id_persona, u.id_estado]));
+
             if (!rpcErr && rpcUsers) {
-                users = rpcUsers;
+                usersMap = rpcUsers;
             } else {
-                const { data: directUsers } = await supabase.from('usuario').select('id_persona, rol_id, rol:rol_id(nombre), persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId);
-                users = (directUsers || []).map(u => ({ id_persona: u.id_persona, nombre: u.persona?.nombre, apellido: u.persona?.apellido, nombre_rol: u.rol?.nombre }));
+                const { data: directUsers } = await supabase.from('usuario').select('id_persona, id_estado, rol_id, rol:rol_id(nombre), persona:id_persona(nombre, apellido)').eq('organizacion_id', orgId);
+                usersMap = (directUsers || []).map(u => ({ id_persona: u.id_persona, id_estado: u.id_estado, nombre: u.persona?.nombre, apellido: u.persona?.apellido, nombre_rol: u.rol?.nombre }));
             }
 
-            const tecnicosFiltrados = users.filter(u => {
+            const tecnicosFiltrados = usersMap.filter(u => {
                 const rName = (u.nombre_rol || u.rol_nombre || '').toLowerCase();
                 const personaId = u.id_persona || u.persona_id;
+                const status = u.id_estado || uStatusMap[personaId];
+                // Mantenemos el filtro de rol técnico pero añadimos el Plan PREA solo para la SELECCIÓN
                 return rName.includes('tec') && (allEmps || []).some(e => String(e.id_persona) === String(personaId));
             }).map(u => {
                 const personaId = u.id_persona || u.persona_id;
                 const emp = (allEmps || []).find(e => String(e.id_persona) === String(personaId));
-                return { id_empleado: emp.id_empleado, nombre_label: `${u.nombre || ''} ${u.apellido || ''}`.trim(), disabled: false };
+                const status = u.id_estado || uStatusMap[personaId];
+                return { 
+                    id_empleado: emp.id_empleado, 
+                    nombre_label: `${u.nombre || ''} ${u.apellido || ''}`.trim(), 
+                    isActive: status === 1 
+                };
             });
 
-            setTecnicos(tecnicosFiltrados.sort((a,b) => a.nombre_label.localeCompare(b.nombre_label)));
+            // Para los dropdowns, usamos solo los que isActive === true
+            setTecnicos(tecnicosFiltrados.filter(t => t.isActive).sort((a,b) => a.nombre_label.localeCompare(b.nombre_label)));
             
             const sortedDispositivos = (dispData || []).sort((a,b) => {
                 const na = `${a.tipo?.nombre || ''} - ${a.modelo?.nombre || ''}`.toLowerCase();
@@ -450,12 +462,15 @@ export default function Mantenimiento() {
                                         <tr><td colSpan="7" className="text-center py-8 text-sm italic text-gray-500">No hay mantenimientos registrados.</td></tr>
                                     ) : (
                                         filteredItems.map((item) => {
-                                            const isResuelto = !!item.fecha_fin || resueltosIds.has(item.id_mantenimiento);
+                                            const nombreEstado = (item.estado?.nombre || '').toLowerCase();
+                                            const isFinalizado = nombreEstado === 'completado' || nombreEstado === 'cancelado' || !!item.fecha_fin;
+                                            const isCancelado = nombreEstado === 'cancelado';
+                                            const isCompletado = nombreEstado === 'completado';
                                             
                                             return (
-                                                <tr key={item.id_mantenimiento} className={`transition duration-150 ${isResuelto ? 'bg-gray-50 text-gray-400 opacity-75' : 'hover:bg-blue-50/20 group'}`}>
+                                                <tr key={item.id_mantenimiento} className={`transition duration-150 ${isFinalizado ? 'bg-gray-50/80 text-gray-400 opacity-60' : 'hover:bg-blue-50/20 group'}`}>
                                                     <td className="px-6 py-4">
-                                                        <div className="text-xs font-bold text-gray-900 uppercase">
+                                                        <div className={`text-xs font-bold uppercase ${isFinalizado ? 'text-gray-500' : 'text-gray-900'}`}>
                                                             {item.id_zona ? `ZONA: ${allZonas.find(z => z.id_zona === item.id_zona)?.nombre || 'N/A'}` :
                                                              item.id_plaza ? `PLAZA: ${allPlazas.find(p => p.id_plaza === item.id_plaza)?.numero_plaza || 'N/A'}` :
                                                              (() => {
@@ -487,20 +502,22 @@ export default function Mantenimiento() {
                                                         {item.descripcion}
                                                     </td>
                                                     <td className="px-6 py-4">
-                                                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${item.tipo?.nombre === 'Preventivo'
+                                                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${
+                                                            isFinalizado ? 'bg-gray-100 text-gray-400 border-gray-200' :
+                                                            item.tipo?.nombre === 'Preventivo'
                                                             ? 'bg-blue-50 text-blue-700 border-blue-200'
                                                             : 'bg-orange-50 text-orange-700 border-orange-200'
                                                             }`}>
                                                             {item.tipo?.nombre || 'N/A'}
                                                         </span>
                                                     </td>
-                                                    <td className="px-6 py-4 text-xs font-bold text-gray-700 uppercase">
+                                                    <td className={`px-6 py-4 text-xs font-bold uppercase ${isFinalizado ? 'text-gray-400' : 'text-gray-700'}`}>
                                                         {item.empleado?.persona?.nombre} {item.empleado?.persona?.apellido}
                                                     </td>
                                                     <td className="px-6 py-4 text-xs font-medium text-gray-500">
                                                         <div className="flex flex-col gap-1">
-                                                            <div className="flex items-center gap-1.5 text-gray-700 font-bold">
-                                                                <FaCalendarAlt className="text-blue-500" size={10} />
+                                                            <div className={`flex items-center gap-1.5 font-bold ${isFinalizado ? 'text-gray-400' : 'text-gray-700'}`}>
+                                                                <FaCalendarAlt className={isFinalizado ? 'text-gray-300' : 'text-blue-500'} size={10} />
                                                                 {(() => {
                                                                     if (!item.fecha_inicio) return 'N/A';
                                                                     const dateStr = item.fecha_inicio.split('T')[0];
@@ -509,9 +526,9 @@ export default function Mantenimiento() {
                                                                 })()}
                                                             </div>
                                                             {item.fecha_fin && (
-                                                                <div className="flex items-center gap-1.5 text-[10px] text-green-600 italic">
+                                                                <div className={`flex items-center gap-1.5 text-[10px] italic ${isCancelado ? 'text-gray-400' : 'text-green-600'}`}>
                                                                     <FaCheckCircle size={10} />
-                                                                    Fin: {(() => {
+                                                                    {isCancelado ? 'Cancelado: ' : 'Fin: '}{(() => {
                                                                         const dateStr = item.fecha_fin.split('T')[0];
                                                                         const [y, m, d] = dateStr.split('-');
                                                                         return `${d}/${m}/${y}`;
@@ -549,7 +566,9 @@ export default function Mantenimiento() {
                                                                 </button>
                                                             </div>
                                                         ) : (
-                                                            <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${isResuelto
+                                                            <span className={`px-2 py-0.5 text-[10px] font-bold rounded border uppercase tracking-tighter ${
+                                                                isCancelado ? 'bg-gray-100 text-gray-500 border-gray-200' :
+                                                                isCompletado || !!item.fecha_fin
                                                                 ? 'bg-green-50 text-green-700 border-green-200'
                                                                 : 'bg-yellow-50 text-yellow-700 border-yellow-200'
                                                                 }`}>
@@ -558,7 +577,7 @@ export default function Mantenimiento() {
                                                         )}
                                                     </td>
                                                     <td className="px-6 py-4 text-center">
-                                                        {!isResuelto ? (
+                                                        {!isFinalizado ? (
                                                             <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                                                                 <button
                                                                     onClick={() => {

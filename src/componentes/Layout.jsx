@@ -10,8 +10,9 @@ import GlobalScannerListener from "./GlobalScannerListener";
 
 export default function Layout({ children }) {
   const { orgId } = useOrg();
-  const { isSidebarFixed } = useUI();
-  const [alertaBanner, setAlertaBanner] = useState(null);
+  const { isSidebarFixed, isSidebarHovered } = useUI();
+  const [alertaCapacidad, setAlertaCapacidad] = useState(null);
+  const [alertaZonas, setAlertaZonas] = useState(null);
   const [stats, setStats] = useState({
     total: 0,
     ocupadas: 0,
@@ -25,7 +26,8 @@ export default function Layout({ children }) {
   const prevAsignadas = useRef(0);
   const firstLoad = useRef(true);
   const [alertaEstanciaLarga, setAlertaEstanciaLarga] = useState([]);
-  const estanciaAlertaEnviada = useRef(false);
+  const estanciaAlertaEnviada = useRef(new Set());
+  const [alertasIntrusos, setAlertasIntrusos] = useState([]);
 
   // ── RF11: Monitor de sensores offline ──────────────────────────────────────
   const { sensoresOffline } = useSensorMonitor(orgId);
@@ -178,12 +180,40 @@ export default function Layout({ children }) {
       }
 
       if (zonasConflictivas.length > 0) {
-        setAlertaBanner(
+        setAlertaZonas(
           `⚠️ ATENCIÓN: La(s) zona(s) [${zonasConflictivas.join(", ")}] tienen reservas en menos de 15 min y hay vehículos ocupándolas.`,
         );
       } else {
-        setAlertaBanner(null);
+        setAlertaZonas(null);
       }
+
+      // --- ALERTA DE INTRUSOS (Físico vs Software) ---
+      const intrusosDetectados = [];
+      plazasFiltradas.forEach(p => {
+        // 2 es ESTADO_OCUPADA (Sensor físico detectó algo)
+        if (p.id_estado === 2 && !mapaVehiculosFisicos.has(p.id_plaza)) {
+          let nivelGravedad = 'LEVE';
+          let detalle = 'Plaza libre';
+          
+          if (mapaAsignaciones.has(p.id_plaza)) {
+            nivelGravedad = 'ALTA';
+            detalle = 'Plaza Asignada';
+          } else if (mapaReservas.has(p.id_plaza)) {
+            nivelGravedad = 'ALTA';
+            detalle = 'Plaza Reservada';
+          }
+          
+          intrusosDetectados.push({
+            _key: `intruso_${p.id_plaza}`,
+            id_plaza: p.id_plaza,
+            numero: p.numero_plaza || p.id_plaza,
+            gravedad: nivelGravedad,
+            detalle: detalle
+          });
+        }
+      });
+      setAlertasIntrusos(intrusosDetectados);
+      // ----------------------------------------------
 
       setStats({
         total,
@@ -197,43 +227,93 @@ export default function Layout({ children }) {
     }
   };
 
-  // ── Monitor de Estancia Larga (>16h) ──
+  // ── Monitor de Estancia Larga (>16h) ── cubre acceso manual + tickets ──
   const checkEstanciaLarga = async () => {
     if (!orgId) return;
     try {
       const hace16h = new Date(Date.now() - 16 * 60 * 60 * 1000).toISOString();
-      const { data } = await supabase
-        .from("acceso")
-        .select(
-          "id_registro, entrada_at, id_plaza, vehiculo:id_vehiculo(placa), plaza:id_plaza(numero_plaza)",
-        )
-        .eq("organizacion_id", orgId)
-        .is("salida_at", null)
-        .lt("entrada_at", hace16h);
 
-      if (data && data.length > 0) {
-        setAlertaEstanciaLarga(data);
-        if (!estanciaAlertaEnviada.current) {
-          estanciaAlertaEnviada.current = true;
-          const placas = data
-            .map((a) => a.vehiculo?.placa || "Desconocida")
-            .join(", ");
-          supabase
-            .from("notificacion")
-            .insert([
-              {
-                contenido: `ALERTA: ${data.length} vehículo(s) con más de 16h en el parqueo: ${placas}`,
-                leida: false,
-                organizacion_id: orgId,
-              },
-            ])
-            .then(({ error }) => {
-              if (error) console.warn("Error notif estancia:", error.message);
-            });
+      const [
+        { data: accesosLargos, error: err1 },
+        { data: ticketsLargos, error: err2 }
+      ] = await Promise.all([
+        supabase.from('acceso')
+          .select('id_registro, id_plaza, vehiculo:id_vehiculo(placa, id_persona)')
+          .eq('organizacion_id', orgId)
+          .is('salida_at', null)
+          .lt('entrada_at', hace16h),
+        supabase.from('ticket')
+          .select('id_ticket, id_plaza_asignada, placa_capturada')
+          .eq('organizacion_id', orgId)
+          .eq('id_estado', 1)
+          .lt('fecha_hora_emision', hace16h)
+      ]);
+
+      if (err1) console.error('[EstanciaLarga] Error query acceso:', err1.message);
+      if (err2) console.error('[EstanciaLarga] Error query ticket:', err2.message);
+
+      const listaUnificada = [
+        ...(accesosLargos || []).map(a => ({
+          _key:       `a_${a.id_registro}`,
+          _placa:     a.vehiculo?.placa || 'Sin placa',
+          _idPlaza:   a.id_plaza,
+          _idPersona: a.vehiculo?.id_persona || null,
+          _tipo:      'Acceso Manual'
+        })),
+        ...(ticketsLargos || []).map(t => ({
+          _key:       `t_${t.id_ticket}`,
+          _placa:     t.placa_capturada || 'Sin placa',
+          _idPlaza:   t.id_plaza_asignada,
+          _idPersona: null,
+          _tipo:      'Ticket',
+          _placaRaw:  t.placa_capturada
+        }))
+      ];
+
+      if (listaUnificada.length > 0) {
+        setAlertaEstanciaLarga(listaUnificada);
+
+        for (const item of listaUnificada) {
+          if (estanciaAlertaEnviada.current.has(item._key)) continue;
+          estanciaAlertaEnviada.current.add(item._key);
+
+          const placa = item._placa;
+          const plaza = item._idPlaza ? `#${item._idPlaza}` : '—';
+          let idPersona = item._idPersona;
+
+          if (item._tipo === 'Ticket' && item._placaRaw) {
+            const { data: veh } = await supabase
+              .from('vehiculo')
+              .select('id_persona')
+              .ilike('placa', item._placaRaw)
+              .eq('organizacion_id', orgId)
+              .maybeSingle();
+            idPersona = veh?.id_persona || null;
+          }
+
+          if (idPersona) {
+            supabase.from('notificacion').insert([{
+              id_persona:      idPersona,
+              organizacion_id: orgId,
+              contenido:       `⚠️ ALERTA DE ESTANCIA LARGA: Tu vehículo (${placa}) lleva más de 16 horas en el parqueo. Plaza: ${plaza}. Por favor retíralo o comunícate con nosotros.`,
+              leida:           false
+            }]).then(({ error }) => { if (error) console.warn('Error notif propietario estancia:', error.message); });
+          }
+
+          supabase.from('notificacion').insert([{
+            organizacion_id: orgId,
+            contenido:       `⚠️ ESTANCIA LARGA [${item._tipo}]: Vehículo ${placa} lleva más de 16h en plaza ${plaza}.${idPersona ? ' Notif. enviada al propietario.' : ' Propietario no registrado.'}`,
+            leida:           false
+          }]).then(({ error }) => { if (error) console.warn('Error notif panel estancia:', error.message); });
+        }
+
+        const keysActuales = new Set(listaUnificada.map(i => i._key));
+        for (const key of estanciaAlertaEnviada.current) {
+          if (!keysActuales.has(key)) estanciaAlertaEnviada.current.delete(key);
         }
       } else {
         setAlertaEstanciaLarga([]);
-        estanciaAlertaEnviada.current = false;
+        estanciaAlertaEnviada.current.clear();
       }
     } catch (err) {
       console.error("Error checkEstanciaLarga:", err.message);
@@ -265,7 +345,7 @@ export default function Layout({ children }) {
       : 90;
 
     if (pct >= umbral) {
-      setAlertaBanner({ pct, umbral });
+      setAlertaCapacidad({ pct, umbral });
       if (!alertaYaEnviada.current) {
         alertaYaEnviada.current = true;
         supabase
@@ -282,7 +362,7 @@ export default function Layout({ children }) {
           });
       }
     } else {
-      setAlertaBanner(null);
+      setAlertaCapacidad(null);
       alertaYaEnviada.current = false;
     }
   }, [stats, orgId]);
@@ -293,7 +373,7 @@ export default function Layout({ children }) {
       <BarraLateral />
 
       <main
-        className={`${isSidebarFixed ? "ml-64" : "ml-0 pl-10"} flex-1 p-8 overflow-y-auto relative transition-all duration-300`}
+        className={`${isSidebarFixed || isSidebarHovered ? "ml-64" : "ml-0 pl-10"} flex-1 p-8 overflow-y-auto relative transition-all duration-300`}
       >
         {/* ── Banner RF11: Sensores Offline (naranja) ── */}
         {sensoresOffline.length > 0 && mostrarBannerSensores && (
@@ -334,23 +414,49 @@ export default function Layout({ children }) {
           </div>
         )}
 
+        {/* ── Banner: Intrusiones / Vehículos Fantasma (rojo oscuro) ── */}
+        {alertasIntrusos.length > 0 && (
+          <div className="mb-4 flex items-start gap-4 bg-red-800 text-white px-5 py-3 rounded-xl shadow-lg sticky top-0 z-50">
+            <div className="text-2xl shrink-0 mt-0.5 animate-pulse">⚠️</div>
+            <div className="flex-1">
+              <p className="font-bold text-sm">
+                ALERTA DE INTRUSIÓN — {alertasIntrusos.length} vehículo(s) detectado(s) físicamente sin registro de acceso
+              </p>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {alertasIntrusos.map((intruso) => (
+                  <span
+                    key={intruso._key}
+                    className={`text-white text-[10px] font-black px-2 py-0.5 rounded-lg ${intruso.gravedad === 'ALTA' ? 'bg-red-500 animate-pulse' : 'bg-white/20'}`}
+                  >
+                    Plaza #{intruso.numero} — {intruso.detalle}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={() => setAlertasIntrusos([])}
+              className="text-white/70 hover:text-white text-lg font-bold px-2 shrink-0"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* ── Banner: Estancia Larga (azul) ── */}
         {alertaEstanciaLarga.length > 0 && (
           <div className="mb-4 flex items-start gap-4 bg-blue-600 text-white px-5 py-3 rounded-xl shadow-lg sticky top-0 z-50">
             <FaClock className="text-2xl shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="font-bold text-sm">
-                ALERTA DE ESTANCIA LARGA — {alertaEstanciaLarga.length}{" "}
-                vehículo(s) con más de 16 horas
+                ALERTA DE ESTANCIA LARGA — {alertaEstanciaLarga.length} vehículo(s) con más de 16 horas
               </p>
               <div className="flex flex-wrap gap-2 mt-1">
                 {alertaEstanciaLarga.map((a) => (
                   <span
-                    key={a.id_registro}
+                    key={a._key}
                     className="bg-white/20 text-white text-[10px] font-black px-2 py-0.5 rounded-lg"
                   >
-                    Plaza {a.plaza?.numero_plaza || a.id_plaza} —{" "}
-                    {a.vehiculo?.placa || "Sin placa"}
+                    [{a._tipo}] Plaza #{a._idPlaza || "—"} — {a._placa}
                   </span>
                 ))}
               </div>
@@ -364,21 +470,37 @@ export default function Layout({ children }) {
           </div>
         )}
 
+        {/* ── Banner: Zonas Conflictivas (naranja/amarillo) ── */}
+        {alertaZonas && (
+          <div className="mb-4 flex items-center gap-4 bg-amber-500 text-white px-5 py-3 rounded-xl shadow-lg sticky top-0 z-50">
+            <div className="text-xl shrink-0">⚠️</div>
+            <div className="flex-1">
+              <p className="font-bold text-sm">{alertaZonas}</p>
+            </div>
+            <button
+              onClick={() => setAlertaZonas(null)}
+              className="text-white/70 hover:text-white text-lg font-bold px-2"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* ── Banner: Capacidad Global (rojo) ── */}
-        {alertaBanner && (
+        {alertaCapacidad && (
           <div className="mb-6 flex items-center gap-4 bg-red-600 text-white px-5 py-3 rounded-xl shadow-lg animate-pulse sticky top-0 z-50">
             <FaBell className="text-2xl shrink-0" />
             <div className="flex-1">
               <p className="font-bold text-sm">
-                ALERTA DE CAPACIDAD — Parqueo al {alertaBanner.pct}%
+                ALERTA DE CAPACIDAD — Parqueo al {alertaCapacidad.pct}%
               </p>
               <p className="text-xs opacity-90">
-                Umbral configurado: {alertaBanner.umbral}%. Espacios libres:{" "}
+                Umbral configurado: {alertaCapacidad.umbral}%. Espacios libres:{" "}
                 {stats.libres}
               </p>
             </div>
             <button
-              onClick={() => setAlertaBanner(null)}
+              onClick={() => setAlertaCapacidad(null)}
               className="text-white/70 hover:text-white text-lg font-bold px-2"
             >
               ✕

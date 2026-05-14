@@ -121,11 +121,24 @@ export default function Sensores() {
           estado:estado_dispositivo!dispositivo_estado_fk(id_estado, nombre)
         `,
         )
-        .eq("organizacion_id", orgId)
-        .order("created_at", { ascending: false });
-
+        .eq("organizacion_id", orgId);
+      
       if (error) throw error;
-      setDispositivos(dispData || []);
+
+      const sorted = (dispData || []).sort((a, b) => {
+        // 1. Por Nombre de Zona (A-Z)
+        const zonaA = a.plaza?.zona?.nombre || "ZZZZ";
+        const zonaB = b.plaza?.zona?.nombre || "ZZZZ";
+        const cmpZona = zonaA.localeCompare(zonaB);
+        if (cmpZona !== 0) return cmpZona;
+
+        // 2. Por Número de Plaza (Secuencial)
+        const numA = a.plaza?.numero_plaza || "ZZZZ";
+        const numB = b.plaza?.numero_plaza || "ZZZZ";
+        return numA.localeCompare(numB, undefined, { numeric: true, sensitivity: 'base' });
+      });
+
+      setDispositivos(sorted);
 
       // Cargar config de sensores para mostrar estado en tabla
       const { data: configs } = await supabase
@@ -575,6 +588,7 @@ export default function Sensores() {
                       <th className="px-6 py-4 text-left">Plaza</th>
                       <th className="px-6 py-4 text-left">Último Ping</th>
                       <th className="px-6 py-4 text-left">Config</th>
+                      <th className="px-6 py-4 text-left">Registro</th>
                       <th className="px-6 py-4 text-left">Estado</th>
                       <th className="px-6 py-4 text-right">Acciones</th>
                     </tr>
@@ -689,6 +703,16 @@ export default function Sensores() {
                                 Sin config
                               </span>
                             )}
+                          </td>
+
+                          {/* ── Columna: Registro ── */}
+                          <td className="px-6 py-4">
+                            <div className="text-[10px] font-bold text-gray-500 uppercase">
+                              {disp.created_at ? new Date(disp.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}
+                            </div>
+                            <div className="text-[9px] text-gray-400">
+                              {disp.created_at ? new Date(disp.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', hour12: true }) : ''}
+                            </div>
                           </td>
 
                           <td className="px-6 py-4">
@@ -845,15 +869,23 @@ export default function Sensores() {
                       <SearchableSelect
                         options={(() => {
                           const opts = [];
+                          const plazasDisponibles = plazas.filter((p) => {
+                            const ocupada = dispositivos.some(
+                              (d) =>
+                                String(d.id_plaza) === String(p.id_plaza) &&
+                                String(d.id_dispositivo) !== String(editingId)
+                            );
+                            return !ocupada;
+                          });
                           const zonas = [
-                            ...new Set(plazas.map((p) => p.zona?.nombre)),
+                            ...new Set(plazasDisponibles.map((p) => p.zona?.nombre)),
                           ].sort();
                           zonas.forEach((z) => {
                             opts.push({
                               label: z || "Sin Zona",
                               isGroup: true,
                             });
-                            plazas
+                            plazasDisponibles
                               .filter((p) => p.zona?.nombre === z)
                               .forEach((p) =>
                                 opts.push({

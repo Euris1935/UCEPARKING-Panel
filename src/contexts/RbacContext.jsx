@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
+import { ROL } from '../lib/constants';
 
 const RbacContext = createContext();
 
@@ -37,6 +38,14 @@ export function RbacProvider({ children, session }) {
       // ── 1.5. Bloqueo de seguridad por estado ──
       if (usuarioData?.id_estado !== 1) {
         console.warn('RbacContext: cuenta inhabilitada detectada.');
+        await supabase.auth.signOut();
+        setLoading(false);
+        return;
+      }
+
+      // ── 1.6. Bloqueo de seguridad por rol (Plan RAW) ──
+      if (usuarioData?.rol_id === ROL.MOVIL) {
+        console.warn('RbacContext: acceso denegado a usuario móvil (Plan RAW).');
         await supabase.auth.signOut();
         setLoading(false);
         return;

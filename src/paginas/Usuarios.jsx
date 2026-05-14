@@ -18,12 +18,12 @@ import { ROL } from '../lib/constants';
 function RoleBadge({ roleId, roleName }) {
   let cls = 'bg-gray-100 text-gray-700';
   if (!roleId) return null;
-  
-  if (roleId === ROL.ADMIN)            cls = 'bg-red-100 text-red-700';
-  else if (roleId === ROL.OPERADOR)     cls = 'bg-blue-100 text-blue-700';
-  else if (roleId === ROL.TECNICO)      cls = 'bg-amber-100 text-amber-800';
-  else if (roleId === ROL.SUPERVISOR)   cls = 'bg-purple-100 text-purple-700';
-  else if (roleId === ROL.VISITANTE)    cls = 'bg-green-100 text-green-700';
+
+  if (roleId === ROL.ADMIN) cls = 'bg-red-100 text-red-700';
+  else if (roleId === ROL.OPERADOR) cls = 'bg-blue-100 text-blue-700';
+  else if (roleId === ROL.TECNICO) cls = 'bg-amber-100 text-amber-800';
+  else if (roleId === ROL.SUPERVISOR) cls = 'bg-purple-100 text-purple-700';
+  else if (roleId === ROL.VISITANTE) cls = 'bg-green-100 text-green-700';
 
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full capitalize ${cls}`}>
@@ -37,13 +37,13 @@ export default function Usuarios() {
   const { orgId } = useOrg();
   const { tienePermiso, esAdmin } = useRbac();
   const canCreate = tienePermiso('Módulo Usuarios', 'crear');
-  const canEdit   = tienePermiso('Módulo Usuarios', 'editar');
+  const canEdit = tienePermiso('Módulo Usuarios', 'editar');
   const canDelete = tienePermiso('Módulo Usuarios', 'eliminar');
 
   const navigate = useNavigate();
-  const [activeTab, setActiveTab]   = useState('usuarios');
-  const [usuarios, setUsuarios]     = useState([]);
-  const [rolesList, setRolesList]   = useState([]);
+  const [activeTab, setActiveTab] = useState('usuarios');
+  const [usuarios, setUsuarios] = useState([]);
+  const [rolesList, setRolesList] = useState([]);
   const [catEstados, setCatEstados] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCarrera, setFilterCarrera] = useState('');
@@ -51,10 +51,10 @@ export default function Usuarios() {
   const [filterMatricula, setFilterMatricula] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterDepto, setFilterDepto] = useState('');
-  const [loading, setLoading]       = useState(false);
+  const [loading, setLoading] = useState(false);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  
+
   // Catálogos adicionales
   const [tiposPersona, setTiposPersona] = useState([]);
   const [facultades, setFacultades] = useState([]);
@@ -65,26 +65,26 @@ export default function Usuarios() {
 
   // Estado para edición completa (formulario lateral)
   const [editingUser, setEditingUser] = useState(null);
-  const initialForm = { 
-    nombre: '', apellido: '', email: '', contrasena: '', 
-    telefono: '', cedula: '', sexo: '', fecha_nacimiento: '', 
+  const initialForm = {
+    nombre: '', apellido: '', email: '', contrasena: '',
+    telefono: '', cedula: '', sexo: '', fecha_nacimiento: '',
     direccion: '', rol_id: '',
-    id_tipo_persona: '', 
+    id_tipo_persona: '',
     numero_carnet: '', id_facultad: '', id_carrera: '', año_academico: '',
     condicion_salud: false, detalle_condicion_salud: ''
   };
-  const [formData, setFormData]     = useState(initialForm);
+  const [formData, setFormData] = useState(initialForm);
 
   // Estado para cambio rápido de rol y estado (inline)
-  const [changingRolFor, setChangingRolFor] = useState(null); 
-  const [newRolId, setNewRolId]             = useState('');
+  const [changingRolFor, setChangingRolFor] = useState(null);
+  const [newRolId, setNewRolId] = useState('');
   const [changingStatusFor, setChangingStatusFor] = useState(null);
-  const [newStatusChoice, setNewStatusChoice]     = useState('');
+  const [newStatusChoice, setNewStatusChoice] = useState('');
 
   const isUpdating = !!editingUser;
 
-  useEffect(() => { 
-    if (orgId) loadData(); 
+  useEffect(() => {
+    if (orgId) loadData();
   }, [orgId]);
 
   // ── Carga de datos ────────────────────────────────────────────────────────
@@ -93,7 +93,7 @@ export default function Usuarios() {
     setLoading(true);
     try {
       const [
-        { data: rolesData }, 
+        { data: rolesData },
         { data: estadosData },
         { data: tiposPData },
         { data: facultadesData },
@@ -105,7 +105,7 @@ export default function Usuarios() {
         supabase.from('facultad').select('*').order('nombre'),
         supabase.from('carrera').select('*').order('nombre')
       ]);
- 
+
       setRolesList(rolesData || []);
       setCatEstados(estadosData || []);
       setTiposPersona(tiposPData || []);
@@ -119,7 +119,7 @@ export default function Usuarios() {
         { data: estudiantesData },
         { data: empleadosData },
         { data: departamentosData },
-        { data: personasData } 
+        { data: personasData }
       ] = await Promise.all([
         supabase.rpc('get_usuarios_org'),
         supabase.from('usuario').select('id, id_estado, estado_u:id_estado(nombre)').eq('organizacion_id', orgId),
@@ -142,7 +142,7 @@ export default function Usuarios() {
           const est = estadoMap[u.id_usuario] ?? {};
           const estu = (estudiantesData || []).find(e => e.id_persona === u.id_persona);
           const empl = (empleadosData || []).find(e => e.id_persona === u.id_persona);
-          
+
           // Obtener todos los datos reales de la persona
           const pData = (personasData || []).find(p => p.id_persona === u.id_persona);
           const idTipoActual = pData?.id_tipo_persona || u.id_tipo_persona;
@@ -152,23 +152,23 @@ export default function Usuarios() {
           return {
             ...u,
             ...pData, // Inyectamos todos los campos (cedula, telefono, etc.)
-            id_usuario:    u.id_usuario || u.id,
+            id_usuario: u.id_usuario || u.id,
             nombre_estado: est.nombre_estado || 'Activo',
-            id_estado:     est.id_estado || 1,
+            id_estado: est.id_estado || 1,
             nombre_tipo_persona: tipoP?.nombre || 'General',
             // Data Estudiante
-            id_facultad:   estu?.id_facultad || '',
-            id_carrera:    estu?.id_carrera || '',
+            id_facultad: estu?.id_facultad || '',
+            id_carrera: estu?.id_carrera || '',
             nombre_carrera: (carrerasData || []).find(c => c.id_carrera === estu?.id_carrera)?.nombre || '',
             año_academico: estu?.año_academico || '',
             numero_carnet: estu?.numero_carnet || '',
             // Data Empleado
-            cargo:         empl?.cargo || '',
+            cargo: empl?.cargo || '',
             id_departamento: empl?.id_departamento || '',
             nombre_departamento: empl?.departamento?.nombre || ''
           };
         }).filter(u => u.id_rol !== ROL.VISITANTE)
-          .sort((a,b) => {
+          .sort((a, b) => {
             const na = `${a.nombre} ${a.apellido}`.toLowerCase();
             const nb = `${b.nombre} ${b.apellido}`.toLowerCase();
             return na.localeCompare(nb);
@@ -198,7 +198,7 @@ export default function Usuarios() {
         setUsuarios(listaEnriquecida);
       }
     } catch (err) {
-        console.error('loadData error:', err);
+      console.error('loadData error:', err);
     } finally {
       setLoading(false);
     }
@@ -210,10 +210,10 @@ export default function Usuarios() {
         supabase.from('usuario').select('id, id_persona, rol_id, id_estado, created_at, estado:id_estado(nombre)').eq('organizacion_id', orgId),
         supabase.from('persona').select('id_persona, nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, direccion, id_tipo_persona, tipo_persona(nombre, puede_reservar)')
       ]);
-      
+
       // Obtener empleados para el cargo
       const { data: emps } = await supabase.from('empleado').select('id_persona, id_cargo, cargo(nombre, nivel_privilegio)');
-      
+
       if (!usrs) return;
 
       const lista = usrs.map(u => {
@@ -224,15 +224,15 @@ export default function Usuarios() {
         return {
           id_usuario: u.id,
           id_persona: u.id_persona,
-          id_rol:     u.rol_id,
-          id_estado:  u.id_estado,
+          id_rol: u.rol_id,
+          id_estado: u.id_estado,
           nombre_estado: u.estado?.nombre || 'Activo',
-          nombre:     persona?.nombre   || 'Sin Nombre',
-          apellido:   persona?.apellido || '',
-          email:      persona?.email    || '',
-          telefono:   persona?.telefono || '',
-          cedula:     persona?.cedula   || '',
-          nombre_rol: rol?.nombre       || 'Sin Rol',
+          nombre: persona?.nombre || 'Sin Nombre',
+          apellido: persona?.apellido || '',
+          email: persona?.email || '',
+          telefono: persona?.telefono || '',
+          cedula: persona?.cedula || '',
+          nombre_rol: rol?.nombre || 'Sin Rol',
           created_at: u.created_at,
           tipo_persona: persona?.tipo_persona || null,
           cargo: persona?.cargo || null
@@ -245,7 +245,11 @@ export default function Usuarios() {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    let val = name === 'rol_id' ? parseInt(value) : value;
+    let val = value;
+
+    if (name === 'rol_id' || name === 'id_tipo_persona' || name === 'id_facultad' || name === 'id_carrera') {
+      val = value === '' ? '' : parseInt(value);
+    }
 
     if (name === 'cedula') {
       const digits = value.replace(/\D/g, '');
@@ -310,12 +314,17 @@ export default function Usuarios() {
       return Swal.fire('Error', 'No se pudo determinar la organización. Recarga la página e intenta de nuevo.', 'error');
     }
 
-    const { 
-      nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento, 
+    const {
+      nombre, apellido, email, telefono, cedula, sexo, fecha_nacimiento,
       direccion, rol_id, contrasena, id_tipo_persona,
       numero_carnet, id_facultad, id_carrera, año_academico,
       condicion_salud, detalle_condicion_salud
     } = formData;
+
+    // Validación preventiva para evitar el error de rol_id null
+    if (!rol_id || isNaN(parseInt(rol_id))) {
+      return Swal.fire('Atención', 'Por favor seleccione un rol válido para el usuario.', 'warning');
+    }
 
     try {
       Swal.fire({ title: 'Procesando...', didOpen: () => Swal.showLoading(), allowOutsideClick: false });
@@ -323,14 +332,14 @@ export default function Usuarios() {
       if (isUpdating) {
         // 1. Actualizar Persona
         const { data: updatedPersona, error: pErr } = await supabase.from('persona')
-          .update({ 
-            nombre, 
-            apellido, 
-            telefono: telefono || null, 
-            email, 
-            cedula: cedula || null, 
-            sexo, 
-            fecha_nacimiento: fecha_nacimiento || null, 
+          .update({
+            nombre,
+            apellido,
+            telefono: telefono || null,
+            email,
+            cedula: cedula || null,
+            sexo,
+            fecha_nacimiento: fecha_nacimiento || null,
             direccion,
             id_tipo_persona: parseInt(id_tipo_persona),
             condicion_salud: !!condicion_salud,
@@ -374,40 +383,39 @@ export default function Usuarios() {
         Swal.fire('Éxito', 'Usuario actualizado correctamente.', 'success');
         handleCancel();
       } else {
-        // CREACIÓN (Usa RPC para asegurar atrocidad)
+        // CREACIÓN (Usa RPC con la nueva firma de 14 parámetros para evitar ambigüedad)
         const { data: resultado, error: rpcError } = await supabase.rpc('crear_usuario_admin', {
-          p_email:    email,
+          p_email: email,
           p_password: contrasena,
-          p_nombre:   nombre,
+          p_nombre: nombre,
           p_apellido: apellido,
-          p_telefono: telefono   || null,
-          p_sexo:     sexo       || 'M',
+          p_telefono: telefono || null,
+          p_sexo: sexo || 'M',
           p_fecha_nacimiento: fecha_nacimiento || null,
           p_direccion: direccion || null,
-          p_rol_id:   parseInt(rol_id),
-          p_org_id:   effectiveOrgId
+          p_rol_id: parseInt(rol_id),
+          p_org_id: effectiveOrgId,
+          p_cedula: cedula || null,
+          p_id_tipo_persona: parseInt(id_tipo_persona),
+          p_condicion_salud: !!condicion_salud,
+          p_detalle_condicion_salud: detalle_condicion_salud || null
         });
 
         if (rpcError) throw rpcError;
         if (resultado?.success === false) throw new Error(resultado.error || 'Error desconocido al crear el usuario.');
- 
-        const newUserId = resultado.user_id; // Asumiendo que el RPC devuelve el ID
+
         const newPersonaId = resultado.persona_id;
 
-        // 4. Actualizar id_tipo_persona (si el RPC no lo hizo) y crear estudiante
-        if (newPersonaId) {
-            await supabase.from('persona').update({ id_tipo_persona: parseInt(id_tipo_persona) }).eq('id_persona', newPersonaId);
-            
-            if (parseInt(id_tipo_persona) === 1) {
-                await supabase.from('estudiante').insert([{
-                    id_persona: newPersonaId,
-                    numero_carnet,
-                    id_facultad: id_facultad ? parseInt(id_facultad) : null,
-                    id_carrera: id_carrera ? parseInt(id_carrera) : null,
-                    año_academico: año_academico ? parseInt(año_academico) : null,
-                    organizacion_id: effectiveOrgId
-                }]);
-            }
+        // 4. Crear estudiante si aplica (el id_tipo_persona ya fue guardado por el RPC)
+        if (newPersonaId && parseInt(id_tipo_persona) === 1) {
+          await supabase.from('estudiante').insert([{
+            id_persona: newPersonaId,
+            numero_carnet,
+            id_facultad: id_facultad ? parseInt(id_facultad) : null,
+            id_carrera: id_carrera ? parseInt(id_carrera) : null,
+            año_academico: año_academico ? parseInt(año_academico) : null,
+            organizacion_id: effectiveOrgId
+          }]);
         }
 
         registrarLog({
@@ -459,10 +467,10 @@ export default function Usuarios() {
         .eq('id', user.id_usuario);
 
       if (error) throw error;
-      
+
       Swal.fire({ title: 'Rol Actualizado', icon: 'success', timer: 1500, showConfirmButton: false });
       setChangingRolFor(null);
-      
+
       registrarLog({
         tipo_nombre: EVENT_TYPES.CAMBIO_ESTADO,
         descripcion: `Rol actualizado para ${user.nombre} ${user.apellido}`,
@@ -480,12 +488,12 @@ export default function Usuarios() {
   const filteredUsers = usuarios
     .filter(u => {
       const matchesSearch = `${u.nombre} ${u.apellido} ${u.email || ''} ${u.nombre_rol || ''}`.toLowerCase().includes(searchTerm.toLowerCase());
-      
+
       if (activeTab === 'info') {
-        const matchesStatus = filterStatus === 'all' || 
-          (filterStatus === 'activo' && u.nombre_estado?.toLowerCase() === 'activo') || 
+        const matchesStatus = filterStatus === 'all' ||
+          (filterStatus === 'activo' && u.nombre_estado?.toLowerCase() === 'activo') ||
           (filterStatus === 'inactivo' && u.nombre_estado?.toLowerCase() !== 'activo');
-        
+
         if (!matchesStatus) return false;
 
         if (searchMode === 'student') {
@@ -507,7 +515,7 @@ export default function Usuarios() {
           return matchesSearch && mTyp;
         }
       }
-      
+
       return matchesSearch;
     })
     .sort((a, b) => {
@@ -519,8 +527,7 @@ export default function Usuarios() {
     });
 
   const tabCls = (tab) =>
-    `px-5 py-3 font-semibold text-sm transition-colors border-b-2 ${
-      activeTab === tab ? 'border-green-600 text-green-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+    `px-5 py-3 font-semibold text-sm transition-colors border-b-2 ${activeTab === tab ? 'border-green-600 text-green-700' : 'border-transparent text-gray-500 hover:text-gray-700'
     }`;
 
   return (
@@ -606,85 +613,84 @@ export default function Usuarios() {
                       return (
                         <tr key={u.id_usuario} className={`transition-all ${isInactive ? 'bg-gray-50/50 grayscale-[0.8] opacity-60' : 'hover:bg-gray-50/30'}`}>
 
-                        <td className="px-5 py-3.5">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 font-bold text-sm">
-                              {(u.nombre?.[0] || '?').toUpperCase()}
+                          <td className="px-5 py-3.5">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-full bg-green-100 text-green-700 flex items-center justify-center shrink-0 font-bold text-sm">
+                                {(u.nombre?.[0] || '?').toUpperCase()}
+                              </div>
+                              <div>
+                                <p className="text-sm font-semibold text-gray-900">{u.nombre} {u.apellido}</p>
+                                <p className="text-xs text-gray-400">{u.email}</p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-sm font-semibold text-gray-900">{u.nombre} {u.apellido}</p>
-                              <p className="text-xs text-gray-400">{u.email}</p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-3.5">
-                           <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase rounded border ${
-                             u.id_tipo_persona === 1 ? 'bg-blue-50 text-blue-600 border-blue-200' :
-                             u.id_tipo_persona === 2 ? 'bg-purple-50 text-purple-600 border-purple-200' :
-                             u.id_tipo_persona === 3 ? 'bg-amber-50 text-amber-600 border-amber-200' :
-                             'bg-gray-50 text-gray-600 border-gray-200'
-                           }`}>
-                             {u.nombre_tipo_persona}
-                           </span>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          {changingRolFor === u.id_usuario ? (
-                            <div className="flex items-center gap-1">
-                              <select value={newRolId} onChange={e => setNewRolId(e.target.value)} className="border rounded px-2 py-1 text-xs">
-                                {rolesList.filter(r => r.id_rol !== ROL.VISITANTE).map(r => <option key={r.id_rol} value={r.id_rol}>{r.nombre}</option>)}
-                              </select>
-                              <button onClick={() => handleConfirmarCambioRol(u)} className="p-1.5 bg-green-500 text-white rounded"><FaCheck size={10} /></button>
-                              <button onClick={() => setChangingRolFor(null)} className="p-1.5 bg-gray-200 rounded"><FaTimes size={10} /></button>
-                            </div>
-                          ) : (
-                            <RoleBadge roleId={u.id_rol} roleName={u.nombre_rol} />
-                          )}
-                        </td>
-                        <td className="px-5 py-3.5 text-sm font-medium text-gray-900 border-l border-transparent">
-                          {u.created_at ? new Date(u.created_at).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' }) : 'N/D'}
-                        </td>
-                        <td className="px-5 py-3.5 text-center">
-                          {changingStatusFor === u.id_usuario ? (
-                            <div className="flex items-center justify-center gap-1">
-                              <select value={newStatusChoice} onChange={e => setNewStatusChoice(e.target.value)} className="border rounded px-2 py-1 text-xs">
-                                {catEstados.map(s => <option key={s.id_estado} value={s.id_estado}>{s.nombre}</option>)}
-                              </select>
-                              <button onClick={() => handleConfirmarCambioEstado(u)} className="p-1.5 bg-green-500 text-white rounded"><FaCheck size={10} /></button>
-                              <button onClick={() => setChangingStatusFor(null)} className="p-1.5 bg-gray-200 rounded"><FaTimes size={10} /></button>
-                            </div>
-                          ) : (
-                            <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${u.nombre_estado?.toLowerCase() === 'activo' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                              {u.nombre_estado}
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase rounded border ${u.id_tipo_persona === 1 ? 'bg-blue-50 text-blue-600 border-blue-200' :
+                                u.id_tipo_persona === 2 ? 'bg-purple-50 text-purple-600 border-purple-200' :
+                                  u.id_tipo_persona === 3 ? 'bg-amber-50 text-amber-600 border-amber-200' :
+                                    'bg-gray-50 text-gray-600 border-gray-200'
+                              }`}>
+                              {u.nombre_tipo_persona}
                             </span>
-                          )}
-                        </td>
-                        <td className="px-5 py-3.5 text-right">
-                          <div className="flex justify-end gap-1.5">
-                            <button
-                              onClick={() => { setChangingRolFor(u.id_usuario); setNewRolId(u.id_rol.toString()); }}
-                              title="Cambiar Rol"
-                              className="flex items-center gap-1 px-2 py-1 text-[10px] bg-purple-50 text-purple-700 font-bold rounded border border-purple-200 hover:bg-purple-100 transition"
-                            >
-                              <FaShieldAlt size={10} /> Rol
-                            </button>
-                            <button
-                              onClick={() => { setChangingStatusFor(u.id_usuario); setNewStatusChoice(u.id_estado?.toString() || ''); }}
-                              title="Cambiar Estado"
-                              className="flex items-center gap-1 px-2 py-1 text-[10px] bg-green-50 text-green-700 font-bold rounded border border-green-200 hover:bg-green-100 transition"
-                            >
-                              <FaSync size={10} /> Estado
-                            </button>
-                            <button
-                              onClick={() => handleEdit(u)}
-                              title="Editar Usuario"
-                              className="flex items-center gap-1 px-2 py-1 text-[10px] bg-blue-50 text-blue-700 font-bold rounded border border-blue-200 hover:bg-blue-100 transition"
-                            >
-                              <FaEdit size={10} /> Editar
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                        );
+                          </td>
+                          <td className="px-5 py-3.5">
+                            {changingRolFor === u.id_usuario ? (
+                              <div className="flex items-center gap-1">
+                                <select value={newRolId} onChange={e => setNewRolId(e.target.value)} className="border rounded px-2 py-1 text-xs">
+                                  {rolesList.filter(r => r.id_rol !== ROL.VISITANTE).map(r => <option key={r.id_rol} value={r.id_rol}>{r.nombre}</option>)}
+                                </select>
+                                <button onClick={() => handleConfirmarCambioRol(u)} className="p-1.5 bg-green-500 text-white rounded"><FaCheck size={10} /></button>
+                                <button onClick={() => setChangingRolFor(null)} className="p-1.5 bg-gray-200 rounded"><FaTimes size={10} /></button>
+                              </div>
+                            ) : (
+                              <RoleBadge roleId={u.id_rol} roleName={u.nombre_rol} />
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-sm font-medium text-gray-900 border-l border-transparent">
+                            {u.created_at ? new Date(u.created_at).toLocaleString('es-DO', { dateStyle: 'short', timeStyle: 'short' }) : 'N/D'}
+                          </td>
+                          <td className="px-5 py-3.5 text-center">
+                            {changingStatusFor === u.id_usuario ? (
+                              <div className="flex items-center justify-center gap-1">
+                                <select value={newStatusChoice} onChange={e => setNewStatusChoice(e.target.value)} className="border rounded px-2 py-1 text-xs">
+                                  {catEstados.map(s => <option key={s.id_estado} value={s.id_estado}>{s.nombre}</option>)}
+                                </select>
+                                <button onClick={() => handleConfirmarCambioEstado(u)} className="p-1.5 bg-green-500 text-white rounded"><FaCheck size={10} /></button>
+                                <button onClick={() => setChangingStatusFor(null)} className="p-1.5 bg-gray-200 rounded"><FaTimes size={10} /></button>
+                              </div>
+                            ) : (
+                              <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${u.nombre_estado?.toLowerCase() === 'activo' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                                {u.nombre_estado}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3.5 text-right">
+                            <div className="flex justify-end gap-1.5">
+                              <button
+                                onClick={() => { setChangingRolFor(u.id_usuario); setNewRolId(u.id_rol.toString()); }}
+                                title="Cambiar Rol"
+                                className="flex items-center gap-1 px-2 py-1 text-[10px] bg-purple-50 text-purple-700 font-bold rounded border border-purple-200 hover:bg-purple-100 transition"
+                              >
+                                <FaShieldAlt size={10} /> Rol
+                              </button>
+                              <button
+                                onClick={() => { setChangingStatusFor(u.id_usuario); setNewStatusChoice(u.id_estado?.toString() || ''); }}
+                                title="Cambiar Estado"
+                                className="flex items-center gap-1 px-2 py-1 text-[10px] bg-green-50 text-green-700 font-bold rounded border border-green-200 hover:bg-green-100 transition"
+                              >
+                                <FaSync size={10} /> Estado
+                              </button>
+                              <button
+                                onClick={() => handleEdit(u)}
+                                title="Editar Usuario"
+                                className="flex items-center gap-1 px-2 py-1 text-[10px] bg-blue-50 text-blue-700 font-bold rounded border border-blue-200 hover:bg-blue-100 transition"
+                              >
+                                <FaEdit size={10} /> Editar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
                     })}
                   </tbody>
                 </table>
@@ -701,32 +707,32 @@ export default function Usuarios() {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nombre *</label>
-                    <input name="nombre" value={formData.nombre} onChange={handleChange} required className="w-full border p-2 rounded text-sm"/>
+                    <input name="nombre" value={formData.nombre} onChange={handleChange} required className="w-full border p-2 rounded text-sm" />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Apellido *</label>
-                    <input name="apellido" value={formData.apellido} onChange={handleChange} required className="w-full border p-2 rounded text-sm"/>
+                    <input name="apellido" value={formData.apellido} onChange={handleChange} required className="w-full border p-2 rounded text-sm" />
                   </div>
                 </div>
-                
+
                 <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Email *</label>
-                  <input type="email" name="email" value={formData.email} onChange={handleChange} required autoComplete="off" className="w-full border p-2 rounded text-sm"/>
+                  <input type="email" name="email" value={formData.email} onChange={handleChange} required autoComplete="off" className="w-full border p-2 rounded text-sm" />
                 </div>
-                
+
                 {!isUpdating && <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Contraseña *</label>
-                  <input type="password" name="contrasena" value={formData.contrasena} onChange={handleChange} required autoComplete="new-password" placeholder="••••••••" className="w-full border p-2 rounded text-sm"/>
+                  <input type="password" name="contrasena" value={formData.contrasena} onChange={handleChange} required autoComplete="new-password" placeholder="••••••••" className="w-full border p-2 rounded text-sm" />
                 </div>}
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Cédula</label>
-                    <input name="cedula" value={formData.cedula} onChange={handleChange} className="w-full border p-2 rounded text-sm font-mono"/>
+                    <input name="cedula" value={formData.cedula} onChange={handleChange} className="w-full border p-2 rounded text-sm font-mono" />
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Teléfono</label>
-                    <input name="telefono" value={formData.telefono} onChange={handleChange} className="w-full border p-2 rounded text-sm"/>
+                    <input name="telefono" value={formData.telefono} onChange={handleChange} className="w-full border p-2 rounded text-sm" />
                   </div>
                 </div>
 
@@ -741,7 +747,7 @@ export default function Usuarios() {
 
                 <div>
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Fecha Nacimiento</label>
-                  <input type="date" name="fecha_nacimiento" value={formData.fecha_nacimiento} onChange={handleChange} className="w-full border p-2 rounded text-sm"/>
+                  <input type="date" name="fecha_nacimiento" value={formData.fecha_nacimiento} onChange={handleChange} className="w-full border p-2 rounded text-sm" />
                 </div>
 
                 <div>
@@ -798,14 +804,14 @@ export default function Usuarios() {
                 {parseInt(formData.id_tipo_persona) === 1 && (
                   <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 space-y-3 animate-fadeIn">
                     <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Datos Académicos</p>
-                    
+
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="block text-[10px] font-bold text-blue-400 uppercase mb-1">Facultad *</label>
-                        <select 
-                          name="id_facultad" 
-                          value={formData.id_facultad} 
-                          onChange={e => setFormData(f => ({ ...f, id_facultad: e.target.value, id_carrera: '' }))} 
+                        <select
+                          name="id_facultad"
+                          value={formData.id_facultad}
+                          onChange={e => setFormData(f => ({ ...f, id_facultad: e.target.value, id_carrera: '' }))}
                           required={parseInt(formData.id_tipo_persona) === 1}
                           className="w-full border-blue-200 border p-2 rounded text-sm bg-white"
                         >
@@ -815,10 +821,10 @@ export default function Usuarios() {
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-blue-400 uppercase mb-1">Carrera *</label>
-                        <select 
-                          name="id_carrera" 
-                          value={formData.id_carrera} 
-                          onChange={handleChange} 
+                        <select
+                          name="id_carrera"
+                          value={formData.id_carrera}
+                          onChange={handleChange}
                           required={parseInt(formData.id_tipo_persona) === 1}
                           disabled={!formData.id_facultad}
                           className="w-full border-blue-200 border p-2 rounded text-sm bg-white disabled:bg-gray-50"
@@ -835,11 +841,11 @@ export default function Usuarios() {
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="block text-[10px] font-bold text-blue-400 uppercase mb-1">Matrícula *</label>
-                        <input name="numero_carnet" value={formData.numero_carnet} onChange={handleChange} required={parseInt(formData.id_tipo_persona) === 1} placeholder="Ej: 2023-0001" className="w-full border-blue-200 border p-2 rounded text-sm"/>
+                        <input name="numero_carnet" value={formData.numero_carnet} onChange={handleChange} required={parseInt(formData.id_tipo_persona) === 1} placeholder="Ej: 2023-0001" className="w-full border-blue-200 border p-2 rounded text-sm" />
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-blue-400 uppercase mb-1">Año Académico</label>
-                        <input type="number" name="año_academico" value={formData.año_academico} onChange={handleChange} min="1" max="10" placeholder="1-10" className="w-full border-blue-200 border p-2 rounded text-sm"/>
+                        <input type="number" name="año_academico" value={formData.año_academico} onChange={handleChange} min="1" max="10" placeholder="1-10" className="w-full border-blue-200 border p-2 rounded text-sm" />
                       </div>
                     </div>
                   </div>
@@ -868,9 +874,9 @@ export default function Usuarios() {
               <div className="flex-1">
                 <label className="block text-[10px] font-black text-primary uppercase mb-1.5 ml-1">¿Qué deseas buscar hoy?</label>
                 <div className="flex gap-2">
-                  <select 
+                  <select
                     className="w-48 px-3 py-2 border-2 border-primary/20 rounded-lg text-sm font-bold focus:border-primary outline-none bg-white shadow-sm"
-                    value={searchMode} 
+                    value={searchMode}
                     onChange={e => { setSearchMode(e.target.value); setFilterMatricula(''); setFilterCarrera(''); setFilterFacultad(''); setFilterDepto(''); }}
                   >
                     <option value="all">Ver Todos</option>
@@ -892,7 +898,7 @@ export default function Usuarios() {
 
               <div className="w-full md:w-40">
                 <label className="block text-[10px] font-black text-gray-400 uppercase mb-1.5 ml-1">Estado</label>
-                <select 
+                <select
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white h-[40px]"
                   value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
                 >
@@ -918,7 +924,7 @@ export default function Usuarios() {
                     </div>
                     <div className="flex-1 min-w-[200px]">
                       <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Facultad</label>
-                      <select 
+                      <select
                         className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white"
                         value={filterFacultad} onChange={e => { setFilterFacultad(e.target.value); setFilterCarrera(''); }}
                       >
@@ -928,7 +934,7 @@ export default function Usuarios() {
                     </div>
                     <div className="flex-1 min-w-[200px]">
                       <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Carrera</label>
-                      <select 
+                      <select
                         className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white disabled:bg-gray-100"
                         value={filterCarrera} onChange={e => setFilterCarrera(e.target.value)}
                         disabled={!filterFacultad}
@@ -945,7 +951,7 @@ export default function Usuarios() {
                 {searchMode === 'employee' && (
                   <div className="flex-1">
                     <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Departamento</label>
-                    <select 
+                    <select
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white"
                       value={filterDepto} onChange={e => setFilterDepto(e.target.value)}
                     >
@@ -958,9 +964,9 @@ export default function Usuarios() {
                 {searchMode === 'type' && (
                   <div className="flex-1">
                     <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Tipo de Persona</label>
-                    <select 
+                    <select
                       className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-green-300 outline-none bg-white"
-                      value={formData.id_tipo_persona} 
+                      value={formData.id_tipo_persona}
                       onChange={e => setFormData(f => ({ ...f, id_tipo_persona: e.target.value }))}
                     >
                       <option value="">Todos los tipos</option>
@@ -970,7 +976,7 @@ export default function Usuarios() {
                 )}
 
                 <div className="flex items-end">
-                  <button 
+                  <button
                     onClick={() => { setSearchMode('all'); setSearchTerm(''); setFilterMatricula(''); setFilterCarrera(''); setFilterFacultad(''); setFilterStatus('all'); setFilterDepto(''); }}
                     className="px-4 py-2 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg transition underline decoration-dotted"
                   >
@@ -1060,9 +1066,8 @@ export default function Usuarios() {
                           </div>
                         </td>
                         <td className="px-6 py-5 text-center">
-                          <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                            isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
-                          }`}>
+                          <span className={`inline-block px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${isActive ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'
+                            }`}>
                             {u.nombre_estado}
                           </span>
                         </td>
@@ -1073,7 +1078,7 @@ export default function Usuarios() {
               </tbody>
             </table>
           </div>
-          
+
           <div className="p-4 bg-gray-50/50 border-t border-gray-100 flex justify-between items-center text-[10px] font-black text-gray-400 uppercase tracking-widest">
             <span>Resultados: {filteredUsers.length}</span>
             <span>Directorio Maestro UCEPARKING</span>
@@ -1082,4 +1087,4 @@ export default function Usuarios() {
       )}
     </Layout>
   );
-}
+}

@@ -1,12 +1,10 @@
-
-
 import { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
 import { 
   FaSearch, FaEdit, FaTrash, FaParking, FaMapMarkerAlt, FaPlus, FaSave, 
-  FaArrowsAltH, FaArrowsAltV, FaSync, FaSyncAlt, FaCar, FaWheelchair, FaMapMarkedAlt
+  FaArrowsAltH, FaArrowsAltV, FaSync, FaSyncAlt, FaCar, FaWheelchair, FaMapMarkedAlt, FaTruck, FaBolt
 } from 'react-icons/fa';
 import { useRbac } from '../contexts/RbacContext';
 import { useOrg } from '../contexts/OrgContext';
@@ -115,7 +113,10 @@ export default function ZonasParqueo() {
 
       // 3. Plazas ordenadas por número
       const { data: pData } = await supabase.from('plaza').select(`*, estado_plaza!id_estado(nombre)`).eq('organizacion_id', orgId).order('numero_plaza');
-      setPlazas(pData || []);
+      const plazasOrdenadas = (pData || []).sort((a, b) => 
+        (a.numero_plaza || '').localeCompare(b.numero_plaza || '', undefined, { numeric: true, sensitivity: 'base' })
+      );
+      setPlazas(plazasOrdenadas);
     } catch (error) { console.error("Error cargando datos:", error); }
   };
 
@@ -138,19 +139,12 @@ export default function ZonasParqueo() {
    * Determina el id_tipo_plaza recomendado según el nombre del tipo de zona
    */
   const mapearTipoZonaATipoPlaza = (idTipoZona) => {
-    const tipoZ = tiposZona.find(t => t.id_tipo === parseInt(idTipoZona));
-    if (!tipoZ) return 10; // Normal por defecto
-
-    const nombreZ = tipoZ.nombre.toLowerCase();
-    
-    // Mapeo según requerimiento del usuario (IDs normalizados 1-5)
-    if (nombreZ.includes('vip'))            return 2; // VIP
-    if (nombreZ.includes('discapaci'))      return 3; // Discapacitado
-    if (nombreZ.includes('carga'))           return 4; // Carga
-    if (nombreZ.includes('administrativo')) return 2; // Administrativo -> VIP
-    if (nombreZ.includes('reservada'))      return 2; // Reservada -> VIP
-    
-    return 1; // Normal (incluye Motos, General, etc.)
+    const idZ = parseInt(idTipoZona);
+    if (idZ === 3) return 2; // VIP (Zona 3 -> Plaza 2)
+    if (idZ === 4) return 3; // Discapacitados (Zona 4 -> Plaza 3)
+    if (idZ === 6) return 4; // Carga (Zona 6 -> Plaza 4)
+    if (idZ === 8) return 1; // General (Zona 8 -> Plaza 1)
+    return 1; // Por defecto Normal (incluye Motos, Cubierta, etc.)
   };
 
   /* ── Generar plazas en lote para una zona ── */
@@ -289,6 +283,12 @@ export default function ZonasParqueo() {
 
         const { error } = await supabase.from('zona').update(payload).eq('id_zona', editingZone.id_zona);
         if (error) throw error;
+
+        // --- Plan PISZ: Propagación en cascada del tipo de plaza si cambia el tipo de zona ---
+        if (payload.id_tipo && parseInt(payload.id_tipo) !== editingZone.id_tipo) {
+            const nuevoTipoPlaza = mapearTipoZonaATipoPlaza(payload.id_tipo);
+            await supabase.from('plaza').update({ id_tipo: nuevoTipoPlaza }).eq('id_zona', editingZone.id_zona);
+        }
 
         // 2. Propagación en cascada si el estado es Mantenimiento o Cerrada
         const nuevoEstado = estadosZona.find(e => e.id_estado === payload.id_estado);
@@ -565,21 +565,6 @@ export default function ZonasParqueo() {
         longitud: parseFloat(plazaForm.Longitud),
         organizacion_id: orgId
       };
-
-      // ── VALIDACIÓN: Coordenadas (Amplitud/Longitud) Únicas ──
-      const coordEnUso = plazas.find(p => 
-        parseFloat(p.amplitud) === payload.amplitud && 
-        parseFloat(p.longitud) === payload.longitud &&
-        (!editingPlaza || p.id_plaza !== editingPlaza.id_plaza)
-      );
-
-      if (coordEnUso) {
-        return Swal.fire(
-          'Coordenadas Duplicadas', 
-          `Las coordenadas (Amplitud: ${payload.amplitud}, Longitud: ${payload.longitud}) ya están registradas en la plaza <b>${coordEnUso.numero_plaza}</b>.<br><br>Ninguna plaza puede compartir exactamente la misma ubicación física.`, 
-          'warning'
-        );
-      }
 
       if (editingPlaza) {
         const { error } = await supabase.from('plaza')
@@ -928,8 +913,15 @@ export default function ZonasParqueo() {
                 <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-x-2 gap-y-10 place-items-center relative z-10 w-full">
                   {plazasZona.map(p => {
                      const isLibre = p.estado_plaza?.nombre === 'Libre';
-                     const bgPlaza = p.id_tipo === 3 ? 'bg-blue-50/50 hover:bg-blue-100/50' : 'bg-white/60 hover:bg-white/90';
-                     const bColor = p.id_tipo === 3 ? 'border-blue-300' : 'border-gray-300';
+                     const bgPlaza = p.id_tipo === 3 ? 'bg-blue-50/50 hover:bg-blue-100/50' : 
+                                     p.id_tipo === 2 ? 'bg-yellow-50/50 hover:bg-yellow-100/50' :
+                                     p.id_tipo === 4 ? 'bg-gray-100/50 hover:bg-gray-200/50' :
+                                     p.id_tipo === 5 ? 'bg-emerald-50/50 hover:bg-emerald-100/50' :
+                                     'bg-white/60 hover:bg-white/90';
+                     const bColor = p.id_tipo === 3 ? 'border-blue-300' : 
+                                    p.id_tipo === 2 ? 'border-yellow-300' :
+                                    p.id_tipo === 5 ? 'border-emerald-300' :
+                                    'border-gray-300';
                      
                      return (
                       <div key={p.id_plaza} className={`relative flex flex-col items-center justify-end text-center w-full max-w-[90px] mx-auto aspect-[1/1.6] border-x-[3px] border-t-[3px] border-b-0 ${bColor} transition-all overflow-hidden pb-1 rounded-t shadow-sm group ${bgPlaza}`}>
@@ -937,6 +929,15 @@ export default function ZonasParqueo() {
 
                         {p.id_tipo === 3 && (
                           <FaWheelchair className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl text-blue-200 pointer-events-none" />
+                        )}
+                        {p.id_tipo === 2 && (
+                          <span className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-3xl font-black text-yellow-300/40 select-none pointer-events-none italic tracking-tighter">VIP</span>
+                        )}
+                        {p.id_tipo === 4 && (
+                          <FaTruck className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl text-gray-300 pointer-events-none" />
+                        )}
+                        {p.id_tipo === 5 && (
+                          <FaBolt className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-4xl text-emerald-300 pointer-events-none" />
                         )}
 
                         <span className="relative z-10 text-[8px] font-bold text-gray-500 uppercase mt-auto mb-1 bg-white/80 px-1 rounded-sm shadow-sm">{p.amplitud}x{p.longitud}m</span>

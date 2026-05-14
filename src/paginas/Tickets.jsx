@@ -342,15 +342,25 @@ export default function Tickets() {
         color:id_color_capturado(nombre)
       `).eq('organizacion_id', orgId);
 
+      // 1. Obtener estados primero para poder filtrar
+      const { data: stCat } = await supabase.from('estado_ticket').select('id_estado, nombre');
+      const activosVencidosIds = stCat
+        .filter(s => s.nombre.toLowerCase() === 'activo' || s.nombre.toLowerCase() === 'vencido')
+        .map(s => s.id_estado);
+      const inactivosIds = stCat
+        .filter(s => s.nombre.toLowerCase() !== 'activo' && s.nombre.toLowerCase() !== 'vencido')
+        .map(s => s.id_estado);
+
       if (activeTab === 'historial') {
-        query = query.lt('fecha_hora_emision', hoyISO);
+        // Historial: Solo cerrados o anulados, sin importar la fecha
+        query = query.in('id_estado', inactivosIds);
       } else {
-        query = query.gte('fecha_hora_emision', hoyISO);
+        // Activos: Todo lo que sigue adentro (Activo o Vencido), sin importar la fecha
+        query = query.in('id_estado', activosVencidosIds);
       }
 
       const [
         { data: tks },
-        { data: stCat },
         { data: catMarcas },
         { data: catModelos },
         { data: catColores },
@@ -358,7 +368,6 @@ export default function Tickets() {
         { data: epReservada }
       ] = await Promise.all([
         query.order('fecha_hora_emision', { ascending: false }),
-        supabase.from('estado_ticket').select('id_estado, nombre'),
         supabase.from('marca').select('id_marca, nombre').order('nombre'),
         supabase.from('modelo').select('id_modelo, nombre, id_marca').order('nombre'),
         supabase.from('color').select('id_color, nombre').order('nombre'),
@@ -489,7 +498,7 @@ export default function Tickets() {
 
       for (const t of vencidos) {
         await supabase.from('ticket').update({ id_estado: idEstVencidoTk }).eq('id_ticket', t.id_ticket);
-        await supabase.from('plaza').update({ id_estado: idEstLibrePlaza }).eq('id_plaza', t.id_plaza_asignada);
+        // NOTA: Se ha eliminado la liberación automática de plaza. La plaza sigue ocupada hasta que el vehículo salga físicamente.
       }
       if (vencidos.length > 0) loadData();
     } catch (e) { console.warn('checkExpiredTickets error:', e.message); }
@@ -1349,7 +1358,7 @@ export default function Tickets() {
                               >
                                 <FaPrint size={14} />
                               </button>
-                              {activeTab !== 'historial' && sLower === 'activo' && (
+                              {activeTab !== 'historial' && (sLower === 'activo' || sLower === 'vencido') && (
                                 <>
                                   <button
                                     onClick={() => handleCerrarTicket(t)}

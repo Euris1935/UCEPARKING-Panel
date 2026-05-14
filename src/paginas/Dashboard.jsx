@@ -38,6 +38,12 @@ export default function Dashboard() {
   const [historyAccesos, setHistoryAccesos] = useState([]);
   const [chartTimeframe, setChartTimeframe] = useState('dia'); // dia, semana, mes
   const [loading, setLoading] = useState(true);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (orgId) {
@@ -276,7 +282,11 @@ export default function Dashboard() {
             <h2 className="text-4xl font-black text-gray-900 tracking-tight">Panel Principal</h2>
             <p className="text-gray-500 font-medium mt-1">Visión global del sistema UCE Parking</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-3 items-center">
+            <div className="bg-white border border-gray-100 px-4 py-2 rounded-xl font-mono text-lg font-black text-gray-700 shadow-sm flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+            </div>
             <div className="bg-indigo-50 border border-indigo-100 text-indigo-700 px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-sm">
                 <FaCheckCircle className="text-indigo-500"/> Operativo
             </div>

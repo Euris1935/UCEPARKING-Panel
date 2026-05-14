@@ -155,7 +155,8 @@ export default function Reservaciones() {
             { data: zonas },
             { data: tiposRZ },
             { data: catEst },
-            { data: horarioData }
+            { data: horarioData },
+            { data: estadosUsuarios }
         ] = await Promise.all([
             supabase.from('reserva').select('*, persona:id_persona(id_persona, nombre, apellido, condicion_salud, detalle_condicion_salud), plaza:id_plaza(id_plaza, numero_plaza), estado:estado_reserva!id_estado(nombre)').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
             supabase.from('reserva_zona').select('*, zona:id_zona(id_zona, nombre), tipo:tipo_reserva_zona!id_tipo(nombre), persona:id_persona(id_persona, nombre, apellido, condicion_salud, detalle_condicion_salud), estado:estado_reserva!id_estado(nombre), codigo_reserva').eq('organizacion_id', orgId).order('fecha_hora_inicio', { ascending: false }),
@@ -166,7 +167,8 @@ export default function Reservaciones() {
             supabase.from('zona').select('*, estado:estado_zona!id_estado(nombre)').eq('organizacion_id', orgId).order('nombre'),
             supabase.from('tipo_reserva_zona').select('*').order('nombre'),
             supabase.from('estado_reserva').select('*').order('id_estado'),
-            supabase.from('horario_laboral').select('dia_semana, hora_apertura, hora_cierre, activo').eq('organizacion_id', orgId)
+            supabase.from('horario_laboral').select('dia_semana, hora_apertura, hora_cierre, activo').eq('organizacion_id', orgId),
+            supabase.from('usuario').select('id_persona, id_estado').eq('organizacion_id', orgId)
         ]);
 
 
@@ -180,8 +182,11 @@ export default function Reservaciones() {
         const idLibre = ESTADO_PLAZA.LIBRE;
         const idResActiva = ESTADO_RESERVA.ACTIVA;
 
-        // 1. Procesar Personas y Bloqueos
-        const soloUsuarios = (uData || []).map(u => ({ id_persona: u.id_persona || u.persona_id, nombre: u.nombre, apellido: u.apellido }));
+        // 1. Procesar Personas y Bloqueos (Plan PREA: id_estado = 1)
+        const uStatusMap = Object.fromEntries((estadosUsuarios || []).map(u => [u.id_persona, u.id_estado]));
+        const soloUsuarios = (uData || [])
+            .filter(u => uStatusMap[u.id_persona] === 1)
+            .map(u => ({ id_persona: u.id_persona || u.persona_id, nombre: u.nombre, apellido: u.apellido }));
         
         // Calcular bloqueos por reservas activas
         const resActivasIds = new Set((resData || []).filter(r => r.id_estado === idResActiva && (!r.fecha_hora_fin || r.fecha_hora_fin > ahoraISO)).map(r => r.id_persona));

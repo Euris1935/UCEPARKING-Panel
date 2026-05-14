@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
 import Swal from 'sweetalert2';
-import { FaSearch, FaMapMarkerAlt, FaSync, FaWheelchair, FaCar, FaLock, FaUserTie, FaExclamationTriangle, FaDesktop } from 'react-icons/fa';
+import { FaSearch, FaMapMarkerAlt, FaSync, FaWheelchair, FaCar, FaLock, FaUserTie, FaExclamationTriangle, FaDesktop, FaTruck, FaBolt } from 'react-icons/fa';
 import { useOrg } from '../contexts/OrgContext';
 import { registrarLog, EVENT_TYPES } from '../utils/logging';
 import { ESTADO_PLAZA, ESTADO_RESERVA, ESTADO_TICKET } from '../lib/constants';
@@ -270,7 +270,11 @@ export default function Ocupacion() {
         return { ...p, Nombre_Estado_Rel: estadoBase, esConflicto };
       });
 
-      setPlazas(plazasCompletas);
+      const plazasOrdenadas = plazasCompletas.sort((a, b) => 
+        (a.numero_plaza || '').localeCompare(b.numero_plaza || '', undefined, { numeric: true, sensitivity: 'base' })
+      );
+
+      setPlazas(plazasOrdenadas);
       setOcupacionInfo(mapaOcupacion);
 
       // ── Sets para iconografía de reservas (carro amarillo) ──
@@ -410,6 +414,12 @@ export default function Ocupacion() {
 
     if (idTipo === 3) {
       base += "bg-blue-50/50 hover:bg-blue-100/50 ";
+    } else if (idTipo === 2) {
+      base += "bg-yellow-50/50 hover:bg-yellow-100/50 ";
+    } else if (idTipo === 4) {
+      base += "bg-gray-100/50 hover:bg-gray-200/50 ";
+    } else if (idTipo === 5) {
+      base += "bg-emerald-50/50 hover:bg-emerald-100/50 ";
     } else {
       base += "bg-white/60 hover:bg-white/90 ";
     }
@@ -512,8 +522,24 @@ export default function Ocupacion() {
                     )}
                     <span className="absolute top-3 font-bold text-[2rem] text-gray-300 select-none pointer-events-none group-hover:text-gray-400 transition-colors">{plaza.numero_plaza}</span>
 
-                    {plaza.id_tipo === 3 && (
-                      <FaWheelchair className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-6xl text-blue-200 pointer-events-none" />
+                    {!isOcupada && !isReservada && !isAsignada && !isMantenimiento && (
+                      <>
+                        {plaza.id_tipo === 3 && (
+                          <FaWheelchair className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-6xl text-blue-200 pointer-events-none" />
+                        )}
+
+                        {plaza.id_tipo === 2 && (
+                          <span className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-5xl font-black text-yellow-300/40 select-none pointer-events-none italic tracking-tighter">VIP</span>
+                        )}
+
+                        {plaza.id_tipo === 4 && (
+                          <FaTruck className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-6xl text-gray-200 pointer-events-none" />
+                        )}
+
+                        {plaza.id_tipo === 5 && (
+                          <FaBolt className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-6xl text-emerald-200/60 pointer-events-none" />
+                        )}
+                      </>
                     )}
 
                     {isOcupada && !isReservada && (
@@ -667,8 +693,24 @@ export default function Ocupacion() {
                         {plaza.numero_plaza}
                       </span>
 
-                      {plaza.id_tipo === 3 && (
-                        <FaWheelchair className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 ${numZonas > 4 ? 'text-2xl' : 'text-5xl'} text-blue-200 pointer-events-none`} />
+                      {!isOcupada && !isReservada && !isAsignada && !isMantenimiento && (
+                        <>
+                          {plaza.id_tipo === 3 && (
+                            <FaWheelchair className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 ${numZonas > 4 ? 'text-2xl' : 'text-5xl'} text-blue-200 pointer-events-none`} />
+                          )}
+
+                          {plaza.id_tipo === 2 && (
+                            <span className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 ${numZonas > 4 ? 'text-xl' : 'text-4xl'} font-black text-yellow-300/40 select-none pointer-events-none italic tracking-tighter`}>VIP</span>
+                          )}
+
+                          {plaza.id_tipo === 4 && (
+                            <FaTruck className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 ${numZonas > 4 ? 'text-2xl' : 'text-5xl'} text-gray-200 pointer-events-none`} />
+                          )}
+
+                          {plaza.id_tipo === 5 && (
+                            <FaBolt className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 ${numZonas > 4 ? 'text-2xl' : 'text-5xl'} text-emerald-200/60 pointer-events-none`} />
+                          )}
+                        </>
                       )}
 
                       {isOcupada && !isReservada && (

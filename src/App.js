@@ -9,6 +9,7 @@ import { OrgProvider } from './contexts/OrgContext';
 import { UIProvider } from './contexts/UIContext';
 import { ProtectedRoute } from './componentes/ProtectedRoute';
 
+import Eventualidad from './paginas/Eventualidad';
 import Login from './paginas/Login';
 import Dashboard from './paginas/Dashboard';
 import Usuarios from './paginas/Usuarios';
@@ -84,6 +85,7 @@ export default function App() {
                   <Route path="/mantenimiento" element={<ProtectedRoute reqModulo="Mantenimiento"><Mantenimiento /></ProtectedRoute>} />
                   <Route path="/logs" element={<ProtectedRoute reqModulo="Logs"><Logs /></ProtectedRoute>} />
                   <Route path="/notificaciones" element={<ProtectedRoute reqModulo="Notificaciones"><Notificaciones /></ProtectedRoute>} />
+                  <Route path="/eventualidad" element={<ProtectedRoute reqModulo="Logs"><Eventualidad /></ProtectedRoute>} />
 
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </>
