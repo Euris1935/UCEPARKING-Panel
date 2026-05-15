@@ -229,11 +229,17 @@ export default function ZonasParqueo() {
         html: `Se crearán <b>${cap} plazas</b> con códigos:<br/>
                <code class="text-sm bg-gray-100 px-2 py-1 rounded">${ejemplos}${cap > 3 ? ` ... ${prefijo}-${String(cap).padStart(2, '0')}` : ''}</code>`,
         icon: 'question',
+        showCloseButton: true,
         showCancelButton: true,
         confirmButtonColor: '#2563eb',
         confirmButtonText: 'Crear zona y plazas',
         cancelButtonText: 'Solo crear la zona'
       });
+
+      // Si el usuario cerró la alerta con la X o ESC, no hacemos nada
+      if (confirm.isDismissed && confirm.dismiss !== Swal.DismissReason.cancel) {
+        return;
+      }
 
       try {
         Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading() });
@@ -336,10 +342,16 @@ export default function ZonasParqueo() {
                 title: 'Capacidad Aumentada',
                 text: `Has aumentado la capacidad. ¿Deseas generar las ${faltantes} plazas faltantes automáticamente ahora?`,
                 icon: 'question',
+                showCloseButton: true,
                 showCancelButton: true,
                 confirmButtonText: 'Sí, generar',
                 cancelButtonText: 'No por ahora'
             });
+
+            // Si cierra con X o ESC, no guardamos los cambios de capacidad (opcional, pero más seguro)
+            if (confirmGen.isDismissed && confirmGen.dismiss !== Swal.DismissReason.cancel) {
+                return;
+            }
             if (confirmGen.isConfirmed) {
                 const idLibre = ESTADO_PLAZA.LIBRE;
                 const idTipoPlazaInferido = mapearTipoZonaATipoPlaza(payload.id_tipo);

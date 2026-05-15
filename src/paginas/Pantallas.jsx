@@ -51,7 +51,7 @@ export default function Pantallas() {
           .order('numero_plaza'),
         supabase
           .from('zona')
-          .select('id_zona, nombre, id_estado')
+          .select('id_zona, nombre, id_estado, capacidad_total')
           .eq('organizacion_id', orgId)
           .eq('id_estado', 1)      // solo zonas activas
           .order('nombre'),
@@ -97,7 +97,7 @@ export default function Pantallas() {
   };
 
   const handleModoChange = (modo) => {
-    setForm(f => ({ ...f, modo, id_plaza: '', id_zona: '' }));
+    setForm(f => ({ ...f, modo, id_plaza: '', id_zona: '', capacidad_total: '' }));
   };
 
   const handlePlazaChange = (e) => {
@@ -107,11 +107,19 @@ export default function Pantallas() {
       ...f,
       id_plaza: plazaId || '',
       id_zona:  plazaObj?.id_zona || '',
+      capacidad_total: plazaId ? 1 : '' // Una plaza individual tiene capacidad 1
     }));
   };
 
   const handleZonaChange = (e) => {
-    setForm(f => ({ ...f, id_zona: Number(e.target.value) || '', id_plaza: '' }));
+    const zonaId = Number(e.target.value);
+    const zonaObj = zonas.find(z => z.id_zona === zonaId);
+    setForm(f => ({ 
+      ...f, 
+      id_zona: zonaId || '', 
+      id_plaza: '',
+      capacidad_total: zonaObj?.capacidad_total || '' // Sincronización automática
+    }));
   };
 
   // ── Guardar ────────────────────────────────────────────────────────────────
@@ -455,14 +463,26 @@ export default function Pantallas() {
                   <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">
                     Capacidad Total *
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    className="w-full border p-2 rounded-lg text-sm bg-gray-50 outline-none focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Ej: 50"
-                    value={form.capacidad_total}
-                    onChange={e => setForm(f => ({ ...f, capacidad_total: e.target.value }))}
-                  />
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="1"
+                      className={`w-full border p-2 rounded-lg text-sm outline-none transition-all ${
+                        (form.id_zona || form.id_plaza) 
+                          ? 'bg-gray-100 text-gray-500 border-gray-200 cursor-not-allowed' 
+                          : 'bg-gray-50 focus:ring-blue-500 focus:border-blue-500'
+                      }`}
+                      placeholder="Ej: 50"
+                      value={form.capacidad_total}
+                      onChange={e => setForm(f => ({ ...f, capacidad_total: e.target.value }))}
+                      readOnly={!!(form.id_zona || form.id_plaza)}
+                    />
+                    {(form.id_zona || form.id_plaza) && (
+                      <p className="text-[9px] text-blue-600 font-bold mt-1 uppercase flex items-center gap-1 italic">
+                        <FaSync className="animate-spin-slow" size={8} /> Sincronizado automáticamente con la {(form.modo === 'zona' ? 'zona' : 'plaza')}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {/* ── Botones ──────────────────────────────────────────────── */}

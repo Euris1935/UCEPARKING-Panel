@@ -254,7 +254,7 @@ export default function Reportes() {
                             </div>
                             <div>
                                 <p className="font-bold text-gray-900 text-xs uppercase">{r.tipo_reporte?.nombre || r.tipo}</p>
-                                <p className="text-[10px] italic font-medium text-gray-400 max-w-xs truncate mt-0.5" title={r.descripcion}>
+                                <p className="text-xs font-bold text-gray-700 max-w-xs truncate mt-0.5" title={r.descripcion}>
                                     {r.descripcion || "Sin descripción"}
                                 </p>
                             </div>

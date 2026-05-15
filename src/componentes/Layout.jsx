@@ -231,7 +231,9 @@ export default function Layout({ children }) {
   const checkEstanciaLarga = async () => {
     if (!orgId) return;
     try {
-      const hace16h = new Date(Date.now() - 16 * 60 * 60 * 1000).toISOString();
+      const saved = localStorage.getItem('appSettings');
+      const umbral = saved ? (JSON.parse(saved).umbralEstanciaLarga || 16) : 16;
+      const haceXh = new Date(Date.now() - umbral * 60 * 60 * 1000).toISOString();
 
       const [
         { data: accesosLargos, error: err1 },
@@ -241,12 +243,12 @@ export default function Layout({ children }) {
           .select('id_registro, id_plaza, vehiculo:id_vehiculo(placa, id_persona)')
           .eq('organizacion_id', orgId)
           .is('salida_at', null)
-          .lt('entrada_at', hace16h),
+          .lt('entrada_at', haceXh),
         supabase.from('ticket')
           .select('id_ticket, id_plaza_asignada, placa_capturada')
           .eq('organizacion_id', orgId)
           .eq('id_estado', 1)
-          .lt('fecha_hora_emision', hace16h)
+          .lt('fecha_hora_emision', haceXh)
       ]);
 
       if (err1) console.error('[EstanciaLarga] Error query acceso:', err1.message);
@@ -295,14 +297,14 @@ export default function Layout({ children }) {
             supabase.from('notificacion').insert([{
               id_persona:      idPersona,
               organizacion_id: orgId,
-              contenido:       `⚠️ ALERTA DE ESTANCIA LARGA: Tu vehículo (${placa}) lleva más de 16 horas en el parqueo. Plaza: ${plaza}. Por favor retíralo o comunícate con nosotros.`,
+              contenido:       `⚠️ ALERTA DE ESTANCIA LARGA: Tu vehículo (${placa}) lleva más de ${umbral} horas en el parqueo. Plaza: ${plaza}. Por favor retíralo o comunícate con nosotros.`,
               leida:           false
             }]).then(({ error }) => { if (error) console.warn('Error notif propietario estancia:', error.message); });
           }
 
           supabase.from('notificacion').insert([{
             organizacion_id: orgId,
-            contenido:       `⚠️ ESTANCIA LARGA [${item._tipo}]: Vehículo ${placa} lleva más de 16h en plaza ${plaza}.${idPersona ? ' Notif. enviada al propietario.' : ' Propietario no registrado.'}`,
+            contenido:       `⚠️ ESTANCIA LARGA [${item._tipo}]: Vehículo ${placa} lleva más de ${umbral}h en plaza ${plaza}.${idPersona ? ' Notif. enviada al propietario.' : ' Propietario no registrado.'}`,
             leida:           false
           }]).then(({ error }) => { if (error) console.warn('Error notif panel estancia:', error.message); });
         }
@@ -420,7 +422,7 @@ export default function Layout({ children }) {
             <div className="text-2xl shrink-0 mt-0.5 animate-pulse">⚠️</div>
             <div className="flex-1">
               <p className="font-bold text-sm">
-                ALERTA DE INTRUSIÓN — {alertasIntrusos.length} vehículo(s) detectado(s) físicamente sin registro de acceso
+                ALERTA DE INTRUSIÓN O POSIBLE OBSTRUCCIÓN — {alertasIntrusos.length} detección(es) física(s) sin registro de acceso
               </p>
               <div className="flex flex-wrap gap-2 mt-1">
                 {alertasIntrusos.map((intruso) => (
@@ -428,7 +430,7 @@ export default function Layout({ children }) {
                     key={intruso._key}
                     className={`text-white text-[10px] font-black px-2 py-0.5 rounded-lg ${intruso.gravedad === 'ALTA' ? 'bg-red-500 animate-pulse' : 'bg-white/20'}`}
                   >
-                    Plaza #{intruso.numero} — {intruso.detalle}
+                    Plaza #{intruso.numero} — {intruso.detalle} (Verificación física requerida)
                   </span>
                 ))}
               </div>
@@ -448,7 +450,7 @@ export default function Layout({ children }) {
             <FaClock className="text-2xl shrink-0 mt-0.5" />
             <div className="flex-1">
               <p className="font-bold text-sm">
-                ALERTA DE ESTANCIA LARGA — {alertaEstanciaLarga.length} vehículo(s) con más de 16 horas
+                ALERTA DE ESTANCIA LARGA — {alertaEstanciaLarga.length} vehículo(s) con más de {localStorage.getItem('appSettings') ? (JSON.parse(localStorage.getItem('appSettings')).umbralEstanciaLarga || 16) : 16} horas
               </p>
               <div className="flex flex-wrap gap-2 mt-1">
                 {alertaEstanciaLarga.map((a) => (

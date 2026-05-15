@@ -846,11 +846,11 @@ export default function Reservaciones() {
               return Swal.fire('Campos requeridos', 'Zona, Motivo y Persona son obligatorios.', 'warning');
             }
 
-            // VALIDACIÓN DE FECHA (Mismo día bloqueado según requerimiento)
+            // VALIDACIÓN DE FECHA (Solo para nuevas creaciones)
             const inicio = new Date(formData.Fecha_Hora_Inicio);
             const hoy = new Date();
             hoy.setHours(23, 59, 59, 999);
-            if (inicio <= hoy) {
+            if (!isUpdating && inicio <= hoy) {
                 setLoading(false);
                 return Swal.fire('Regla del Parqueo', 'Las reservaciones de zona deben realizarse con al menos 24h de antelación (a partir de mañana).', 'info');
             }
@@ -1969,7 +1969,8 @@ export default function Reservaciones() {
 
                     const minDateInicio = (() => {
                       const minDate = new Date();
-                      if (formData.tipo_reserva === 'zona') {
+                      // Solo aplicar la restricción de "mañana" si es una reserva NUEVA
+                      if (!isUpdating && formData.tipo_reserva === 'zona') {
                         minDate.setDate(minDate.getDate() + 1);
                         minDate.setHours(0, 0, 0, 0);
                       }

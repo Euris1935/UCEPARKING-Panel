@@ -103,36 +103,10 @@ export default function Eventualidad() {
         organizacion_id: orgId
       });
 
-      // 2. Comprobar la Regla de los 3 Strikes
-      const { data: tipoAlerta } = await supabase
-        .from('tipo_evento')
-        .select('id_tipo')
-        .eq('nombre', EVENT_TYPES.EVENTUALIDAD)
-        .single();
-
-      const { count } = await supabase
-        .from('evento')
-        .select('*', { count: 'exact', head: true })
-        .eq('id_persona', vSelected.id_persona)
-        .eq('id_tipo', tipoAlerta.id_tipo);
-
-      let mensajeExito = 'La eventualidad ha sido registrada en el sistema.';
-
-      // Si con esta (ya contada porque la insertamos arriba) llega a 3 o más
-      if (count >= 3) {
-        // Bloquear el vehículo
-        await supabase
-          .from('vehiculo')
-          .update({ id_estado: 2 }) // 2 = Inactivo/Bloqueado
-          .eq('id_vehiculo', vSelected.id_vehiculo);
-
-        mensajeExito += `<br><br><b style="color:red">¡LÍMITE ALCANZADO (3)!</b><br>El vehículo placa <b>${vSelected.placa}</b> ha sido inhabilitado automáticamente.`;
-      }
-
       Swal.fire({
         icon: 'success',
         title: 'Registrado',
-        html: mensajeExito
+        text: 'La eventualidad ha sido registrada en el historial.'
       });
 
       setForm({ id_vehiculo: '', motivo: '' });
@@ -152,7 +126,7 @@ export default function Eventualidad() {
       <header className="mb-8 flex justify-between items-center">
         <div>
           <h2 className="text-3xl font-bold text-gray-900 tracking-tight">Eventualidades</h2>
-          <p className="text-gray-500 font-medium">Registro de incidentes o eventualidades y control de bloqueos automáticos.</p>
+          <p className="text-gray-500 font-medium">Registro histórico de incidentes y novedades operativas.</p>
         </div>
         {!showModal && (
           <button
@@ -245,9 +219,6 @@ export default function Eventualidad() {
                 </button>
               </div>
 
-              <div className="bg-red-50 p-3 rounded-lg border border-red-100 mb-4 text-xs text-red-800 leading-relaxed font-medium">
-                Al registrar 3 eventualidades a una misma persona, su vehículo será inhabilitado automáticamente.
-              </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>

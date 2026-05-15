@@ -664,6 +664,7 @@ export default function Tickets() {
       if (!data) throw new Error('Sin respuesta del servidor');
       if (data.valido) {
         setCodigoResultado({
+          ...reservaData,
           ...data,
           solicitante: `${reservaData?.persona?.nombre || ''} ${reservaData?.persona?.apellido || ''}`.trim()
         });
@@ -979,7 +980,7 @@ export default function Tickets() {
                               ? 'amber' : 'green'
                           )}
                         />
-                        <InfoCard icon={<FaClock size={9}/>} label="Inicio" value={codigoResultado.fecha_hora_inicio ? new Date(codigoResultado.fecha_hora_inicio).toLocaleString('es-DO', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hour12:true }) : '—'} color="blue" />
+                        <InfoCard icon={<FaClock size={9}/>} label="Inicio" value={(codigoResultado.fecha_hora_inicio || codigoResultado.fecha_inicio) ? new Date(codigoResultado.fecha_hora_inicio || codigoResultado.fecha_inicio).toLocaleString('es-DO', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hour12:true }) : '—'} color="blue" />
                         <InfoCard icon={<FaClock size={9}/>} label="Fin" value={codigoResultado.fecha_fin ? new Date(codigoResultado.fecha_fin).toLocaleString('es-DO', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', hour12:true }) : '—'} color="blue" />
                       </div>
                       {codigoResultado.tickets_emitidos >= codigoResultado.capacidad && (

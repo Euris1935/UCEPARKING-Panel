@@ -1,6 +1,6 @@
 import { supabase } from "../supabaseClient";
 
-const BASE_URL = process.env.REACT_APP_BACKEND_URL || `http://${window.location.hostname}:4000/api`;
+const BASE_URL = process.env.REACT_APP_BACKEND_URL || `https://uce-parking-backend.onrender.com/api`;
 
 /**
  * Helper to make authorized requests to the backend
@@ -97,9 +97,9 @@ export const scannerApi = {
 
 // ─── Pantallas (tabla pantalla) ────────────────────────────────────────────────
 export const pantallaApi = {
-  list:   ()           => apiFetch('/pantalla').then(r => r.json()),
-  get:    (id)         => apiFetch(`/pantalla/${id}`).then(r => r.json()),
-  create: (body)       => apiFetch('/pantalla', { method: 'POST', body: JSON.stringify(body) }).then(r => r.json()),
-  update: (id, body)   => apiFetch(`/pantalla/${id}`, { method: 'PUT',  body: JSON.stringify(body) }).then(r => r.json()),
-  remove: (id)         => apiFetch(`/pantalla/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  list: () => apiFetch('/pantalla').then(r => r.json()),
+  get: (id) => apiFetch(`/pantalla/${id}`).then(r => r.json()),
+  create: (body) => apiFetch('/pantalla', { method: 'POST', body: JSON.stringify(body) }).then(r => r.json()),
+  update: (id, body) => apiFetch(`/pantalla/${id}`, { method: 'PUT', body: JSON.stringify(body) }).then(r => r.json()),
+  remove: (id) => apiFetch(`/pantalla/${id}`, { method: 'DELETE' }).then(r => r.json()),
 };

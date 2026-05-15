@@ -16,6 +16,10 @@ import {
   FaWifi,
   FaCog,
   FaCarSide,
+  FaVideo,
+  FaDoorOpen,
+  FaGlobe,
+  FaTools,
 } from "react-icons/fa";
 import { useOrg } from "../contexts/OrgContext";
 import SearchableSelect from "../componentes/SearchableSelect";
@@ -41,6 +45,15 @@ export default function Sensores() {
   const [configActual, setConfigActual] = useState(null);
   const [currentPersonaId, setCurrentPersonaId] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+
+  // --- Estados Plan Z-Mass (Creación Masiva) ---
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selectedZonaId, setSelectedZonaId] = useState("");
+  const [zonasDisponibles, setZonasDisponibles] = useState([]);
+  const [plazasDisponiblesEnZona, setPlazasDisponiblesEnZona] = useState([]);
 
   const initialForm = {
     id_tipo: "",
@@ -102,6 +115,24 @@ export default function Sensores() {
       };
     }
   }, [orgId]);
+
+  // --- Lógica Plan Z-Mass: Filtrar plazas disponibles al cambiar zona ---
+  useEffect(() => {
+    if (bulkMode && selectedZonaId) {
+      // 1. Obtener plazas de la zona seleccionada
+      const plazasDeZona = plazas.filter(p => String(p.id_zona) === String(selectedZonaId));
+      
+      // 2. Filtrar las que ya tienen un dispositivo vinculado
+      const idsPlazasOcupadas = dispositivos
+        .filter(d => d.id_plaza)
+        .map(d => String(d.id_plaza));
+      
+      const libres = plazasDeZona.filter(p => !idsPlazasOcupadas.includes(String(p.id_plaza)));
+      setPlazasDisponiblesEnZona(libres);
+    } else {
+      setPlazasDisponiblesEnZona([]);
+    }
+  }, [selectedZonaId, bulkMode, plazas, dispositivos]);
 
   useEffect(() => {
     if (activeTab === "incidencias" && orgId) cargarIncidencias();
@@ -171,7 +202,7 @@ export default function Sensores() {
         supabase
           .from("plaza")
           .select(
-            "*, zona:id_zona(id_zona, nombre, estado_zona:id_estado(nombre))",
+            "*, zona:id_zona(id_zona, nombre, nivel_piso, estado_zona:id_estado(nombre))",
           )
           .eq("organizacion_id", orgId)
           .order("numero_plaza"),
@@ -194,6 +225,20 @@ export default function Sensores() {
           (e) => !e.nombre.toLowerCase().includes("mantenimiento"),
         ),
       );
+
+      // --- Extraer zonas únicas de las plazas para el Plan Z-Mass ---
+      const mapaZonas = {};
+      (pData || []).forEach(p => {
+        if (p.zona && !mapaZonas[p.zona.id_zona]) {
+          mapaZonas[p.zona.id_zona] = {
+            id_zona: p.zona.id_zona,
+            nombre: p.zona.nombre,
+            nivel_piso: p.zona.nivel_piso
+          };
+        }
+      });
+      setZonasDisponibles(Object.values(mapaZonas).sort((a, b) => a.nombre.localeCompare(b.nombre)));
+
     } catch (error) {
       console.error("Error crítico en loadData:", error.message);
     } finally {
@@ -377,6 +422,7 @@ export default function Sensores() {
       };
 
       if (editingId) {
+        // ... (Lógica de edición se mantiene igual)
         const updateData = { ...dispData };
         delete updateData.organizacion_id;
 
@@ -393,7 +439,7 @@ export default function Sensores() {
         const tipoLog = nombreEstado.toLowerCase().includes("operativo")
           ? EVENT_TYPES.DISPOSITIVO_ONLINE
           : nombreEstado.toLowerCase().includes("fuera") ||
-              nombreEstado.toLowerCase().includes("fallo")
+               nombreEstado.toLowerCase().includes("fallo")
             ? EVENT_TYPES.DISPOSITIVO_OFFLINE
             : EVENT_TYPES.CAMBIO_ESTADO;
 
@@ -407,7 +453,66 @@ export default function Sensores() {
         });
 
         Swal.fire("Éxito", "Registro actualizado", "success");
+      } else if (bulkMode) {
+        // 🚀 LÓGICA PLAN Z-MASS: CREACIÓN MASIVA
+        if (plazasDisponiblesEnZona.length === 0) {
+          throw new Error("No hay plazas disponibles en esta zona para poblar.");
+        }
+
+        const confirm = await Swal.fire({
+          title: "¿Confirmar Creación Masiva?",
+          text: `Se crearán ${plazasDisponiblesEnZona.length} dispositivos para la zona seleccionada.`,
+          icon: "question",
+          showCancelButton: true,
+          confirmButtonText: "Sí, crear todos",
+          cancelButtonText: "Cancelar"
+        });
+
+        if (!confirm.isConfirmed) {
+          setLoading(false);
+          return;
+        }
+
+        // 1. Preparar lote de dispositivos
+        const batchDispositivos = plazasDisponiblesEnZona.map(p => ({
+          ...dispData,
+          id_plaza: p.id_plaza
+        }));
+
+        const { data: creados, error: errBulk } = await supabase
+          .from("dispositivo")
+          .insert(batchDispositivos)
+          .select("id_dispositivo");
+
+        if (errBulk) throw errBulk;
+
+        // 2. Crear configuraciones por defecto para los sensores (RF4)
+        if (formData.id_tipo === 1 || tipoObj?.nombre?.toLowerCase().includes("sensor")) {
+          const batchConfig = creados.map(d => ({
+            id_dispositivo: d.id_dispositivo,
+            organizacion_id: orgId,
+            frecuencia_ms: 5000,
+            umbral_ocupado: 70,
+            umbral_libre: 30,
+            modo_operacion: 'activo',
+            estado_config: 'pendiente'
+          }));
+
+          const { error: errCfg } = await supabase.from("config_sensor").insert(batchConfig);
+          if (errCfg) console.warn("Error creando configs masivas:", errCfg.message);
+        }
+
+        await registrarLog({
+          tipo_nombre: EVENT_TYPES.DISPOSITIVO_ONLINE,
+          descripcion: `Creación masiva de ${creados.length} dispositivos en Zona ID ${selectedZonaId}`,
+          id_persona: currentPersonaId,
+          organizacion_id: orgId,
+          origen: "Panel Web - Hardware y Sensores (Plan Z-Mass)",
+        });
+
+        Swal.fire("Éxito", `Se han creado ${creados.length} dispositivos correctamente.`, "success");
       } else {
+        // Lógica individual normal
         const { data: nDisp, error } = await supabase
           .from("dispositivo")
           .insert([dispData])
@@ -455,6 +560,9 @@ export default function Sensores() {
     setConfigForm(initialConfig);
     setConfigActual(null);
     setShowConfigPanel(false);
+    setBulkMode(false);
+    setSelectedZonaId("");
+    setPlazasDisponiblesEnZona([]);
   };
 
   const handleDelete = async (disp) => {
@@ -501,6 +609,61 @@ export default function Sensores() {
     }
   };
 
+  // --- Lógica Plan Z-Clear: Manejo de Selección Masiva ---
+  const handleSelectItem = (id) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAll = () => {
+    if (selectedIds.length === filteredDispositivos.length && filteredDispositivos.length > 0) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredDispositivos.map(d => d.id_dispositivo));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const result = await Swal.fire({
+      title: `¿Eliminar ${selectedIds.length} dispositivos?`,
+      text: "Esta acción borrará permanentemente todos los equipos seleccionados y su configuración. ¡No se puede deshacer!",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      confirmButtonText: 'Sí, borrar lote'
+    });
+
+    if (result.isConfirmed) {
+      try {
+        Swal.fire({ title: 'Eliminando lote...', didOpen: () => Swal.showLoading() });
+        
+        // 1. Borrar configs vinculadas
+        await supabase.from('config_sensor').delete().in('id_dispositivo', selectedIds);
+        
+        // 2. Borrar dispositivos
+        const { error } = await supabase.from('dispositivo').delete().in('id_dispositivo', selectedIds);
+        
+        if (error) throw error;
+
+        registrarLog({
+          tipo_nombre: EVENT_TYPES.OTRO,
+          descripcion: `Borrado masivo de ${selectedIds.length} dispositivos`,
+          id_persona: currentPersonaId,
+          organizacion_id: orgId,
+          origen: 'Panel Web - Sensores'
+        });
+
+        Swal.fire('Eliminados', 'Los dispositivos han sido borrados con éxito.', 'success');
+        setSelectionMode(false);
+        setSelectedIds([]);
+        loadData();
+      } catch (error) {
+        Swal.fire('Error', error.message, 'error');
+      }
+    }
+  };
+
   const filteredDispositivos = dispositivos.filter((d) => {
     const b = searchTerm.toLowerCase();
     return (
@@ -523,6 +686,32 @@ export default function Sensores() {
     </button>
   );
 
+  // --- Lógica Plan Hardware-Insight: Cálculo de Estadísticas ---
+  const stats = (dispositivos || []).reduce((acc, d) => {
+    const tipo = d.tipo?.nombre || 'Otros';
+    acc[tipo] = (acc[tipo] || 0) + 1;
+    acc.Total = (acc.Total || 0) + 1;
+    return acc;
+  }, {});
+
+  const getIconForType = (tipo) => {
+    const t = tipo.toLowerCase();
+    if (t === 'total') return <FaGlobe className="text-indigo-500" />;
+    if (t.includes('sensor')) return <FaMicrochip className="text-blue-500" />;
+    if (t.includes('cámara') || t.includes('camara')) return <FaVideo className="text-emerald-500" />;
+    if (t.includes('barrera') || t.includes('portón')) return <FaDoorOpen className="text-amber-500" />;
+    return <FaTools className="text-purple-500" />;
+  };
+
+  const getBgForType = (tipo) => {
+    const t = tipo.toLowerCase();
+    if (t === 'total') return 'bg-indigo-50 border-indigo-100';
+    if (t.includes('sensor')) return 'bg-blue-50 border-blue-100';
+    if (t.includes('cámara') || t.includes('camara')) return 'bg-emerald-50 border-emerald-100';
+    if (t.includes('barrera') || t.includes('portón')) return 'bg-amber-50 border-amber-100';
+    return 'bg-purple-50 border-purple-100';
+  };
+
   return (
     <Layout>
       <header className="mb-8 flex justify-between items-center">
@@ -543,6 +732,26 @@ export default function Sensores() {
           </button>
         )}
       </header>
+
+      {/* --- Plan Hardware-Insight (Toggleable) --- */}
+      {showStats && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8 animate-in fade-in slide-in-from-top-4 duration-500">
+          {Object.entries(stats).sort(([a], [b]) => a === 'Total' ? -1 : b === 'Total' ? 1 : a.localeCompare(b)).map(([tipo, cantidad]) => (
+            <div 
+              key={tipo} 
+              className={`p-4 rounded-2xl border flex items-center gap-4 transition-all hover:shadow-md ${getBgForType(tipo)}`}
+            >
+              <div className="p-2.5 bg-white rounded-xl shadow-sm">
+                {getIconForType(tipo)}
+              </div>
+              <div>
+                <div className="text-[10px] font-black text-gray-400 uppercase tracking-wider">{tipo}</div>
+                <div className="text-xl font-black text-gray-800">{cantidad}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Tabs ── */}
       <div className="flex gap-2 border-b border-gray-200 mb-6">
@@ -570,19 +779,64 @@ export default function Sensores() {
                   />
                   <FaSearch className="absolute left-3 top-3 text-gray-400" />
                 </div>
-                <button
-                  onClick={loadData}
-                  disabled={isRefreshing}
-                  className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition disabled:opacity-50"
-                >
-                  <FaSync className={isRefreshing ? "animate-spin" : ""} />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectionMode(!selectionMode);
+                      setSelectedIds([]);
+                    }}
+                    className={`p-2 rounded-full transition-all ${
+                      selectionMode 
+                        ? "bg-red-100 text-red-600 shadow-inner" 
+                        : "text-gray-400 hover:bg-gray-100"
+                    }`}
+                    title={selectionMode ? "Cancelar Selección" : "Modo Borrado Masivo"}
+                  >
+                    <FaTrash size={16} />
+                  </button>
+                  <button
+                    onClick={() => setShowStats(!showStats)}
+                    className={`p-2 rounded-full transition-all ${
+                      showStats 
+                        ? "bg-blue-100 text-blue-600 shadow-inner" 
+                        : "text-gray-400 hover:bg-gray-100"
+                    }`}
+                    title={showStats ? "Ocultar Estadísticas" : "Ver Estadísticas"}
+                  >
+                    <FaGlobe size={18} className={showStats ? "animate-pulse" : ""} />
+                  </button>
+                  {selectionMode && selectedIds.length > 0 && (
+                    <button
+                      onClick={handleBulkDelete}
+                      className="bg-red-600 hover:bg-red-700 text-white text-[10px] font-black px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-in zoom-in duration-200"
+                    >
+                      <FaTrash /> BORRAR {selectedIds.length}
+                    </button>
+                  )}
+                  <button
+                    onClick={loadData}
+                    disabled={isRefreshing}
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-full transition disabled:opacity-50"
+                  >
+                    <FaSync className={isRefreshing ? "animate-spin" : ""} />
+                  </button>
+                </div>
               </div>
 
               <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                 <table className="min-w-full divide-y divide-gray-200 text-sm">
                   <thead className="bg-gray-50 uppercase text-[10px] text-gray-500 font-black tracking-widest sticky top-0 z-10 shadow-sm">
                     <tr>
+                      {selectionMode && (
+                        <th className="px-6 py-4 text-left">
+                          <input 
+                            type="checkbox" 
+                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            checked={selectedIds.length === filteredDispositivos.length && filteredDispositivos.length > 0}
+                            onChange={handleSelectAll}
+                          />
+                        </th>
+                      )}
                       <th className="px-6 py-4 text-left">Hardware</th>
                       <th className="px-6 py-4 text-left">Marca / Modelo</th>
                       <th className="px-6 py-4 text-left">Plaza</th>
@@ -606,8 +860,18 @@ export default function Sensores() {
                       return (
                         <tr
                           key={disp.id_dispositivo}
-                          className="hover:bg-gray-50/50 transition group"
+                          className={`hover:bg-gray-50/50 transition group ${selectedIds.includes(disp.id_dispositivo) ? 'bg-blue-50/50' : ''}`}
                         >
+                          {selectionMode && (
+                            <td className="px-6 py-4">
+                              <input 
+                                type="checkbox" 
+                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                checked={selectedIds.includes(disp.id_dispositivo)}
+                                onChange={() => handleSelectItem(disp.id_dispositivo)}
+                              />
+                            </td>
+                          )}
                           <td className="px-6 py-4">
                             <div className="font-bold text-gray-900 uppercase text-xs">
                               {disp.tipo?.nombre}
@@ -785,6 +1049,56 @@ export default function Sensores() {
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
+                  {/* --- Plan Z-Mass: Switch Modo Masivo (AL INICIO) --- */}
+                  {!editingId && (
+                    <div className="flex items-center justify-between bg-blue-50 p-3 rounded-xl border border-blue-100 mb-2">
+                      <div>
+                        <div className="text-[10px] font-black text-blue-700 uppercase tracking-wider">Modo Masivo</div>
+                        <div className="text-[9px] text-blue-500 font-medium">Poblar zona completa con sensores</div>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          className="sr-only peer" 
+                          checked={bulkMode}
+                          onChange={(e) => {
+                            setBulkMode(e.target.checked);
+                            if (!e.target.checked) {
+                              setSelectedZonaId("");
+                              setFormData({ ...formData, id_plaza: "" });
+                            }
+                          }}
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Selección de Zona (Solo en modo masivo) */}
+                  {bulkMode && !editingId && (
+                    <div className="animate-in fade-in slide-in-from-top-2 duration-300 bg-emerald-50/50 p-3 rounded-xl border border-emerald-100">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
+                        Seleccionar Zona para poblar *
+                      </label>
+                      <SearchableSelect
+                        options={zonasDisponibles.map((z) => ({
+                          value: z.id_zona,
+                          label: `${z.nombre} (${z.nivel_piso === 0 ? "P.Baja" : "Piso " + z.nivel_piso})`,
+                        }))}
+                        value={selectedZonaId}
+                        onChange={(val) => setSelectedZonaId(val)}
+                        placeholder="Elegir zona..."
+                      />
+                      {selectedZonaId && (
+                        <div className="mt-2">
+                          <p className="text-[10px] text-emerald-700 font-bold flex items-center gap-1.5">
+                            <FaCheckCircle /> {plazasDisponiblesEnZona.length} plazas libres detectadas.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Tipo */}
                   <div>
                     <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
@@ -862,53 +1176,54 @@ export default function Sensores() {
 
                   {/* Plaza + Fecha */}
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
-                        Plaza
-                      </label>
-                      <SearchableSelect
-                        options={(() => {
-                          const opts = [];
-                          const plazasDisponibles = plazas.filter((p) => {
-                            const ocupada = dispositivos.some(
-                              (d) =>
-                                String(d.id_plaza) === String(p.id_plaza) &&
-                                String(d.id_dispositivo) !== String(editingId)
-                            );
-                            return !ocupada;
-                          });
-                          const zonas = [
-                            ...new Set(plazasDisponibles.map((p) => p.zona?.nombre)),
-                          ].sort();
-                          zonas.forEach((z) => {
-                            opts.push({
-                              label: z || "Sin Zona",
-                              isGroup: true,
-                            });
-                            plazasDisponibles
-                              .filter((p) => p.zona?.nombre === z)
-                              .forEach((p) =>
-                                opts.push({
-                                  value: p.id_plaza,
-                                  label: p.numero_plaza,
-                                }),
+                    {!bulkMode && (
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
+                          Plaza vinculado *
+                        </label>
+                        <SearchableSelect
+                          options={(() => {
+                            const opts = [];
+                            const plazasDisponibles = plazas.filter((p) => {
+                              const ocupada = dispositivos.some(
+                                (d) =>
+                                  String(d.id_plaza) === String(p.id_plaza) &&
+                                  String(d.id_dispositivo) !== String(editingId)
                               );
-                          });
-                          return opts;
-                        })()}
-                        value={formData.id_plaza}
-                        onChange={(val) =>
-                          setFormData({ ...formData, id_plaza: val })
-                        }
-                        placeholder="— Ninguna —"
-                        focusRingClass="focus:ring-blue-500"
-                        selectedItemClass="bg-blue-100 text-blue-800"
-                        groupLabelClass="text-blue-600 bg-blue-50"
-                      />
-                    </div>
-                    <div>
+                              return !ocupada;
+                            });
+                            const zonas = [
+                              ...new Set(plazasDisponibles.map((p) => p.zona?.nombre)),
+                            ].sort();
+                            zonas.forEach((z) => {
+                              opts.push({
+                                label: z || "Sin Zona",
+                                isGroup: true,
+                              });
+                              plazasDisponibles
+                                .filter((p) => p.zona?.nombre === z)
+                                .forEach((p) =>
+                                  opts.push({
+                                    value: p.id_plaza,
+                                    label: p.numero_plaza,
+                                  }),
+                                );
+                            });
+                            return opts;
+                          })()}
+                          value={formData.id_plaza}
+                          onChange={(val) =>
+                            setFormData({ ...formData, id_plaza: val })
+                          }
+                          placeholder="— Ninguna —"
+                          focusRingClass="focus:ring-blue-500"
+                          selectedItemClass="bg-blue-100 text-blue-800"
+                        />
+                      </div>
+                    )}
+                    <div className={bulkMode ? "col-span-2" : ""}>
                       <label className="text-[10px] font-bold text-gray-400 uppercase mb-1 block">
-                        Fecha instalación
+                        Fecha instalación *
                       </label>
                       <input
                         type="date"

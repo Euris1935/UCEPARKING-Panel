@@ -595,9 +595,9 @@ export default function Usuarios() {
                 Cargando...
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                 <table className="min-w-full divide-y divide-gray-100">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                     <tr>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Usuario</th>
                       <th className="px-5 py-3 text-left text-xs font-bold text-gray-500 uppercase">Tipo</th>

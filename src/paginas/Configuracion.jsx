@@ -24,6 +24,7 @@ export default function Configuracion() {
     const [settings, setSettings] = useState({
         alertaCapacidad: 90,
         tiempoMaximoReserva: 4,
+        umbralEstanciaLarga: 16,
     });
 
     useEffect(() => {
@@ -47,6 +48,7 @@ export default function Configuracion() {
                     ...prev,
                     alertaCapacidad: parsed.alertaCapacidad ?? 90,
                     tiempoMaximoReserva: parsed.tiempoMaximoReserva ?? 4,
+                    umbralEstanciaLarga: parsed.umbralEstanciaLarga ?? 16,
                 }));
             } catch (e) {
                 console.error("Error parsing settings:", e);
@@ -363,6 +365,24 @@ export default function Configuracion() {
                             />
                             <div className="flex justify-between text-xs text-gray-400 mt-1">
                                 <span>50%</span><span>75%</span><span>100%</span>
+                            </div>
+                        </div>
+
+                        {/* Alerta de estancia larga */}
+                        <div className="pt-4 border-t border-gray-100">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Alerta de Estancia Larga
+                                <span className="ml-2 text-blue-600 font-bold">{settings.umbralEstanciaLarga} horas</span>
+                            </label>
+                            <p className="text-xs text-gray-400 mb-2">Se notificará cuando un vehículo supere este tiempo en el parqueo.</p>
+                            <input
+                                type="range" min="1" max="48"
+                                value={settings.umbralEstanciaLarga}
+                                onChange={e => setSettings({ ...settings, umbralEstanciaLarga: parseInt(e.target.value) })}
+                                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                            />
+                            <div className="flex justify-between text-xs text-gray-400 mt-1">
+                                <span>1h</span><span>24h</span><span>48h</span>
                             </div>
                         </div>
 

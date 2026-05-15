@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
 import Layout from '../componentes/Layout';
-import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaUserTie, FaUsers, FaTicketAlt, FaHistory, FaCheckCircle, FaDoorOpen, FaMapMarkedAlt, FaUserClock, FaChartLine, FaMobileAlt, FaBuilding, FaSignOutAlt, FaSignInAlt } from 'react-icons/fa';
+import { FaCar, FaExclamationTriangle, FaChartPie, FaParking, FaUserTie, FaUsers, FaTicketAlt, FaHistory, FaCheckCircle, FaDoorOpen, FaMapMarkedAlt, FaUserClock, FaChartLine, FaMobileAlt, FaBuilding, FaSignOutAlt, FaSignInAlt, FaMicrochip } from 'react-icons/fa';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useOrg } from '../contexts/OrgContext';
 import { ESTADO_PLAZA, ESTADO_RESERVA, ROL } from '../lib/constants';
@@ -32,7 +32,8 @@ export default function Dashboard() {
     ticketsHoy: 0, accesosHoy: 0,
     ticketsActivos: 0, accesosActivosCount: 0,
     totalZonas: 0, totalUsuarios: 0,
-    totalVehiculos: 0, totalEmpleados: 0, usuariosMoviles: 0, salidasHoy: 0
+    totalVehiculos: 0, totalEmpleados: 0, usuariosMoviles: 0, salidasHoy: 0,
+    totalDispositivos: 0
   });
   const [eventosRecientes, setEventosRecientes] = useState([]);
   const [historyAccesos, setHistoryAccesos] = useState([]);
@@ -78,7 +79,8 @@ export default function Dashboard() {
         { data: accesosActivosData }, { data: reservasActivasData }, { data: reservasZonasActivas },
         { data: eventosData }, { data: ticketsHoyData }, { data: accesosHoyData }, { count: usuariosCount },
         { data: chartAccesos },
-        { count: vehiculosCount }, { count: empleadosCount }, { count: usuariosMovilesCount }, { count: salidasHoyCount }
+        { count: vehiculosCount }, { count: empleadosCount }, { count: usuariosMovilesCount }, { count: salidasHoyCount },
+        { count: dispositivosCount }
       ] = await Promise.all([
         supabase.from('estado_plaza').select('*'),
         supabase.from('plaza').select('*, zona:id_zona(id_zona, nombre, nivel_piso, estado_zona:id_estado(nombre))').eq('organizacion_id', orgId),
@@ -103,7 +105,8 @@ export default function Dashboard() {
         supabase.from('vehiculo').select('*', { count: 'exact', head: true }).eq('organizacion_id', orgId),
         supabase.from('empleado').select('*', { count: 'exact', head: true }).eq('organizacion_id', orgId),
         supabase.from('usuario').select('*', { count: 'exact', head: true }).eq('organizacion_id', orgId).eq('rol_id', ROL.MOVIL),
-        supabase.from('acceso').select('id_registro', { count: 'exact', head: true }).eq('organizacion_id', orgId).gte('salida_at', hoyStr)
+        supabase.from('acceso').select('id_registro', { count: 'exact', head: true }).eq('organizacion_id', orgId).gte('salida_at', hoyStr),
+        supabase.from('dispositivo').select('*', { count: 'exact', head: true }).eq('organizacion_id', orgId)
       ]);
 
       const plazasFiltradas = (rawPlazas || []).filter(p => p.zona?.estado_zona?.nombre !== 'Inactiva');
@@ -188,6 +191,7 @@ export default function Dashboard() {
         totalEmpleados: empleadosCount || 0,
         usuariosMoviles: usuariosMovilesCount || 0,
         salidasHoy: salidasHoyCount || 0,
+        totalDispositivos: dispositivosCount || 0,
         _plazasRaw: plazasProcesadas // Ahora tiene Nombre_Final para el desglose por pisos
       });
 
@@ -393,6 +397,10 @@ export default function Dashboard() {
                             <div className="p-4 py-5 text-center lg:border-t">
                                 <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaMobileAlt className="mr-1 mt-0.5"/> Usu. Móviles</p>
                                 <p className="text-2xl font-bold text-gray-800 mt-1">{stats.usuariosMoviles}</p>
+                            </div>
+                            <div className="p-4 py-5 text-center lg:border-t">
+                                <p className="text-gray-400 flex justify-center text-[10px] font-black uppercase"><FaMicrochip className="mr-1 mt-0.5"/> Dispositivos</p>
+                                <p className="text-2xl font-bold text-gray-800 mt-1">{stats.totalDispositivos}</p>
                             </div>
                             <div className="p-4 py-5 text-center bg-orange-50/30 lg:border-t">
                                 <p className="text-orange-500 flex justify-center text-[10px] font-black uppercase"><FaExclamationTriangle className="mr-1 mt-0.5"/> Mantenimiento</p>

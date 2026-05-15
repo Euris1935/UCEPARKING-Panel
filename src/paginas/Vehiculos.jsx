@@ -448,7 +448,7 @@ export default function Vehiculos() {
 
       {/* Modal Editar */}
       {editandoVehiculo && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
           <div className="bg-white rounded-2xl p-6 shadow-2xl w-full max-w-sm">
             <h3 className="text-lg font-bold mb-4 text-gray-800">Editar Vehículo</h3>
             <form onSubmit={handleEditarVehiculo} className="space-y-3">
